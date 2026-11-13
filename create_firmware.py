@@ -1,24 +1,26 @@
 #!/usr/bin/env python3
 """
-Build TouchDeck and package the release images.
+Build and package Tactula firmware for all supported boards and variants.
 
 Usage:
     python create_firmware.py               # version from FW_VERSION in include/config.h
     python create_firmware.py v1.0.0        # explicit version
-    python create_firmware.py --board p4-7b # one board only (default: all boards)
+    python create_firmware.py --board p4-7b # one board only
+    python create_firmware.py --variant with_bambu # one variant only
     python create_firmware.py --no-build    # package what .pio/build already has
     python create_firmware.py --flasher     # also publish the full images to the web flasher
 
 Output (release/<version>/), <board> is empty for the S3 deck and "-p4-7b" for the 7B:
-    TouchDeck-<version><board>-full.bin   bootloader + partitions + app, flash at 0x0
-    TouchDeck-<version><board>-ota.bin    app only, for the portal's firmware update
+    tactula-<version>-<board>-<variant>-full.bin   bootloader + partitions + app, flash at 0x0
+    tactula-<version>-<board>-<variant>-ota.bin    app only, for the portal's firmware update
 
 With --flasher, docs/firmware/latest/ gets the full images, VERSION and SHA256SUMS.txt
-(served by GitHub Pages at touchdeck.stolaris.dev).
+(optional deployment target for the Tactula browser flasher).
 """
 
 import argparse
 import hashlib
+import os
 import re
 import shutil
 import subprocess
@@ -26,10 +28,19 @@ import sys
 from pathlib import Path
 
 # The P4 ROM loads the bootloader from 0x2000, the S3 from 0x0.
+# Build environments must be defined in the approved Tactula platformio.ini.
+# Never substitute the old upstream TouchDeck/P4 firmware for a missing variant.
 BOARDS = {
-    "s3":    {"env": "jc3248w535", "suffix": "",       "bootloader": 0x0},
-    "p4-7b": {"env": "ws_p4_7b",   "suffix": "-p4-7b", "bootloader": 0x2000},
+    "jc3248w535": {"bootloader": 0x0, "env": {
+        "without_bambu": "without_bambu",
+        "with_bambu": "with_bambu",
+    }},
+    "p4-7b": {"bootloader": 0x2000, "env": {
+        "without_bambu": "ws_p4_7b_without_bambu",
+        "with_bambu": "ws_p4_7b_with_bambu",
+    }},
 }
+VARIANTS = ("without_bambu", "with_bambu")
 PARTITIONS_OFFSET = 0x8000
 FIRMWARE_OFFSET = 0x10000
 
@@ -82,7 +93,7 @@ def merge_full(build_dir, bootloader_offset, out):
 
 def publish_flasher(fulls, version):
     FLASHER.mkdir(parents=True, exist_ok=True)
-    for old in FLASHER.glob("TouchDeck-*-full.bin"):
+    for old in FLASHER.glob("tactula-*-full.bin"):
         old.unlink()
     sums = []
     for full in fulls:
@@ -94,12 +105,43 @@ def publish_flasher(fulls, version):
     (FLASHER / "VERSION").write_text(version + "\n", encoding="utf-8", newline="\n")
 
 
+def apply_build_version(version):
+    """Inject the tag version into the working copy BEFORE compilation.
+
+    This intentionally does not commit or push include/config.h. The release
+    binary and its displayed FW_VERSION must agree with the GitHub tag.
+    """
+    if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", version):
+        sys.exit(f"error: invalid release tag {version!r} (expected v1.2.3)")
+    path = ROOT / "include" / "config.h"
+    data = path.read_text(encoding="utf-8")
+    data, count = re.subn(r'(#define\s+FW_VERSION\s+)"[^"]+"',
+                          lambda m: m.group(1) + '"' + version[1:] + '"', data, count=1)
+    if count != 1:
+        sys.exit("error: FW_VERSION not found in include/config.h")
+    data = re.sub(r'(#define\s+PRODUCT_NAME\s+)"[^"]+"',
+                  lambda m: m.group(1) + '"tactula"', data, count=1)
+    path.write_text(data, encoding="utf-8")
+
+
+def validate_envs(selected):
+    config = (ROOT / "platformio.ini").read_text(encoding="utf-8")
+    available = set(re.findall(r"(?m)^\[env:([^]]+)\]", config))
+    missing = [env for env in selected if env not in available]
+    if missing:
+        sys.exit("error: missing Tactula PlatformIO environments: " +
+                 ", ".join(missing) +
+                 ". Sync/port firmware before publishing the four-variant release.")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("version", nargs="?", default=None)
     ap.add_argument("--board", choices=sorted(BOARDS), action="append",
                     help="board to package, repeatable (default: all)")
+    ap.add_argument("--variant", choices=VARIANTS, action="append",
+                    help="variant to package, repeatable (default: both)")
     ap.add_argument("--no-build", action="store_true")
     ap.add_argument("--flasher", action="store_true")
     args = ap.parse_args()
@@ -110,20 +152,25 @@ def main():
     if not version.startswith("v"):
         version = "v" + version
     boards = args.board or list(BOARDS)
-    if args.flasher and set(boards) != set(BOARDS):
-        sys.exit("error: --flasher needs every board, the page offers them all")
+    variants = args.variant or list(VARIANTS)
+    selected = [(name, variant, BOARDS[name]["env"][variant])
+                for name in boards for variant in variants]
+    validate_envs([env for _, _, env in selected])
+    apply_build_version(version)
+    if args.flasher and (set(boards) != set(BOARDS) or set(variants) != set(VARIANTS)):
+        sys.exit("error: --flasher needs every board and variant")
 
     out_dir = ROOT / "release" / version
     out_dir.mkdir(parents=True, exist_ok=True)
     fulls = []
-    for name in boards:
+    for name, variant, env in selected:
         board = BOARDS[name]
         # One build at a time: parallel PlatformIO builds race on the shared cache.
         if not args.no_build:
-            build(board["env"])
-        build_dir = ROOT / ".pio" / "build" / board["env"]
-        full = out_dir / f"TouchDeck-{version}{board['suffix']}-full.bin"
-        ota = out_dir / f"TouchDeck-{version}{board['suffix']}-ota.bin"
+            build(env)
+        build_dir = ROOT / ".pio" / "build" / env
+        full = out_dir / f"tactula-{version}-{name}-{variant}-full.bin"
+        ota = out_dir / f"tactula-{version}-{name}-{variant}-ota.bin"
         merge_full(build_dir, board["bootloader"], full)
         shutil.copy2(build_dir / "firmware.bin", ota)
         for p in (full, ota):

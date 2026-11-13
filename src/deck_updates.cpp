@@ -176,10 +176,9 @@ void checkTask(void*) {
   client.setHandshakeTimeout(15);
   HTTPClient http;
   http.setTimeout(12000);
-  // ArduinoJson parses http.getStream() directly. HTTPClient does not
-  // dechunk this raw stream, so explicitly request HTTP/1.0 to prevent
-  // a chunked GitHub JSON response from being parsed as invalid JSON.
-  http.useHTTP10(true);
+  // Receive the complete HTTP body through HTTPClient. Its buffered
+  // getString() path handles chunked transfer encoding and network waits,
+  // unlike passing getStream() directly to ArduinoJson.
   http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
   http.setUserAgent("Tactula-Update-Check/1.0");
   const bool begun = http.begin(client, MANIFEST_URL);
@@ -216,10 +215,29 @@ void checkTask(void*) {
   // API JSON contains release notes and metadata unrelated to the device.
   // Reject oversized responses and use ArduinoJson's document filter to
   // retain only the signed-in-TLS release metadata and asset fields.
-  const int len = http.getSize();
-  if (len > 65536) {
+  constexpr int MAX_RELEASE_JSON = 32768;
+  const int declaredLength = http.getSize();
+  if (declaredLength > MAX_RELEASE_JSON) {
     http.end();
-    setError("GitHub release response exceeds size limit");
+    setError("GitHub release JSON exceeds 32 KiB limit");
+    vTaskDelete(nullptr);
+    return;
+  }
+  // GitHub's current latest-release metadata is about 11 KiB. Buffering
+  // this small, bounded response avoids ArduinoJson interpreting a temporary
+  // gap in the live secure stream as the end of the JSON document.
+  String responseBody = http.getString();
+  const size_t receivedLength = responseBody.length();
+  Serial.printf("[Tactula OTA] GitHub JSON: declared=%d received=%u\\n",
+                declaredLength, static_cast<unsigned>(receivedLength));
+  http.end();
+  if (receivedLength == 0 || receivedLength > MAX_RELEASE_JSON ||
+      (declaredLength >= 0 && receivedLength != static_cast<size_t>(declaredLength))) {
+    char diagnostic[112] = {};
+    snprintf(diagnostic, sizeof(diagnostic),
+             "GitHub JSON truncated (received %u, expected %d)",
+             static_cast<unsigned>(receivedLength), declaredLength);
+    setError(diagnostic);
     vTaskDelete(nullptr);
     return;
   }
@@ -233,10 +251,11 @@ void checkTask(void*) {
   filter["assets"][0]["browser_download_url"] = true;
   JsonDocument doc;
   const DeserializationError parseError = deserializeJson(
-      doc, http.getStream(),
+      doc, responseBody,
       DeserializationOption::Filter(filter),
       DeserializationOption::NestingLimit(8));
-  http.end();
+  // Reclaim the temporary response body as soon as parsing finishes.
+  responseBody = "";
   if (parseError) {
     char diagnostic[112] = {};
     snprintf(diagnostic, sizeof(diagnostic),

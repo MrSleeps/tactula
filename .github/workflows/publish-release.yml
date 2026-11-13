@@ -1,0 +1,71 @@
+name: Publish Tactula firmware
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tactula-release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source selected by the GitHub Release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          persist-credentials: false
+
+      - name: Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+
+      - name: Package all supported Tactula board variants
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: python create_firmware.py "$RELEASE_TAG"
+
+      - name: Verify release manifest and images
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          tag = os.environ["RELEASE_TAG"]
+          folder = Path("release") / tag
+          manifest = json.loads((folder / "MANIFEST.json").read_text())
+          builds = manifest["builds"]
+          assert manifest["version"] == tag
+          assert len(builds) >= 2, "at least S3 with/without Bambu is required"
+          keys = {(b["board"], b["variant"]) for b in builds}
+          assert ("jc3248w535", "without_bambu") in keys
+          assert ("jc3248w535", "with_bambu") in keys
+          for b in builds:
+              for suffix in ("full", "ota"):
+                  path = folder / f'tactula-{tag}-{b["board"]}-{b["variant"]}-{suffix}.bin'
+                  assert path.is_file() and path.stat().st_size > 0, path
+          assert len(list(folder.glob("*.bin"))) == 2 * len(builds)
+          print("Verified", len(builds), "build variants and", 2 * len(builds), "firmware images")
+          PY
+          cd "release/$RELEASE_TAG"
+          sha256sum -c SHA256SUMS.txt
+
+      - name: Attach images and checksums to this Tactula GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "$RELEASE_TAG" "release/$RELEASE_TAG/"*.bin \
+            "release/$RELEASE_TAG/SHA256SUMS.txt" \
+            "release/$RELEASE_TAG/MANIFEST.json" --clobber

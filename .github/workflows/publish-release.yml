@@ -1,0 +1,55 @@
+name: Publish Tactula firmware
+
+# Publish from THIS public repository. Create a GitHub release with a vX.Y.Z
+# tag; this workflow checks out that exact tag, compiles and attaches firmware.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tactula-release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.release.draft }}
+    steps:
+      - name: Check out exactly the released source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+
+      - name: Build and package four firmware variants
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python create_firmware.py "$RELEASE_TAG"
+
+      - name: Create checksums
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          cd "release/$RELEASE_TAG"
+          sha256sum ./*.bin > SHA256SUMS.txt
+          test "$(find . -maxdepth 1 -name '*-full.bin' | wc -l)" -eq 4
+          test "$(find . -maxdepth 1 -name '*-ota.bin' | wc -l)" -eq 4
+
+      - name: Attach firmware to this GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "$RELEASE_TAG" "release/$RELEASE_TAG/"*.bin "release/$RELEASE_TAG/SHA256SUMS.txt" --clobber

@@ -14,13 +14,15 @@
 #include <mbedtls/sha256.h>
 #include <esp_partition.h>
 #include <time.h>
+#include <esp_heap_caps.h>
 #include <cstring>
 #include <cstdio>
 #include <algorithm>
 
 namespace firmwareUpdate {
 namespace {
-// Includes ISRG Root X1 and DigiCert Global Root G2; verify TLS hostnames.
+// Trusted roots: ISRG Root X1, DigiCert Global Root G2, and USERTrust ECC.
+// Always validate the server hostname and the peer certificate chain.
 constexpr const char* ROOT_CA =
     "-----BEGIN CERTIFICATE-----\n"
     "MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw\n"
@@ -74,6 +76,26 @@ constexpr const char* ROOT_CA =
     "8rGOmaFvE7FBcf6IKshPECBV1/MUReXgRPTqh5Uykw7+U0b6LJ3/iyK5S9kJRaTe\n"
     "pLiaWN0bfVKfjllDiIGknibVb63dDcY3fe0Dkhvld1927jyNxF1WW6LZZm6zNTfl\n"
     "MrY=\n"
+    "-----END CERTIFICATE-----\n"
+    // USERTrust ECC Certification Authority (SHA-256:
+    // 4ff460d54b9c86dabfbcfc5712e0400d2bed3fbc4d4fbdaa86e06adcd2a9ad7a).
+    // GitHub API uses Sectigo E36/E46 chain; the earlier ISRG/DigiCert
+    // roots do not authenticate that server certificate chain.
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIICjzCCAhWgAwIBAgIQXIuZxVqUxdJxVt7NiYDMJjAKBggqhkjOPQQDAzCBiDEL\n"
+    "MAkGA1UEBhMCVVMxEzARBgNVBAgTCk5ldyBKZXJzZXkxFDASBgNVBAcTC0plcnNl\n"
+    "eSBDaXR5MR4wHAYDVQQKExVUaGUgVVNFUlRSVVNUIE5ldHdvcmsxLjAsBgNVBAMT\n"
+    "JVVTRVJUcnVzdCBFQ0MgQ2VydGlmaWNhdGlvbiBBdXRob3JpdHkwHhcNMTAwMjAx\n"
+    "MDAwMDAwWhcNMzgwMTE4MjM1OTU5WjCBiDELMAkGA1UEBhMCVVMxEzARBgNVBAgT\n"
+    "Ck5ldyBKZXJzZXkxFDASBgNVBAcTC0plcnNleSBDaXR5MR4wHAYDVQQKExVUaGUg\n"
+    "VVNFUlRSVVNUIE5ldHdvcmsxLjAsBgNVBAMTJVVTRVJUcnVzdCBFQ0MgQ2VydGlm\n"
+    "aWNhdGlvbiBBdXRob3JpdHkwdjAQBgcqhkjOPQIBBgUrgQQAIgNiAAQarFRaqflo\n"
+    "I+d61SRvU8Za2EurxtW20eZzca7dnNYMYf3boIkDuAUU7FfO7l0/4iGzzvfUinng\n"
+    "o4N+LZfQYcTxmdwlkWOrfzCjtHDix6EznPO/LlxTsV+zfTJ/ijTjeXmjQjBAMB0G\n"
+    "A1UdDgQWBBQ64QmG1M8ZwpZ2dEl23OA1xmNjmjAOBgNVHQ8BAf8EBAMCAQYwDwYD\n"
+    "VR0TAQH/BAUwAwEB/zAKBggqhkjOPQQDAwNoADBlAjA2Z6EWCNzklwBBHU6+4WMB\n"
+    "zzuqQhFkoJ2UOQIReVx7Hfpkue4WQrO/isIJxOzksU0CMQDpKmFHjFJKS04YcPbW\n"
+    "RNZu9YO6bVi9JNlWSOrvxKJGgYhqOkbRqZtNyWHa0V1Xahg=\n"
     "-----END CERTIFICATE-----\n";
 constexpr const char* MANIFEST_URL =
     "https://api.github.com/repos/MrSleeps/tactula/releases/latest";
@@ -135,11 +157,29 @@ void checkTask(void*) {
     vTaskDelete(nullptr);
     return;
   }
+  IPAddress githubAddress;
+  if (WiFi.hostByName("api.github.com", githubAddress) != 1) {
+    setError("GitHub DNS lookup failed");
+    vTaskDelete(nullptr);
+    return;
+  }
+  // TLS certificate validation is kept mandatory. Record the internal
+  // memory available because a failed handshake can otherwise look like
+  // a generic HTTPClient (-1) connection failure.
+  const uint32_t largestHeap = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  Serial.printf("[Tactula OTA] GitHub IP=%s, free heap=%u, largest internal block=%u\\n",
+                githubAddress.toString().c_str(),
+                static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(largestHeap));
   WiFiClientSecure client;
   client.setCACert(ROOT_CA);
   client.setTimeout(12000);
+  client.setHandshakeTimeout(15);
   HTTPClient http;
   http.setTimeout(12000);
+  // ArduinoJson parses http.getStream() directly. HTTPClient does not
+  // dechunk this raw stream, so explicitly request HTTP/1.0 to prevent
+  // a chunked GitHub JSON response from being parsed as invalid JSON.
+  http.useHTTP10(true);
   http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
   http.setUserAgent("Tactula-Update-Check/1.0");
   const bool begun = http.begin(client, MANIFEST_URL);
@@ -151,8 +191,22 @@ void checkTask(void*) {
     if (httpStatus > 0) {
       snprintf(diagnostic, sizeof(diagnostic), "GitHub API HTTP %d", httpStatus);
     } else {
-      snprintf(diagnostic, sizeof(diagnostic),
-               "GitHub HTTPS connection failed (%d)", httpStatus);
+      char tlsReason[96] = {};
+      const int tlsCode = client.lastError(tlsReason, sizeof(tlsReason));
+      Serial.printf("[Tactula OTA] GitHub request failed: HTTP=%d TLS=%d (%s), "
+                    "free heap=%u, largest internal block=%u\\n",
+                    httpStatus, tlsCode, tlsReason,
+                    static_cast<unsigned>(ESP.getFreeHeap()),
+                    static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+      // HTTPClient's -1 alone does not identify DNS, TCP, X.509, or
+      // TLS-memory failures. Include the secure client's last TLS code.
+      if (tlsCode != 0) {
+        snprintf(diagnostic, sizeof(diagnostic),
+                 "GitHub HTTPS failed: TLS %d (HTTP %d)", tlsCode, httpStatus);
+      } else {
+        snprintf(diagnostic, sizeof(diagnostic),
+                 "GitHub HTTPS failed: HTTP %d, TLS detail unavailable", httpStatus);
+      }
     }
     http.end();
     setError(diagnostic);
@@ -183,8 +237,19 @@ void checkTask(void*) {
       DeserializationOption::Filter(filter),
       DeserializationOption::NestingLimit(8));
   http.end();
-  if (parseError || (doc["draft"] | true) || (doc["prerelease"] | true)) {
-    setError("Invalid, draft or prerelease GitHub release");
+  if (parseError) {
+    char diagnostic[112] = {};
+    snprintf(diagnostic, sizeof(diagnostic),
+             "GitHub release JSON parse failed: %s", parseError.c_str());
+    setError(diagnostic);
+    vTaskDelete(nullptr);
+    return;
+  }
+  // The GitHub API returns JSON booleans. Treat absent/malformed metadata
+  // as invalid instead of accidentally treating it as a published release.
+  if (!doc["draft"].is<bool>() || !doc["prerelease"].is<bool>() ||
+      doc["draft"].as<bool>() || doc["prerelease"].as<bool>()) {
+    setError("GitHub release is draft, prerelease or missing status flags");
     vTaskDelete(nullptr);
     return;
   }

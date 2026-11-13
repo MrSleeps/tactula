@@ -1435,6 +1435,29 @@
                 </div>
               </div>
               <div class="card">
+                <h2 class="card-title">Automatic firmware update checks</h2>
+                <p class="maintenance-copy">Check the Tactula firmware website for newer, matching releases. Updates are never installed silently.</p>
+                <div class="field">
+                  <label class="field-label"><input type="checkbox" id="fwChecksEnabled" checked /> Check for updates automatically</label>
+                </div>
+                <div class="field">
+                  <label class="field-label"><input type="checkbox" id="fwShowBadge" checked /> Show an update icon in the touchscreen top bar</label>
+                </div>
+                <div class="field">
+                  <label class="field-label"><input type="checkbox" id="fwAutoDownload" /> Automatically download verified firmware to the inactive OTA partition</label>
+                </div>
+                <p class="field-hint" id="fwUpdateStatus" role="status">Checking update settings...</p>
+                <p class="field-hint" id="fwDownloadStatus" role="status"></p>
+                <div class="maintenance-actions">
+                  <button type="button" class="btn btn-accent" id="fwCheckNow">Check now</button>
+                  <button type="button" class="btn" id="fwDownloadNow" disabled>Download verified OTA</button>
+                  <a href="https://firmware.mrsleeps.uk/tactula/" target="_blank" rel="noopener">Download verified firmware</a>
+                </div>
+                <div class="note">
+                  <span class="note-k">Security</span><span>The download is verified against a SHA-256 digest obtained from the official GitHub release over HTTPS. The device never activates a downloaded image without on-screen confirmation. Fully unattended installation requires signed releases and additional protections.</span>
+                </div>
+              </div>
+              <div class="card">
                 <h2 class="card-title">Firmware update</h2>
                 <div class="ota-drop" id="otaDrop">
                   <div class="upload-mark" aria-hidden="true"></div>

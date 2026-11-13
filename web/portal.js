@@ -682,6 +682,72 @@
       refreshPreview();
   }, 5000);
 
+
+  // Firmware release checks are independent of the manual OTA upload.
+  async function refreshFirmwareUpdateStatus() {
+    try {
+      const data = await getJson("/api/firmware/updates?t=" + Date.now());
+      $("fwChecksEnabled").checked = !!data.checksEnabled;
+      $("fwShowBadge").checked = !!data.showBadge;
+      $("fwAutoDownload").checked = !!data.autoDownload;
+      $("fwDownloadNow").disabled = !data.available || data.downloading || data.staged;
+      $("fwDownloadStatus").textContent = data.downloading
+        ? "Downloading and verifying: " + fmtBytes(data.downloadedBytes) + " / " + fmtBytes(data.totalBytes)
+        : data.staged
+          ? "Verified image staged. Confirm installation on the touchscreen itself."
+          : data.available ? "Download is ready; installation still requires a touchscreen confirmation." : "";
+      $("fwUpdateStatus").textContent = data.checking
+        ? "Checking the firmware release feed..."
+        : data.available
+          ? "Update available: " + data.latest + " (installed: " + data.current + ")"
+          : data.error
+            ? "Update check: " + data.error
+            : "Installed: " + data.current + " · No newer compatible release found.";
+    } catch (error) {
+      $("fwUpdateStatus").textContent = "Unable to read firmware update status.";
+    }
+  }
+  async function saveFirmwareUpdatePreferences() {
+    const body = new URLSearchParams({
+      checksEnabled: $("fwChecksEnabled").checked ? "1" : "0",
+      showBadge: $("fwShowBadge").checked ? "1" : "0",
+      autoDownload: $("fwAutoDownload").checked ? "1" : "0"
+    });
+    try {
+      await getJson("/api/firmware/updates/preferences", {
+        method: "POST", body
+      });
+      await refreshFirmwareUpdateStatus();
+    } catch (error) {
+      showToast("Failed to save firmware update preferences", true);
+    }
+  }
+  $("fwChecksEnabled").addEventListener("change", saveFirmwareUpdatePreferences);
+  $("fwShowBadge").addEventListener("change", saveFirmwareUpdatePreferences);
+  $("fwAutoDownload").addEventListener("change", saveFirmwareUpdatePreferences);
+  $("fwDownloadNow").addEventListener("click", async () => {
+    try {
+      await getJson("/api/firmware/updates/download", { method: "POST" });
+      $("fwDownloadStatus").textContent = "Downloading verified firmware...";
+      $("fwDownloadNow").disabled = true;
+    } catch (error) {
+      showToast("Unable to begin firmware download: " + error.message, true);
+    }
+  });
+  $("fwCheckNow").addEventListener("click", async () => {
+    try {
+      await getJson("/api/firmware/updates/check", { method: "POST" });
+      $("fwUpdateStatus").textContent = "Update check requested...";
+    } catch (error) {
+      showToast("Cannot start update check", true);
+    }
+  });
+  refreshFirmwareUpdateStatus();
+  setInterval(() => {
+    if (document.querySelector(".page.active")?.dataset.page === "maintenance")
+      refreshFirmwareUpdateStatus();
+  }, 15000);
+
   function uploadFirmware(file) {
     if (!file || !file.name.toLowerCase().endsWith(".bin")) {
       showToast("Choose a firmware .bin file", true);

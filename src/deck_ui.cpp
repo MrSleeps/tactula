@@ -180,6 +180,56 @@ void goToPage(const String& id) {
   }
 }
 
+
+static lv_obj_t* s_firmwareConfirm = nullptr;
+static void closeFirmwareConfirm(lv_event_t*) {
+  if (s_firmwareConfirm) {
+    lv_obj_delete_async(s_firmwareConfirm);
+    s_firmwareConfirm = nullptr;
+  }
+}
+static void approveFirmwareFromTouch(lv_event_t*) {
+  const bool approved = firmwareUpdate::installStagedFromTouch();
+  closeFirmwareConfirm(nullptr);
+  if (!approved) Serial.println("Update: staged image no longer ready");
+}
+static void openFirmwareConfirmation(lv_event_t*) {
+  if (s_firmwareConfirm) return;
+  const auto st = firmwareUpdate::snapshot();
+  if (!st.staged) return;
+  lv_obj_t* layer = lv_layer_top();
+  s_firmwareConfirm = lv_obj_create(layer);
+  lv_obj_set_size(s_firmwareConfirm, min<int>(logicalW() - 20, 340), LV_SIZE_CONTENT);
+  lv_obj_center(s_firmwareConfirm);
+  lv_obj_set_style_bg_color(s_firmwareConfirm, lv_color_hex(C_PANEL), 0);
+  lv_obj_set_style_border_color(s_firmwareConfirm, lv_color_hex(C_OK), 0);
+  lv_obj_set_style_border_width(s_firmwareConfirm, 2, 0);
+  lv_obj_set_style_pad_all(s_firmwareConfirm, 15, 0);
+  lv_obj_set_layout(s_firmwareConfirm, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(s_firmwareConfirm, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(s_firmwareConfirm, 12, 0);
+  lv_obj_t* title = lv_label_create(s_firmwareConfirm);
+  lv_label_set_text(title, "Install verified update?");
+  lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
+  lv_obj_t* version = lv_label_create(s_firmwareConfirm);
+  lv_label_set_text_fmt(version, "%s ready. The screen will restart.", st.version);
+  lv_label_set_long_mode(version, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(version, LV_PCT(100));
+  lv_obj_set_style_text_color(version, lv_color_hex(C_DIM), 0);
+  lv_obj_t* cancel = lv_button_create(s_firmwareConfirm);
+  lv_obj_set_width(cancel, LV_PCT(100));
+  lv_obj_t* cancelText = lv_label_create(cancel);
+  lv_label_set_text(cancelText, "Not now");
+  lv_obj_center(cancelText);
+  lv_obj_add_event_cb(cancel, closeFirmwareConfirm, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* install = lv_button_create(s_firmwareConfirm);
+  lv_obj_set_width(install, LV_PCT(100));
+  lv_obj_t* installText = lv_label_create(install);
+  lv_label_set_text(installText, "Install and restart");
+  lv_obj_center(installText);
+  lv_obj_add_event_cb(install, approveFirmwareFromTouch, LV_EVENT_CLICKED, nullptr);
+}
+
 // Shows or hides a tiles page's top bar; the grid takes the freed height.
 void layoutHeader(Page& p) {
   if (!p.grid) return;
@@ -189,12 +239,19 @@ void layoutHeader(Page& p) {
     if (s_header) lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
   }
+  if (p.updateBadge) {
+    const auto st = firmwareUpdate::snapshot();
+    if (s_header && st.checksEnabled && st.showBadge && (st.available || st.staged))
+      lv_obj_remove_flag(p.updateBadge, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(p.updateBadge, LV_OBJ_FLAG_HIDDEN);
+  }
   // A clock tile already displays time on this page. Keep the header strip,
   // title and Wi-Fi, but hide only its duplicate clock.
   if (s_header && !p.hasClockTile) lv_obj_remove_flag(p.clock, LV_OBJ_FLAG_HIDDEN);
   else lv_obj_add_flag(p.clock, LV_OBJ_FLAG_HIDDEN);
   // Reclaim the clock's space for the Wi-Fi indicator on clock-tile pages.
   lv_obj_align(p.wifi, LV_ALIGN_TOP_RIGHT, p.hasClockTile ? -12 : -62, 8);
+  if (p.updateBadge) lv_obj_align(p.updateBadge, LV_ALIGN_TOP_RIGHT, p.hasClockTile ? -43 : -93, 8);
   const int top = s_header ? HEADER_H : 0;
   lv_obj_set_pos(p.grid, 0, top);
   lv_obj_set_size(p.grid, w, h - top);
@@ -271,6 +328,13 @@ void addTilesPage(const PageDef& def) {
   lv_label_set_text(p.wifi, LV_SYMBOL_WIFI);
   lv_obj_set_style_text_color(p.wifi, lv_color_hex(C_DIM), 0);
   lv_obj_align(p.wifi, LV_ALIGN_TOP_RIGHT, -62, 8);
+  p.updateBadge = lv_label_create(p.root);
+  lv_label_set_text(p.updateBadge, LV_SYMBOL_DOWNLOAD);
+  lv_obj_set_style_text_color(p.updateBadge, lv_color_hex(C_OK), 0);
+  lv_obj_align(p.updateBadge, LV_ALIGN_TOP_RIGHT, -93, 8);
+  lv_obj_add_flag(p.updateBadge, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(p.updateBadge, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(p.updateBadge, openFirmwareConfirmation, LV_EVENT_CLICKED, nullptr);
 
   // Two tracks per cell: tiles sit and span in half cells. Static descriptor
   // arrays per page (LVGL keeps the pointers).
@@ -637,6 +701,19 @@ void updateHeaders() {
   const uint32_t now = millis();
   if (now - s_lastClockCheck < 1000) return;
   s_lastClockCheck = now;
+  const auto updateState = firmwareUpdate::snapshot();
+  for (int i = 0; i < s_count; ++i) {
+    Page& page = s_pages[i];
+    if (!page.updateBadge) continue;
+    const bool visible = s_header && updateState.checksEnabled &&
+      updateState.showBadge && (updateState.available || updateState.staged);
+    const bool hidden = lv_obj_has_flag(page.updateBadge, LV_OBJ_FLAG_HIDDEN);
+    if (visible == hidden) {
+      if (visible) lv_obj_remove_flag(page.updateBadge, LV_OBJ_FLAG_HIDDEN);
+      else lv_obj_add_flag(page.updateBadge, LV_OBJ_FLAG_HIDDEN);
+      page.stale = true;
+    }
+  }
   const int wifi = WiFi.status() == WL_CONNECTED ? 1 : 0;
   if (wifi != s_lastWifi) {
     s_lastWifi = wifi;

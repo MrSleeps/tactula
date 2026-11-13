@@ -16,6 +16,8 @@
 #include "deck_mqtt.h"
 #include "deck_daily.h"
 #include "deck_sd.h"
+#include "deck_updates.h"
+#include <esp_ota_ops.h>
 #if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
 #include "deck_office_bambu.h"
 #endif
@@ -25,6 +27,7 @@
 // reset_reason "task_wdt"). Every legitimate blocking path finishes far
 // below this bound.
 static const uint32_t WDT_TIMEOUT_S = 30;
+static bool sOtaBootValidationPending = false;
 
 // LVGL rendering and the Glass bake left under 1 KB of the default 8 KB.
 SET_LOOP_TASK_STACK_SIZE(12 * 1024);
@@ -40,6 +43,15 @@ void setup() {
   heap_caps_malloc_extmem_enable(128);
 
   loadSettings();
+  firmwareUpdate::begin();
+  const esp_partition_t* runningOta = esp_ota_get_running_partition();
+  esp_ota_img_states_t runningState;
+  if (runningOta &&
+      esp_ota_get_state_partition(runningOta, &runningState) == ESP_OK &&
+      runningState == ESP_OTA_IMG_PENDING_VERIFY) {
+    sOtaBootValidationPending = true;
+    Serial.println("OTA: validating newly booted image");
+  }
   deck::wallStorageBegin();
   setScreenState(SCREEN_SPLASH);
   initDisplay();
@@ -80,6 +92,7 @@ void loop() {
   esp_task_wdt_reset();
   handleWiFi();
   handleWebServer();
+  firmwareUpdate::tick();
 
   // Finish boot/connect transitions.
   ScreenState s = getScreenState();
@@ -94,6 +107,14 @@ void loop() {
   ledTick();
   displayTick();
   deck::dailyPoll();
+  // If this bootloader supports OTA rollback, keep the just-booted image
+  // provisional until the normal application loop remains healthy for 60s.
+  if (sOtaBootValidationPending && millis() >= 60000) {
+    if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+      Serial.println("OTA: new firmware verified after healthy runtime");
+      sOtaBootValidationPending = false;
+    }
+  }
 #if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
   deck::officeBambuTick();
 #endif

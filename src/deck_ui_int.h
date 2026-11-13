@@ -1,6 +1,7 @@
 // Internal to the deck UI (src/deck_ui*.cpp): shared types, state and helpers.
 #pragma once
 #include "deck_ui.h"
+#include "deck_updates.h"
 #include "deck_config.h"
 #include "deck_ha.h"
 #include "deck_http.h"
@@ -43,6 +44,7 @@ struct Page {
   lv_obj_t* title;
   lv_obj_t* clock;
   lv_obj_t* wifi;
+  lv_obj_t* updateBadge;
   bool hasClockTile;  // a visible, placed clock tile replaces the header clock
   lv_obj_t* grid;
   lv_draw_buf_t* snap;

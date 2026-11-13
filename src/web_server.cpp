@@ -19,6 +19,7 @@
 #include "deck_wall.h"
 #include "deck_sd.h"
 #include "deck_daily.h"
+#include "deck_updates.h"
 #if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
 #include "deck_office_bambu.h"
 #include "deck_bambu_ha.h"
@@ -2386,6 +2387,10 @@ static void handleOtaUpload() {
   HTTPUpload& upload = server.upload();
 
   if (upload.status == UPLOAD_FILE_START) {
+    if (firmwareUpdate::snapshot().downloading) {
+      otaFail("A verified firmware download is already in progress");
+      return;
+    }
     otaError = "";
     otaInProgress = true;
     otaFirstChunk = true;
@@ -2528,6 +2533,62 @@ static void handleOfficePrinterDiscover() {
 
 #endif  // TOUCHDECK_FEATURE_BAMBU
 
+
+static void handleUpdateStatus() {
+  const auto st = firmwareUpdate::snapshot();
+  JsonDocument doc;
+  doc["current"] = FW_VERSION;
+  doc["board"] = BOARD_VARIANT;
+#if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
+  doc["edition"] = "bambu";
+#else
+  doc["edition"] = "standard";
+#endif
+  doc["checksEnabled"] = st.checksEnabled;
+  doc["showBadge"] = st.showBadge;
+  doc["checking"] = st.checking;
+  doc["autoDownload"] = st.autoDownload;
+  doc["downloading"] = st.downloading;
+  doc["staged"] = st.staged;
+  doc["downloadedBytes"] = st.downloadedBytes;
+  doc["totalBytes"] = st.totalBytes;
+  doc["available"] = st.available && st.checksEnabled;
+  doc["latest"] = st.available ? st.version : "";
+  doc["error"] = st.error;
+  doc["automaticInstallation"] = false; // gated pending signed release metadata + portal auth
+  server.sendHeader("Cache-Control", "no-store");
+  String output;
+  serializeJson(doc, output);
+  server.send(200, "application/json", output);
+}
+
+static void handleUpdateCheck() {
+  firmwareUpdate::requestCheck();
+  server.send(202, "application/json", "{\"ok\":true,\"message\":\"Update check requested\"}");
+}
+
+static void handleUpdateDownload() {
+  const auto st = firmwareUpdate::snapshot();
+  if (!st.available || st.downloading || st.staged || otaInProgress) {
+    server.send(409, "application/json", "{\"error\":\"Update not ready for download\"}");
+    return;
+  }
+  firmwareUpdate::requestDownload();
+  server.send(202, "application/json", "{\"ok\":true,\"message\":\"Verified download requested\"}");
+}
+
+static void handleUpdatePreferences() {
+  if (!server.hasArg("checksEnabled") || !server.hasArg("showBadge") || !server.hasArg("autoDownload")) {
+    server.send(400, "application/json", "{\"error\":\"Missing preferences\"}");
+    return;
+  }
+  const bool enabled = server.arg("checksEnabled") == "1";
+  const bool badge = server.arg("showBadge") == "1";
+  const bool autoDownload = server.arg("autoDownload") == "1";
+  firmwareUpdate::setPreferences(enabled, badge, autoDownload);
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
 void initWebServer() {
   server.on("/generate_204", HTTP_GET, handleCaptiveDetect);
   server.on("/gen_204", HTTP_GET, handleCaptiveDetect);
@@ -2562,6 +2623,10 @@ void initWebServer() {
   server.on("/api/office/bambu/light", HTTP_POST, handleOfficePrinterLight);
   server.on("/api/office/bambu/discover", HTTP_GET, handleOfficePrinterDiscover);
 #endif
+  server.on("/api/firmware/updates", HTTP_GET, handleUpdateStatus);
+  server.on("/api/firmware/updates/check", HTTP_POST, handleUpdateCheck);
+  server.on("/api/firmware/updates/download", HTTP_POST, handleUpdateDownload);
+  server.on("/api/firmware/updates/preferences", HTTP_POST, handleUpdatePreferences);
   server.on("/api/config", HTTP_GET, handleApiConfig);
   server.on("/api/config/export", HTTP_GET, handleConfigExport);
   server.on("/api/config/import", HTTP_POST, handleConfigImport);
@@ -2649,3 +2714,6 @@ void handleWebServer() {
     ESP.restart();
   }
 }
+
+// Prevent simultaneous automatic and manually uploaded OTA writes.
+bool webOtaBusy() { return otaInProgress || restartAt != 0; }

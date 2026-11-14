@@ -19,6 +19,7 @@ Full reference for the deck's features. For initial installation, build the full
 - [Status LED](#status-led)
 - [Flashing without the web flasher](#flashing-without-the-web-flasher)
 - [Building from source](#building-from-source)
+- [Automatic firmware updates](#automatic-firmware-updates)
 
 ## Pages and tiles
 
@@ -278,3 +279,28 @@ python create_firmware.py --env with_bambu   # package full + OTA printer images
 App-only OTA firmware is at `.pio/build/<environment>/firmware.bin` and can be uploaded using the device's **Maintenance > Firmware update** (on an existing device with compatible partitions). A fresh device needs the full install image.
 
 The product/splash-screen name is always **tactula**. New devices default to a unique `tactula-XXXX.local` hostname and `tactula-XXXX` setup hotspot. Older saved hostnames are normalised to include `touchdeck` without resetting Wi-Fi credentials; users can set `tactula-office` or `tactula-bedroom` in **Network**. A first-boot migration copies old `bedroomdeck` settings to `touchdeck`. The internal `touchdeck` NVS namespace remains unchanged after migration as a compatibility detail; the original `bedroomdeck` namespace remains as a rollback copy; if migration cannot complete, that boot continues using the old settings and retries at startup. Home Assistant and MQTT credentials are stored in their existing separate namespaces.
+
+## Automatic firmware updates
+
+Tactula supports **automatic update checks and optional automatic downloads**, with **physical touchscreen approval required for every installation**.
+
+In the device's web portal, open **Maintenance → Automatic firmware update checks**:
+
+- **Check for updates:** enabled by default. The first check runs about **45 seconds after boot**, then **every six hours** after a successful check. Failed checks retry after **30 minutes**. **Check now** requests an immediate check when the updater is idle.
+- **Automatically download verified firmware:** disabled by default. When enabled, discovering a newer version downloads it promptly into the *inactive OTA flash partition*. It verifies the expected board/edition, image byte count, SHA-256 checksum and ESP application image before marking it ready.
+- **Show an update icon:** controls the normal top-bar update notification. A successfully staged **automatic** download is quiet and shows an icon (when the top bar is enabled), **not a popup**. Tap the icon to open the confirmation.
+- **Download OTA** (manual): downloads and verifies the selected update and **automatically displays** the installation confirmation on the touchscreen once staging finishes, whether or not the optional update icon is enabled. Choosing **Not now** closes it without repeated interruptions.
+- **Install and restart** is only available **on the physical touchscreen**. Neither checking nor downloading installs firmware, changes the boot partition, or reboots on its own. No web-based remote install endpoint is provided.
+
+### Where updates come from
+
+The device reads the small HTTPS manifest at `https://firmware.mrsleeps.uk/tactula/releases/current.json` rather than querying the large GitHub Releases API. The website's release mirror obtains published assets from [MrSleeps/tactula GitHub Releases](https://github.com/MrSleeps/tactula/releases), verifies their sizes and SHA-256 digests, then atomically exposes the versioned firmware and manifest. Firmware also verifies HTTPS, the exact model and edition, the canonical OTA path, expected size, and the image hash. A temporary check error does not erase a previously verified update.
+
+The download is **not a separate file on the SD card**. It occupies the ESP32's inactive OTA partition. If a newer version is discovered while an earlier one is waiting for installation, the old image is marked unavailable and the newer verified image **overwrites that same partition** when downloaded (if automatic downloading is enabled). No history of older images accumulates. The installed/running partition is not overwritten by this process.
+
+### Manual OTA and troubleshooting
+
+Use **Maintenance → Firmware update** and upload the matching `firmware.bin` (or the release's `*-ota.bin`) for your edition. **Never upload `firmware.factory.bin` or `*-full.bin` into the OTA page**; those are for initial/full USB flashing. Manual OTA is also how to recover from an update-checker bug without publishing a broken release.
+
+If the device cannot see a published update, confirm that `current.json` and the corresponding `/tactula/releases/vX.Y.Z/*-ota.bin` return HTTP 200 on the firmware website, that the **new** version is higher than the firmware currently installed, and that the firmware edition matches. If download links fail despite being present on disk, check the nginx file permissions and rerun the website mirror. Certificate validation remains mandatory; do not use insecure HTTPS workarounds. The automatic-install option is intentionally unsupported.
+

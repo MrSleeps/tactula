@@ -1,24 +1,21 @@
 <!doctype html>
-<html lang="en" data-mode="dark" data-accent="green">
+<html lang="en" data-mode="dark" data-accent="purple">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <meta name="theme-color" content="#161512" />
-    <title>TouchDeck</title>
+    <meta name="theme-color" content="#0c1019" />
+    <title>tactula</title>
     <script>
       (function () {
         try {
           var m = localStorage.getItem("sn_mode") || "dark";
-          var a = localStorage.getItem("sn_accent") || "green";
+          var a = localStorage.getItem("sn_accent") || "purple";
           document.documentElement.dataset.mode = m;
-          document.documentElement.dataset.accent = a;
+          document.documentElement.dataset.accent = a === "green" ? "purple" : a === "amber" ? "blue" : a;
         } catch (e) {}
       })();
     </script>
-    <link
-      rel="icon"
-      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 9'><rect width='4' height='4' rx='1.2' fill='%23F6C56B'/><rect x='5' width='4' height='4' rx='1.2' fill='%235CC9A7'/><rect y='5' width='4' height='4' rx='1.2' fill='%23B3A6FF'/><rect x='5' y='5' width='4' height='4' rx='1.2' fill='%237DB5FF'/></svg>"
-    />
+    <link rel="icon" type="image/svg+xml" href="/tactula-mark.svg" />
     <link rel="stylesheet" href="/portal.css?v={{v:portal.css}}" />
     <link rel="stylesheet" href="/portal-layout.css?v={{v:portal-layout.css}}" />
     <style>
@@ -102,16 +99,16 @@
           <span></span>
         </button>
         <div class="tb-brand">
-          <span class="brand-mark" aria-hidden="true"></span><span class="tb-name">TouchDeck</span
+          <span class="brand-mark" aria-hidden="true"></span><span class="tb-name">tactula</span
           ><span class="tb-ver" id="topVersion">...</span>
         </div>
         <span class="tb-sep" aria-hidden="true"></span><span class="tb-crumb" id="crumb">Overview</span>
         <div class="tb-right">
           <div class="acc-pick" role="group" aria-label="Accent color">
             <span class="lab">Accent</span
-            ><button type="button" class="acc-sw" data-accent-choice="green" aria-label="Green accent">
+            ><button type="button" class="acc-sw" data-accent-choice="purple" aria-label="Purple accent">
               <i></i></button
-            ><button type="button" class="acc-sw" data-accent-choice="amber" aria-label="Amber accent">
+            ><button type="button" class="acc-sw" data-accent-choice="blue" aria-label="Blue accent">
               <i></i>
             </button>
           </div>
@@ -132,22 +129,21 @@
               ><button type="button" class="nav-item hidden" data-nav="deck" id="navDeck">
                 Pages &amp; tiles
               </button
-              ><button type="button" class="nav-item hidden" data-nav="printers" id="navPrinters">
-                Printers
-              </button>
+              >
             </div>
             <div class="nav-group">
               <div class="nav-label">Configuration</div>
-              <button type="button" class="nav-item" data-nav="display">Display</button
+              <button type="button" class="nav-item" data-nav="homeassistant">Home Assistant</button
+              ><button type="button" class="nav-item" data-nav="display">Display</button
               ><button type="button" class="nav-item" data-nav="wallpapers">Wallpapers</button
               ><button type="button" class="nav-item" data-nav="light">Screen</button
+              ><button type="button" class="nav-item hidden" data-nav="printer" id="navPrinter">Bambu printer</button
               ><button type="button" class="nav-item" data-nav="hardware">Hardware</button
               ><button type="button" class="nav-item" data-nav="clock">Time</button>
             </div>
             <div class="nav-group">
               <div class="nav-label">Device</div>
               <button type="button" class="nav-item" data-nav="network">Network</button
-              ><button type="button" class="nav-item" data-nav="advanced">Advanced</button
               ><button type="button" class="nav-item" data-nav="maintenance">Maintenance</button>
             </div>
           </nav>
@@ -168,19 +164,11 @@
                   <dt>host</dt>
                   <dd id="srHost">--</dd>
                 </div>
-                <div class="sr-row">
-                  <dt>pc</dt>
-                  <dd id="srPc">--</dd>
-                </div>
-                <div class="sr-row">
-                  <dt>metrics</dt>
-                  <dd id="srMetrics">--</dd>
-                </div>
               </dl>
             </div>
           </div>
           <div class="about">
-            <span>TouchDeck <b id="aboutVersion">...</b></span
+            <span>tactula <b id="aboutVersion">...</b></span
             ><span id="aboutBoard">ESP32</span>
           </div>
         </aside>
@@ -191,7 +179,7 @@
               <div class="page-header">
                 <h1 class="page-h1">Overview</h1>
                 <p class="page-lede">
-                  Live device screen, PC telemetry, Home Assistant link, and firmware diagnostics.
+                  Live device screen, connection statuses and firmware diagnostics.
                 </p>
               </div>
               <div class="overview-grid">
@@ -212,30 +200,22 @@
                   </div>
                 </div>
                 <div class="card">
-                  <div class="card-head">
-                    <h2 class="card-title">PC stream</h2>
-                    <span class="tag" id="pcStateTag">waiting</span>
-                  </div>
-                  <dl class="facts">
-                    <div>
-                      <dt>Status</dt>
-                      <dd id="factPcStatus">--</dd>
+                  <div class="card-head"><h2 class="card-title">All connections</h2></div>
+                  <div class="connections-list" aria-label="Connection status">
+                    <div class="connection-item">
+                      <span class="connection-label">Home Assistant</span>
+                      <span class="connection-value" id="factHa" role="status">Checking...</span>
                     </div>
-                    <div>
-                      <dt>Last packet</dt>
-                      <dd id="factTimestamp">--</dd>
+                    <div class="connection-item">
+                      <span class="connection-label">MQTT broker</span>
+                      <span class="connection-value" id="factMqtt" role="status">Checking...</span>
+                      <span class="connection-detail" id="factMqttDetail"></span>
                     </div>
-                    <div>
-                      <dt>Metrics</dt>
-                      <dd id="factMetricCount">--</dd>
+                    <div class="connection-item hidden" id="factBambuRow">
+                      <span class="connection-label" id="factBambuLabel">Bambu LAN</span>
+                      <span class="connection-value" id="factBambu" role="status">Checking...</span>
+                      <span class="connection-detail" id="factBambuDetail"></span>
                     </div>
-                    <div>
-                      <dt>Home Assistant</dt>
-                      <dd id="factHa">--</dd>
-                    </div>
-                  </dl>
-                  <div class="chip-tray" id="overviewMetrics">
-                    <span class="chip-empty">Waiting for the PC companion.</span>
                   </div>
                 </div>
               </div>
@@ -244,140 +224,37 @@
                   <h2 class="card-title">Device diagnostics</h2>
                   <span class="tag" id="diagBoard">ESP32</span>
                 </div>
+                <p class="field-hint diag-help">
+                  Separate byte-addressable memory pools. Minimum free is the lowest
+                  available memory observed since the last restart.
+                </p>
+                <h3 class="diag-heading">Internal RAM</h3>
                 <dl class="facts facts-4">
-                  <div>
-                    <dt>Free heap</dt>
-                    <dd id="diagHeap">--</dd>
-                  </div>
-                  <div>
-                    <dt>Largest block</dt>
-                    <dd id="diagBlock">--</dd>
-                  </div>
-                  <div>
-                    <dt>WiFi signal</dt>
-                    <dd id="diagRssi">--</dd>
-                  </div>
-                  <div>
-                    <dt>Uptime</dt>
-                    <dd id="diagUptime">--</dd>
-                  </div>
+                  <div><dt>Total</dt><dd id="diagInternalTotal">--</dd></div>
+                  <div><dt>Free</dt><dd id="diagInternalFree">--</dd></div>
+                  <div><dt>Largest block</dt><dd id="diagInternalBlock">--</dd></div>
+                  <div><dt>Minimum free</dt><dd id="diagInternalMin">--</dd></div>
+                </dl>
+                <h3 class="diag-heading">PSRAM (external)</h3>
+                <dl class="facts facts-4">
+                  <div><dt>Total</dt><dd id="diagPsramTotal">--</dd></div>
+                  <div><dt>Free</dt><dd id="diagPsramFree">--</dd></div>
+                  <div><dt>Largest block</dt><dd id="diagPsramBlock">--</dd></div>
+                  <div><dt>Minimum free</dt><dd id="diagPsramMin">--</dd></div>
+                </dl>
+                <dl class="facts diag-other">
+                  <div><dt>WiFi signal</dt><dd id="diagRssi">--</dd></div>
+                  <div><dt>Uptime</dt><dd id="diagUptime">--</dd></div>
                 </dl>
               </div>
             </section>
 
             <section class="page" data-page="deck" id="deckSection"></section>
 
-            <section class="page" data-page="printers">
-              <div class="page-header">
-                <h1 class="page-h1">Printers</h1>
-                <p class="page-lede">Bambu Lab printers on the deck, their errors and alerts, and the energy of a print.</p>
-              </div>
-              <div id="prnListHost"></div>
-              <form
-                id="printersForm"
-                class="portal-form"
-                data-endpoint="/save/printers"
-                data-save-label="Save printer settings"
-              >
-                <div class="card">
-                  <h2 class="card-title">Printer page</h2>
-                  <label class="check-row standalone"
-                    ><input type="checkbox" id="prnFollow" name="prnFollow" /><span class="check-box"></span
-                    ><span class="check-text"
-                      ><strong>Show the printer page while it prints</strong
-                      ><span class="ct-hint"
-                        >A print start wakes the deck and slides it to that printer's page. When the print is
-                        over, the deck goes back to the page it showed before, a minute after the bed is down
-                        to the bed cooled temperature below, or 30 minutes after the print at the latest. If
-                        you leave the printer page yourself, it stays where you are.</span
-                      ></span
-                    ></label
-                  >
-                  <p class="field-hint wall-prn-pause" style="margin: 12px 0 0">
-                    While a printer page is on the deck, the Glass wallpaper does not change on its own:
-                    printer pages take the memory a wallpaper change needs. A picture picked by hand still
-                    changes.
-                  </p>
-                </div>
-                <div class="card">
-                  <h2 class="card-title">Printer errors</h2>
-                  <div class="check-list">
-                    <label class="check-row"
-                      ><input type="checkbox" id="prnErrors" name="prnErrors" /><span class="check-box"></span
-                      ><span class="check-text"
-                        ><strong>Show printer errors</strong
-                        ><span class="ct-hint"
-                          >HMS codes and print errors with Bambu's own text: an ERROR badge on the printer tile,
-                          and a tap on it lists them. Off: no badge, list or alerts.</span
-                        ></span
-                      ></label
-                    >
-                    <label class="check-row"
-                      ><input type="checkbox" id="prnErrorsAll" name="prnErrorsAll" /><span class="check-box"></span
-                      ><span class="check-text"
-                        ><strong>Also common errors</strong
-                        ><span class="ct-hint"
-                          >Off: only fatal and serious errors raise the badge; common ones are still listed.</span
-                        ></span
-                      ></label
-                    >
-                    <label class="check-row"
-                      ><input type="checkbox" id="prnErrorWake" name="prnErrorWake" /><span class="check-box"></span
-                      ><span class="check-text"
-                        ><strong>Wake the deck and show the printer on a new error</strong
-                        ><span class="ct-hint"
-                          >Errors already standing when the deck connects do not wake it.</span
-                        ></span
-                      ></label
-                    >
-                  </div>
-                </div>
-                <div class="card">
-                  <h2 class="card-title">Bed cooled</h2>
-                  <label class="check-row standalone"
-                    ><input type="checkbox" id="prnCool" name="prnCool" /><span class="check-box"></span
-                    ><span class="check-text"
-                      ><strong>Tell me when the bed has cooled after a print</strong
-                      ><span class="ct-hint"
-                        >Wakes the deck with a message once the bed is down to the temperature below, so the
-                        print comes off the plate easily.</span
-                      ></span
-                    ></label
-                  >
-                  <div class="grid-2">
-                    <div class="field">
-                      <label class="field-label" for="prnCoolTemp">Bed temperature (&deg;C)</label>
-                      <input type="number" id="prnCoolTemp" name="prnCoolTemp" min="20" max="80" value="35" />
-                    </div>
-                  </div>
-                </div>
-                <div class="card">
-                  <h2 class="card-title">Energy of a print</h2>
-                  <p class="field-hint">
-                    Give a printer an energy meter (a Home Assistant sensor counting kWh, such as a smart
-                    plug's total energy) in the printer list above. After a print the printer tile shows what
-                    it used, and the cost with a price set here.
-                  </p>
-                  <div class="grid-2">
-                    <div class="field">
-                      <label class="field-label" for="prnKwhPrice">Price per kWh</label>
-                      <input type="text" id="prnKwhPrice" name="prnKwhPrice" inputmode="decimal"
-                        maxlength="10" placeholder="0.85" />
-                      <span class="field-hint">Empty or 0: energy only.</span>
-                    </div>
-                    <div class="field">
-                      <label class="field-label" for="prnCurrency">Currency</label>
-                      <input type="text" id="prnCurrency" name="prnCurrency" maxlength="7" placeholder="PLN" />
-                    </div>
-                  </div>
-                </div>
-              </form>
-            </section>
-
             <section class="page" data-page="display">
               <div class="page-header">
                 <h1 class="page-h1">Display</h1>
-                <p class="page-lede">Orientation, theme, the Glass look and PC metric tiles.</p>
+                <p class="page-lede">Orientation, theme and the Glass look.</p>
               </div>
               <form
                 id="displayForm"
@@ -473,18 +350,6 @@
                     </div>
                     </div>
                   </div>
-                  <label class="check-row standalone"
-                    ><input type="checkbox" id="printerFx" name="printerFx" /><span
-                      class="check-box"
-                    ></span
-                    ><span class="check-text"
-                      ><strong>Printer animations</strong
-                      ><span class="ct-hint"
-                        >Temperature tiles glow while heating and frost over while cooling, the filament
-                        tile shows a turning spool and a print head extruding while a print runs.</span
-                      ></span
-                    ></label
-                  >
                 </div>
                 <div class="card hidden" id="glassLook">
                   <h2 class="card-title">Glass look</h2>
@@ -517,16 +382,16 @@
                       </p>
                     </div>
                     <div class="field">
-                      <label class="field-label" for="glassDim">Wallpaper dimming</label>
+                      <label class="field-label" for="glassDim">Wallpaper black overlay</label>
                       <div class="range-row">
-                        <input type="range" id="glassDim" name="glassDim" min="0" max="60" step="5" /><span
+                        <input type="range" id="glassDim" name="glassDim" min="0" max="80" step="5" /><span
                           class="range-val"
                           id="glassDimVal"
                           >--</span
                         >
                       </div>
                       <p class="field-hint" data-tip>
-                        Darkens the picture behind the tiles, for the text on it.
+                        Black overlay opacity, 0% = off. Darkens the wallpaper and its blurred glass tiles without dimming the text, icons or controls. Applied when a picture loads, not on every frame.
                       </p>
                     </div>
                     <div class="field">
@@ -554,56 +419,6 @@
                         >Picks light or dark text for each tile and the top bar from the picture behind it,
                         and darkens the glass of a tile where neither would read well. Tiles with their own
                         text colour keep it.</span
-                      ></span
-                    ></label
-                  >
-                </div>
-                <div class="card">
-                  <h2 class="card-title">PC metric tiles</h2>
-                  <div class="grid-2">
-                    <div class="field">
-                      <label class="field-label" for="tempScale">Default temperature scale</label>
-                      <div class="input-unit">
-                        <input type="number" id="tempScale" name="tempScale" min="1" max="500" /><span
-                          >C</span
-                        >
-                      </div>
-                    </div>
-                    <div class="field">
-                      <label class="field-label" for="powerScale">Default power scale</label>
-                      <div class="input-unit">
-                        <input type="number" id="powerScale" name="powerScale" min="1" max="65535" /><span
-                          >W</span
-                        >
-                      </div>
-                    </div>
-                    <div class="field">
-                      <label class="field-label" for="warnThreshold">Warning threshold</label>
-                      <div class="range-row">
-                        <input
-                          type="range"
-                          id="warnThreshold"
-                          name="warnThreshold"
-                          min="0"
-                          max="100"
-                          step="1"
-                        /><span class="range-val" id="warnThresholdVal">--</span>
-                      </div>
-                      <p class="field-hint">
-                        A metric tile turns amber at this share of its scale. 0 turns it off.
-                      </p>
-                    </div>
-                  </div>
-                  <p class="field-hint">The scales apply to tiles that set no full scale of their own.</p>
-                  <label class="check-row standalone"
-                    ><input type="checkbox" id="smoothCharts" name="smoothCharts" /><span
-                      class="check-box"
-                    ></span
-                    ><span class="check-text"
-                      ><strong>Smooth chart motion</strong
-                      ><span class="ct-hint"
-                        >Charts glide between PC updates instead of stepping once a second. Uses more
-                        processor time while a page with a PC chart is on screen.</span
                       ></span
                     ></label
                   >
@@ -700,7 +515,7 @@
                         </div>
                         <p class="field-hint" data-tip>
                           Waits until nobody has touched the screen for 30 seconds. If the deck was off at
-                          this hour, it waits for the next day; Download now fetches at once.
+                          this hour, it downloads as soon as it is back.
                         </p>
                       </div>
                     </div>
@@ -798,7 +613,6 @@
                       </div>
                       <p class="field-hint" data-tip>
                         A new picture after this time, once nobody has touched the screen for 30 seconds.
-                        <span class="wall-prn-pause">Paused while a printer page is on the deck.</span>
                       </p>
                     </div>
                     <div class="field">
@@ -848,35 +662,36 @@
                       /><span class="range-val" id="brightnessVal">--</span>
                     </div>
                   </div>
+                  <div class="field">
+                    <label class="field-label" for="nightBrightness">Night brightness</label>
+                    <div class="range-row">
+                      <input
+                        type="range"
+                        id="nightBrightness"
+                        name="nightBrightness"
+                        min="0"
+                        max="255"
+                        step="1"
+                      /><span class="range-val" id="nightBrightnessVal">--</span>
+                    </div>
+                    <p class="field-hint">
+                      Brightness when Home Assistant turns on the tactula Night switch,
+                      or when the optional local schedule is active.
+                      Set to 0 to turn the backlight off; a touch briefly lights it at 10%.
+                    </p>
+                  </div>
                   <label class="check-row standalone"
                     ><input type="checkbox" id="nightEnabled" name="nightEnabled" /><span
                       class="check-box"
                     ></span
                     ><span class="check-text"
-                      ><strong>Night brightness schedule</strong
+                      ><strong>Night brightness schedule (optional)</strong
                       ><span class="ct-hint"
-                        >Use a separate brightness level during the configured local-time interval.</span
+                        >Leave off when Home Assistant controls night mode.</span
                       ></span
                     ></label
                   >
                   <div class="subcard hidden" id="nightScheduleFields">
-                    <div class="field">
-                      <label class="field-label" for="nightBrightness">Night brightness</label>
-                      <div class="range-row">
-                        <input
-                          type="range"
-                          id="nightBrightness"
-                          name="nightBrightness"
-                          min="0"
-                          max="255"
-                          step="1"
-                        /><span class="range-val" id="nightBrightnessVal">--</span>
-                      </div>
-                      <p class="field-hint">
-                        Set to 0 to switch the backlight fully off at night; a touch then lights it at 10% for a
-                        minute.
-                      </p>
-                    </div>
                     <div class="grid-2">
                       <div class="field">
                         <label class="field-label" for="nightStart">Night starts</label
@@ -888,13 +703,13 @@
                       </div>
                     </div>
                     <p class="field-hint">Matching start and end times disable the night interval.</p>
-                  </div>
-                  <div class="note">
-                    <span class="note-k">Time</span
-                    ><span
-                      >The schedule uses the timezone set on the Time page. Until network time is available,
-                      day brightness remains active.</span
-                    >
+                    <div class="note">
+                      <span class="note-k">Time</span
+                      ><span
+                        >The schedule uses the timezone set on the Time page. Until network time is available,
+                        day brightness remains active.</span
+                      >
+                    </div>
                   </div>
                 </div>
                 <div class="card">
@@ -983,20 +798,6 @@
                     </p>
                   </div>
                   <label class="check-row standalone"
-                    ><input type="checkbox" id="presencePc" name="presencePc" /><span class="check-box"></span
-                    ><span class="check-text"
-                      ><strong>A PC online counts as presence</strong
-                      ><span class="ct-hint">Any PC sending metrics through the companion.</span></span
-                    ></label
-                  >
-                  <label class="check-row standalone"
-                    ><input type="checkbox" id="presencePrinting" name="presencePrinting" /><span class="check-box"></span
-                    ><span class="check-text"
-                      ><strong>A printer printing counts as presence</strong
-                      ><span class="ct-hint">Preparing, printing or paused, on any printer on the deck.</span></span
-                    ></label
-                  >
-                  <label class="check-row standalone"
                     ><input type="checkbox" id="nightWake" name="nightWake" /><span class="check-box"></span
                     ><span class="check-text"
                       ><strong>Night wake brightness</strong
@@ -1047,7 +848,7 @@
                     ><span class="check-text"
                       ><strong>Enable the speaker</strong
                       ><span class="ct-hint"
-                        >Sounds for printer events and tile taps, through the board's built-in amplifier and a
+                        >Sounds for tile taps, through the board's built-in amplifier and a
                         small speaker on its speaker connector.</span
                       ></span
                     ></label
@@ -1061,18 +862,6 @@
                           id="audioVolumeVal"
                           >--</span
                         >
-                      </div>
-                    </div>
-                    <div class="grid-2">
-                      <div class="field">
-                        <label class="field-label" for="audioWakeMs">Wake-up delay (ms)</label>
-                        <input type="number" id="audioWakeMs" name="audioWakeMs" min="0" max="1000" step="10" />
-                        <p class="field-hint">Time the amplifier gets to start before a sound. Raise it if the first tap after a pause is silent.</p>
-                      </div>
-                      <div class="field">
-                        <label class="field-label" for="audioKeepOnMs">Keep on after a sound (ms)</label>
-                        <input type="number" id="audioKeepOnMs" name="audioKeepOnMs" min="500" max="600000" step="500" />
-                        <p class="field-hint">Taps within this time play at once, without the wake-up delay.</p>
                       </div>
                     </div>
                     <div class="check-list">
@@ -1092,46 +881,6 @@
                           ><span class="ct-hint">A short tick each time a tile is tapped or held.</span></span
                         ></label
                       >
-                    </div>
-                    <div class="audio-events">
-                      <div class="audio-event">
-                        <label class="check-row"
-                          ><input type="checkbox" id="audioFinished" name="audioFinished" /><span
-                            class="check-box"
-                          ></span
-                          ><span class="check-text"><strong>Print finished</strong></span></label
-                        >
-                        <div class="audio-pick">
-                          <select id="audioFileFinished" name="audioFileFinished" aria-label="Print finished sound"></select
-                          ><button type="button" class="btn" data-audio-test="finished">Test</button>
-                        </div>
-                      </div>
-                      <div class="audio-event">
-                        <label class="check-row"
-                          ><input type="checkbox" id="audioError" name="audioError" /><span class="check-box"></span
-                          ><span class="check-text"
-                            ><strong>Printer error</strong
-                            ><span class="ct-hint">New errors only, as set on the Printers page.</span></span
-                          ></label
-                        >
-                        <div class="audio-pick">
-                          <select id="audioFileError" name="audioFileError" aria-label="Printer error sound"></select
-                          ><button type="button" class="btn" data-audio-test="error">Test</button>
-                        </div>
-                      </div>
-                      <div class="audio-event">
-                        <label class="check-row"
-                          ><input type="checkbox" id="audioCooled" name="audioCooled" /><span class="check-box"></span
-                          ><span class="check-text"
-                            ><strong>Bed cooled</strong
-                            ><span class="ct-hint">With the bed cooled alert on the Printers page.</span></span
-                          ></label
-                        >
-                        <div class="audio-pick">
-                          <select id="audioFileCooled" name="audioFileCooled" aria-label="Bed cooled sound"></select
-                          ><button type="button" class="btn" data-audio-test="cooled">Test</button>
-                        </div>
-                      </div>
                     </div>
                     <div class="field">
                       <span class="field-label">Your sounds</span>
@@ -1238,19 +987,8 @@
                         ><span class="check-text"
                           ><strong>Off while the display is off</strong
                           ><span class="ct-hint"
-                            >Covers the manual off gesture, the PC-offline sleep timer, and a night brightness
+                            >Covers the manual off gesture, presence-controlled sleep, and a night brightness
                             of zero.</span
-                          ></span
-                        ></label
-                      ><label class="check-row"
-                        ><input type="checkbox" id="ledOfflineOff" name="ledOfflineOff" /><span
-                          class="check-box"
-                        ></span
-                        ><span class="check-text"
-                          ><strong>Off while the PC is offline</strong
-                          ><span class="ct-hint"
-                            >Dark whenever no telemetry has arrived recently, even if the panel stays
-                            on.</span
                           ></span
                         ></label
                       >
@@ -1338,8 +1076,7 @@
               <div class="page-header">
                 <h1 class="page-h1">Time</h1>
                 <p class="page-lede">
-                  Clock format, where the time comes from, and the timezone for the top bar clock and the
-                  night schedule.
+                  Clock format and the timezone for the top bar clock and the night schedule.
                 </p>
               </div>
               <form
@@ -1360,21 +1097,6 @@
                         </select>
                       </div>
                     </div>
-                  </div>
-                  <div class="field">
-                    <label class="field-label" for="timeSource">Time source</label>
-                    <div class="select-wrap">
-                      <select id="timeSource" name="timeSource">
-                        <option value="ntp">Network time (pool.ntp.org)</option>
-                        <option value="ha">Home Assistant</option>
-                      </select>
-                    </div>
-                    <p class="field-hint">
-                      Home Assistant: for a deck on a network that reaches only Home Assistant. The deck takes
-                      the time from it on every connection and then every hour. The timezone below still
-                      applies.
-                    </p>
-                    <p class="field-hint" id="timeSourceState"></p>
                   </div>
                 </div>
                 <div class="card">
@@ -1512,40 +1234,58 @@
               </form>
             </section>
 
-            <section class="page" data-page="advanced">
+            <section class="page" data-page="homeassistant">
               <div class="page-header">
-                <h1 class="page-h1">Advanced</h1>
-                <p class="page-lede">Optional features that are off unless you need them.</p>
+                <h1 class="page-h1">Home Assistant</h1>
+                <p class="page-lede">Connect tactula to Home Assistant and optionally publish device controls through MQTT.</p>
+              </div>
+              <div class="card">
+                <div class="card-head">
+                  <h2 class="card-title">Home Assistant connection</h2>
+                  <span class="tag" id="dkHaVer">—</span>
+                </div>
+                <p class="field-hint">Use the URL of your Home Assistant server and a long-lived access token from your Home Assistant profile → Security. This connection powers the touchscreen's entities and controls; MQTT is optional.</p>
+                <div class="grid-2">
+                  <div class="field">
+                    <label class="field-label" for="dkHaUrl">Home Assistant address</label>
+                    <input type="text" id="dkHaUrl" placeholder="http://192.168.1.10:8123" autocomplete="off" />
+                  </div>
+                  <div class="field">
+                    <label class="field-label" for="dkHaToken">Long-lived access token</label>
+                    <input type="password" id="dkHaToken" autocomplete="new-password" placeholder="Paste token or leave blank to keep saved token" />
+                    <p class="field-hint">Stored on this device. Existing tokens are never shown in the browser.</p>
+                  </div>
+                </div>
+                <div class="dk-row">
+                  <button type="button" class="btn btn-accent" id="dkHaSave">Save and connect</button>
+                  <button type="button" class="btn" id="dkHaForget">Forget connection</button>
+                </div>
+                <div class="dk-status">
+                  <span class="dk-dot" id="dkHaDot"></span><span id="dkHaState">checking...</span>
+                </div>
+              </div>
+              <div class="page-header" style="margin-top:26px">
+                <h2 class="page-h1" style="font-size:22px">Optional MQTT integration</h2>
+                <p class="page-lede">Expose tactula screen controls and status in Home Assistant via a separate MQTT broker. You don't need this for Home Assistant tiles.</p>
               </div>
               <form
                 id="advancedForm"
                 class="portal-form"
                 data-endpoint="/save/advanced"
-                data-save-label="Save advanced"
+                data-save-label="Save MQTT settings"
               >
                 <div class="card">
-                  <h2 class="card-title">Printers</h2>
-                  <label class="check-row standalone"
-                    ><input type="checkbox" id="printersEnabled" name="printers" /><span
-                      class="check-box"
-                    ></span
-                    ><span class="check-text"
-                      ><strong>Bambu Lab printers over LAN</strong
-                      ><span class="ct-hint"
-                        >The deck connects to the printers itself and shows them on printer pages and tiles,
-                        set up on the <a href="#" data-page="printers">Printers</a> page. Off: no printer
-                        connections, and printer pages, tiles and settings are hidden. Their setup stays stored and comes back when this is turned
-                        on again.</span
-                      ></span
-                    ></label
-                  >
-                </div>
-                <div class="card">
-                  <h2 class="card-title">MQTT (Home Assistant discovery)</h2>
+                  <h2 class="card-title">MQTT discovery</h2>
                   <label class="check-row standalone"
                     ><input type="checkbox" id="mqttEnabled" name="mqttEnabled" /><span class="check-box"></span
                     ><span class="check-text"><strong>Connect to an MQTT broker</strong></span></label
                   >
+                  <div class="field">
+                    <label class="field-label" for="mqttDeviceName">Device name in Home Assistant</label>
+                    <input type="text" id="mqttDeviceName" name="mqttDeviceName" maxlength="48"
+                      value="tactula" placeholder="Office Touchscreen" />
+                    <p class="field-hint">For example, Office Touchscreen or Bedroom Touchscreen. Changes the device's display name without changing its MQTT identity or entity IDs.</p>
+                  </div>
                   <div class="grid-2">
                     <div class="field">
                       <label class="field-label" for="mqttHost">Broker</label>
@@ -1576,11 +1316,87 @@
                   </div>
                   <p class="maintenance-copy">Status: <span id="mqttStatus">off</span></p>
                   <p class="maintenance-copy">
-                    The deck appears in Home Assistant under Settings &gt; Devices &gt; MQTT.
+                    Your chosen device name appears in Home Assistant under Settings &gt; Devices &gt; MQTT.
                     Needs the MQTT integration and a broker such as the Mosquitto add-on.
                   </p>
+                  <div class="maintenance-actions" style="margin-top:18px">
+                    <button type="button" class="btn btn-accent" id="mqttSaveInline">Save MQTT settings</button>
+                    <span class="field-hint" id="mqttUnsavedHint" role="status">Settings saved</span>
+                  </div>
                 </div>
               </form>
+            </section>
+
+            <section class="page" data-page="printer" id="printerSection">
+              <div class="page-header">
+                <h1 class="page-h1">Bambu printer</h1>
+                <p class="page-lede">Connect your P1S and monitor its print progress, temperatures, AMS, and chamber light.</p>
+              </div>
+              <div class="card">
+                <div class="card-head">
+                  <h2 class="card-title">Printer status</h2>
+                  <span class="tag" id="prState">Loading</span>
+                </div>
+                <p class="field-hint" id="prFault" role="status"></p>
+                <h3 class="card-title" id="prJob" style="margin:14px 0">No job</h3>
+                <progress class="pr-progress" id="prProgress" max="100" value="0"></progress>
+                <div class="pr-metrics">
+                  <div class="pr-metric"><span>Progress</span><strong id="prPct">—</strong></div>
+                  <div class="pr-metric"><span>Time left</span><strong id="prTime">—</strong></div>
+                  <div class="pr-metric"><span>Layer</span><strong id="prLayer">—</strong></div>
+                  <div class="pr-metric"><span>Nozzle</span><strong id="prNozzle">—</strong></div>
+                  <div class="pr-metric"><span>Bed</span><strong id="prBed">—</strong></div>
+                  <div class="pr-metric"><span>Chamber</span><strong id="prChamber">—</strong></div>
+                </div>
+                <h3 class="card-title" style="margin-top:20px">AMS</h3>
+                <div class="pr-ams" id="prAms">No AMS data yet</div>
+                <h3 class="card-title" style="margin-top:20px">Chamber light</h3>
+                <div class="maintenance-actions" style="margin-top:10px">
+                  <button type="button" class="btn" id="prLightOn" disabled>Turn on</button>
+                  <button type="button" class="btn" id="prLightOff" disabled>Turn off</button>
+                </div>
+              </div>
+              <div class="card">
+                <h2 class="card-title">Printer connection</h2>
+                <p class="field-hint">Credentials are stored on the touchscreen. Leave the access code empty to keep the saved code.</p>
+                <form id="prConfig">
+                  <label class="check-row standalone">
+                    <input type="checkbox" id="prEnabled" name="enabled" />
+                    <span class="check-box"></span>
+                    <span class="check-text"><strong>Enable printer</strong></span>
+                  </label>
+                  <div class="grid-2">
+                    <div class="field">
+                      <label class="field-label" for="prSource">Connection source</label>
+                      <div class="select-wrap"><select id="prSource" name="source">
+                        <option value="lan">P1S LAN (MQTT over TLS)</option>
+                        <option value="ha">Home Assistant Bambu integration</option>
+                      </select></div>
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="prAddress">Printer IP or hostname</label>
+                      <input type="text" id="prAddress" name="address" maxlength="128" placeholder="192.168.1.50" />
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="prDisplayName">Printer display name</label>
+                      <input type="text" id="prDisplayName" name="display_name" maxlength="48" placeholder="e.g. Kung Fu Printer" />
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="prSerial">Printer serial number</label>
+                      <input type="text" id="prSerial" name="serial" maxlength="80" placeholder="Serial number" />
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="prCode">LAN access code <span id="prHasCode"></span></label>
+                      <input type="password" id="prCode" name="code" maxlength="80" autocomplete="new-password" placeholder="Leave blank to keep saved code" />
+                    </div>
+                  </div>
+                  <div class="maintenance-actions" style="margin-top:18px">
+                    <button type="button" class="btn" id="prDiscover">Find in Home Assistant</button>
+                    <button type="submit" class="btn btn-accent" id="prSave">Save printer</button>
+                  </div>
+                </form>
+                <p class="field-hint" id="prMessage" role="status" style="margin-top:12px"></p>
+              </div>
             </section>
 
             <section class="page" data-page="maintenance">
@@ -1606,9 +1422,62 @@
                 <div class="note">
                   <span class="note-k">Info</span
                   ><span
-                    >Import accepts TouchDeck backup files only, validates every setting, and restarts the
+                    >Import accepts tactula-compatible backup files, validates every setting, and restarts the
                     device after a successful restore.</span
                   >
+                </div>
+              </div>
+              <div class="card">
+                <h2 class="card-title">Internal flash storage</h2>
+                <p class="maintenance-copy">
+                  Stores your pages and tiles (deck.json), icon font, wallpapers and other files
+                  in the ESP32's own flash memory. No microSD card is needed to save pages.
+                </p>
+                <p class="field-hint" id="flashStorageStatus" role="status">Checking internal flash...</p>
+                <div id="flashStorageRecovery" class="hidden">
+                  <div class="note warn">
+                    <span class="note-k">Warning</span>
+                    <span>The internal filesystem cannot mount. This may be new, unformatted
+                    flash, or it may contain files from an older installation. Initialization
+                    <strong>permanently erases its contents</strong>, including any existing
+                    pages, icons and pictures. It does not erase Home Assistant or Wi-Fi
+                    credentials in NVS. Do not initialize if you need to recover old files.</span>
+                  </div>
+                  <div class="field" style="margin-top:16px;max-width:350px">
+                    <label class="field-label" for="flashInitializeConfirm">Type FORMAT INTERNAL FLASH to confirm</label>
+                    <input type="text" id="flashInitializeConfirm" autocomplete="off"
+                      spellcheck="false" placeholder="FORMAT INTERNAL FLASH" />
+                  </div>
+                  <div class="maintenance-actions">
+                    <button type="button" class="btn btn-danger" id="flashInitialize" disabled>
+                      Initialize internal flash
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="card">
+                <h2 class="card-title">Automatic firmware update checks</h2>
+                <p class="maintenance-copy">Check the Tactula firmware website for newer, matching releases. Updates are never installed silently.</p>
+                <div class="field">
+                  <label class="field-label"><input type="checkbox" id="fwChecksEnabled" checked /> Check for updates automatically</label>
+                </div>
+                <div class="field">
+                  <label class="field-label"><input type="checkbox" id="fwShowBadge" checked /> Show an update icon in the touchscreen top bar</label>
+                </div>
+                <div class="field">
+                  <label class="field-label"><input type="checkbox" id="fwAutoDownload" /> Automatically download verified firmware to the inactive OTA partition</label>
+                </div>
+                <div class="fw-update-feedback">
+                  <p class="fw-update-summary" id="fwUpdateStatus" role="status">Checking update settings...</p>
+                  <p class="fw-update-detail" id="fwDownloadStatus" role="status"></p>
+                </div>
+                <div class="maintenance-actions fw-update-actions">
+                  <button type="button" class="btn btn-accent" id="fwCheckNow">Check now</button>
+                  <button type="button" class="btn" id="fwDownloadNow" disabled>Download verified OTA</button>
+                  <a class="btn" href="https://firmware.mrsleeps.uk/tactula/" target="_blank" rel="noopener noreferrer">Firmware downloads</a>
+                </div>
+                <div class="note">
+                  <span class="note-k">Security</span><span>The download is verified over HTTPS against the SHA-256 digest in the website manifest, which is generated from verified official GitHub release assets. The device never activates a downloaded image without on-screen confirmation. Fully unattended installation requires signed releases and additional protections.</span>
                 </div>
               </div>
               <div class="card">
@@ -1635,7 +1504,7 @@
                 <dl class="facts">
                   <div>
                     <dt>Product</dt>
-                    <dd>TouchDeck</dd>
+                    <dd>tactula</dd>
                   </div>
                   <div>
                     <dt>Version</dt>
@@ -1650,31 +1519,6 @@
                     <dd id="maintIp">--</dd>
                   </div>
                 </dl>
-              </div>
-              <div class="card hidden" id="coprocBox">
-                <h2 class="card-title">WiFi co-processor</h2>
-                <p class="maintenance-copy">
-                  WiFi runs on a separate chip with its own firmware, which has to match this TouchDeck
-                  build.
-                </p>
-                <dl class="facts">
-                  <div>
-                    <dt>Installed</dt>
-                    <dd id="coprocFw">--</dd>
-                  </div>
-                  <div>
-                    <dt>Expected</dt>
-                    <dd id="coprocWant">--</dd>
-                  </div>
-                </dl>
-                <p id="coprocState" class="field-hint" role="status"></p>
-                <div class="maintenance-actions">
-                  <button type="button" class="btn btn-accent hidden" id="coprocUpdate">Update co-processor</button>
-                </div>
-                <p class="field-hint">
-                  Downloads the matching firmware from Espressif and writes it over the WiFi link. Takes about
-                  a minute; keep the deck powered. It restarts when done.
-                </p>
               </div>
               <div class="card" id="sdCardBox">
                 <h2 class="card-title">microSD card</h2>
@@ -1696,6 +1540,23 @@
                   Format card erases the card and creates one FAT partition the deck can read. Use it when
                   the card answers but its file system is not accepted.
                 </p>
+              </div>
+              <div class="card" id="bedroomIconsCard">
+                <h2 class="card-title">Custom PNG icons</h2>
+                <p class="maintenance-copy">
+                  Upload transparent PNG icons straight to the microSD card, without removing it.
+                  Use lowercase filenames such as <code>netflix_on.png</code> and <code>netflix_off.png</code>.
+                  Icons are shared across tactula variants; existing files remain in <code>/touchdeck/icons/bedroom/</code> for compatibility.
+                </p>
+                <p id="bedroomIconsStatus" class="field-hint" role="status">Checking microSD card...</p>
+                <div class="maintenance-actions">
+                  <button type="button" class="btn btn-accent" id="bedroomIconsBrowse">Upload PNG icons</button>
+                  <button type="button" class="btn" id="bedroomIconsRefresh">Refresh icons</button>
+                  <input type="file" id="bedroomIconsFiles" accept=".png,image/png" multiple hidden />
+                </div>
+                <div id="bedroomIconsList" class="dk-row" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:14px"></div>
+                <p class="field-hint">Maximum 512 KB and 512×512 pixels per icon. Existing names are replaced.
+                  PNG display on the touchscreen will be added separately; this section currently manages the files.</p>
               </div>
               <div class="card danger-card">
                 <h2 class="card-title">Factory reset</h2>

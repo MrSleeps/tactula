@@ -1,5 +1,7 @@
 // Deck UI: tile look and building a tile.
 #include "deck_ui_int.h"
+#include "deck_sd.h"
+#include <math.h>
 
 namespace deckui {
 
@@ -10,11 +12,11 @@ String entityDomain(const String& entity) {
 }
 
 uint32_t domainColor(const String& domain) {
-  if (domain == "light") return 0xF6C56B;
-  if (domain == "switch" || domain == "fan" || domain == "input_boolean") return 0x5CC9A7;
-  if (domain == "scene" || domain == "script") return 0xB3A6FF;
-  if (domain == "lock" || domain == "cover") return 0x9DB8FF;
-  return 0x7DB5FF;
+  if (domain == "light") return 0xB8ADFF;
+  if (domain == "switch" || domain == "fan" || domain == "input_boolean") return 0x927DFF;
+  if (domain == "scene" || domain == "script") return 0x7664E4;
+  if (domain == "lock" || domain == "cover") return 0x85C4FF;
+  return 0x48A5FF;
 }
 
 // Material Design Icons names (what HA uses) mapped onto the LVGL symbol font
@@ -25,7 +27,7 @@ const char* iconSymbol(const TileDef& t) {
     {"lightbulb", LV_SYMBOL_EYE_OPEN}, {"ceiling-light", LV_SYMBOL_EYE_OPEN},
     {"television-ambient-light", LV_SYMBOL_IMAGE}, {"fan", LV_SYMBOL_REFRESH},
     {"weather-night", LV_SYMBOL_IMAGE}, {"eye", LV_SYMBOL_EYE_OPEN},
-    {"printer-3d", LV_SYMBOL_CHARGE}, {"speaker", LV_SYMBOL_AUDIO},
+    {"speaker", LV_SYMBOL_AUDIO},
     {"lock", LV_SYMBOL_HOME}, {"power", LV_SYMBOL_POWER}, {"power-sleep", LV_SYMBOL_POWER},
     {"chevron-right", LV_SYMBOL_RIGHT}, {"chevron-left", LV_SYMBOL_LEFT},
     {"microphone-off", LV_SYMBOL_MUTE}, {"image", LV_SYMBOL_IMAGE},
@@ -97,7 +99,8 @@ uint32_t showIcon(lv_obj_t* label, const TileDef& d, const HaEntity* e, bool on,
   if (!cp && d.icon.length()) cp = iconCodepoint(d.icon);
   if (!cp && e && e->icon.length()) cp = iconCodepoint(e->icon);
   if (!cp)
-    cp = iconCodepoint(defaultIcon(entityDomain(d.entity), e ? e->deviceClass : String(),
+    cp = iconCodepoint(d.type == TILE_NAV ? "arrow-right-circle-outline" :
+                       defaultIcon(entityDomain(d.entity), e ? e->deviceClass : String(),
                                    e ? e->unit : String(), on));
   const lv_font_t* f = cp ? iconFont(px, cp) : nullptr;
   if (!f) cp = 0;
@@ -116,8 +119,7 @@ uint32_t showIcon(lv_obj_t* label, const TileDef& d, const HaEntity* e, bool on,
 String tileLabel(const TileDef& t) {
   if (t.label.length()) return t.label;
   if (t.type == TILE_CLOCK) return "Clock";
-  if (t.type == TILE_MEDIA) return "Now playing";
-  if (t.type == TILE_VIZ) return "Audio";
+  if (t.type == TILE_NAV) return "Navigation";
   const int dot = t.entity.indexOf('.');
   if (dot > 0) return t.entity.substring(dot + 1);
   return t.id.length() ? t.id : String("Tile");
@@ -134,12 +136,107 @@ String tileSub(const TileRt& r) {
   return "";
 }
 
+// A tile with a matching id (Netflix, Plex, etc.) can use two PNGs stored
+// in /touchdeck/icons/bedroom/. MDI remains the fallback while the card or
+// either file is missing. The built-in SD 'B:' driver also serves brand fonts.
+static bool bedroomPngName(const String& filename) {
+  if (filename.length() < 8 || filename.length() > 64 || !filename.endsWith(".png")) return false;
+  const int suffix = filename.lastIndexOf('_');
+  if (suffix < 1 || (filename.substring(suffix) != "_on.png" &&
+                      filename.substring(suffix) != "_off.png")) return false;
+  for (int i = 0; i < suffix; ++i) {
+    const char c = filename[i];
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) return false;
+  }
+  return true;
+}
+
+void fitPngIcon(TileRt& r) {
+  if (!r.pngIcon || !r.pngWidth || !r.pngHeight || !r.obj) return;
+  // PNGs are direct children of the tile, not of the small MDI icon chip.
+  // Reserve space for the label at the bottom and keep the artwork centred.
+  const int w = lv_obj_get_width(r.obj);
+  const int h = lv_obj_get_height(r.obj);
+  if (w <= 0 || h <= 0) return;
+  const int pad = std::min(w, h) >= 80 ? 9 : std::min(w, h) >= 56 ? 7 : 5;
+  const bool artworkOnly = r.def->type == TILE_NAV || r.def->noName;
+  const int labelH = artworkOnly ? 0 : w - 2 * pad < 90 ? 15 : 18;
+  const int reserved = artworkOnly ? 0 : labelH + 8;
+  const int availableW = std::max(1, w - 2 * pad - 2);
+  const int availableH = std::max(1, h - 2 * pad - reserved - 2);
+  // Hidden labels give logos the entire inner tile. Allow modest upscaling
+  // of small source PNGs (up to 2x), without stretching their aspect ratio.
+  const uint32_t maxScale = artworkOnly ? 512 : 256;
+  const uint32_t scale = std::min<uint32_t>(maxScale, std::min<uint32_t>(
+      (uint32_t)availableW * 256 / r.pngWidth,
+      (uint32_t)availableH * 256 / r.pngHeight));
+  lv_image_set_scale(r.pngIcon, std::max<uint32_t>(1, scale));
+  lv_obj_align(r.pngIcon, LV_ALIGN_CENTER, 0, -reserved / 2);
+}
+
+void updatePngIcon(TileRt& r, bool on) {
+  // Navigation icons are explicit: without a chosen PNG, always show the
+  // selected MDI/brand icon rather than silently loading an id_off.png file.
+  if (!r.icon || !r.chip || !r.def || !deck::wallOnSd() ||
+      (r.def->type == TILE_NAV && !r.def->offImage.length())) {
+    const bool wasPng = r.pngIcon && !lv_obj_has_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN);
+    if (r.pngIcon) lv_obj_add_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN);
+    if (r.icon) lv_obj_remove_flag(r.icon, LV_OBJ_FLAG_HIDDEN);
+    if (wasPng && r.fitW > 0) { r.fitW = 0; fitTile(r); }
+    return;
+  }
+  const String name = on
+      ? (r.def->onImage.length() ? r.def->onImage : r.def->id + "_on.png")
+      : (r.def->offImage.length() ? r.def->offImage : r.def->id + "_off.png");
+  if (!bedroomPngName(name)) {
+    if (r.pngIcon) lv_obj_add_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN);
+    r.pngSource = "";
+    lv_obj_remove_flag(r.icon, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  const String path = String("/touchdeck/icons/bedroom/") + name;
+  if (!deck::wallFs().exists(path)) {
+    const bool wasPng = r.pngIcon && !lv_obj_has_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN);
+    if (r.pngIcon) lv_obj_add_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN);
+    r.pngSource = "";
+    lv_obj_remove_flag(r.icon, LV_OBJ_FLAG_HIDDEN);
+    if (wasPng && r.fitW > 0) { r.fitW = 0; fitTile(r); }
+    return;
+  }
+  deck::iconsRegisterSdFs();
+  const String source = "B:" + path;
+  lv_image_header_t info = {};
+  if (lv_image_decoder_get_info(source.c_str(), &info) != LV_RESULT_OK ||
+      info.w == 0 || info.h == 0) {
+    if (r.pngIcon) lv_obj_add_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(r.icon, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  if (!r.pngIcon) {
+    r.pngIcon = lv_image_create(r.obj);
+    lv_obj_remove_flag(r.pngIcon, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+  }
+  // Remember the PNG's natural dimensions. fitButton will size the chip to
+  // its tile, and fitPngIcon will centre and scale the image within it.
+  const bool wasPng = r.pngIcon && !lv_obj_has_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN);
+  r.pngWidth = info.w;
+  r.pngHeight = info.h;
+  if (r.pngSource != source) {
+    lv_image_set_src(r.pngIcon, source.c_str());
+    r.pngSource = source;
+  }
+  fitPngIcon(r);
+  lv_obj_remove_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(r.icon, LV_OBJ_FLAG_HIDDEN);
+  if (!wasPng && r.fitW > 0) { r.fitW = 0; fitTile(r); }
+}
+
 void markPageStale(int page) {
   if (page >= 0 && page < s_count) s_pages[page].stale = true;
 }
 
 uint32_t tileAccent(const TileDef& def) {
-  return def.hasColor ? def.color : def.type == TILE_PRINTER ? C_PRN_HEAT : domainColor(entityDomain(def.entity));
+  return def.hasColor ? def.color : domainColor(entityDomain(def.entity));
 }
 
 // Per-tile look from deck.json, else the theme and display settings.
@@ -148,21 +245,75 @@ uint32_t tileOnFill(const TileDef& d) { return d.hasOnColor ? d.onColor : tileAc
 int tileTint(const TileDef& d) { return d.opacity >= 0 ? d.opacity : dispSettings.glassTint; }
 int tileOnOpa(const TileDef& d) { return d.onOpacity >= 0 ? d.onOpacity : dispSettings.glassOn; }
 
-// The icon's colour: a lit light's own colour ("lightIcon"; dimmer at low
-// brightness), else "onIconColor" / "iconColor", else the accent; a plain icon
-// on an on tile takes the text colour, as the accent would vanish on the on fill.
-// e: the tile's entity if the caller has it, else looked up when needed.
+// Home Assistant normally includes rgb_color, including for some white modes.
+// Convert Kelvin to approximate RGB when a white-only light omits rgb_color.
+uint32_t lightColourRgb(const HaEntity& e) {
+  if (e.rgb >= 0) return (uint32_t)e.rgb;
+  if (e.colorTempKelvin <= 0) return 0xFFFFFFFFu;
+  const float k = constrain(e.colorTempKelvin / 100.0f, 10.0f, 400.0f);
+  const float red = k <= 66 ? 255 : 329.6987f * powf(k - 60, -0.1332048f);
+  const float green = k <= 66 ? 99.4708f * logf(k) - 161.1196f
+                              : 288.1222f * powf(k - 60, -0.07551485f);
+  const float blue = k >= 66 ? 255 : k <= 19 ? 0 : 138.5177f * logf(k - 10) - 305.0448f;
+  auto byte = [](float v) -> uint32_t { return (uint32_t)constrain((int)lroundf(v), 0, 255); };
+  return (byte(red) << 16) | (byte(green) << 8) | byte(blue);
+}
+
+// Blend an RGB colour into the tile's static background: low-brightness lights
+// stay visible, and "Both" doesn't hide an icon of the same hue.
+uint32_t lightTint(uint32_t rgb, uint32_t base, int alpha) {
+  const int inv = 255 - alpha;
+  const uint32_t r = ((((rgb >> 16) & 255) * alpha + ((base >> 16) & 255) * inv) / 255);
+  const uint32_t g = ((((rgb >> 8) & 255) * alpha + ((base >> 8) & 255) * inv) / 255);
+  const uint32_t b = (((rgb & 255) * alpha + (base & 255) * inv) / 255);
+  return (r << 16) | (g << 8) | b;
+}
+
+// Sync the selected live colour parts with Home Assistant. Off and unavailable
+// lights fall back to the configured static appearance.
 void tileIconColor(TileRt& r, const HaEntity* e) {
   const TileDef& d = *r.def;
-  if (!r.chip || (d.type != TILE_ACTION && d.type != TILE_TOGGLE && d.type != TILE_SLIDER && d.type != TILE_SENSOR))
-    return;
+  if (!r.chip || (d.type != TILE_ACTION && d.type != TILE_TOGGLE &&
+                  d.type != TILE_SLIDER && d.type != TILE_SENSOR)) return;
   const bool on = lv_obj_has_state(r.obj, LV_STATE_CHECKED);
+  const bool light = entityDomain(d.entity) == "light";
+  const bool followIcon = light && (d.lightColorMode & 1);
+  const bool followBg = light && (d.lightColorMode & 2);
   HaEntity own;
-  if (d.lightIcon && !e && haGetEntity(d.entity, own)) e = &own;
-  const bool lit = d.lightIcon && e && e->state == "on";
-  const lv_opa_t opa = lit && e->brightness >= 0 ? (lv_opa_t)(102 + e->brightness * 153 / 255) : LV_OPA_COVER;  // 40..100 %
-  if (lit && e->rgb >= 0) {
-    lv_obj_set_style_text_color(r.chip, lv_color_hex(e->rgb), 0);
+  if ((followIcon || followBg) && !e && haGetEntity(d.entity, own)) e = &own;
+  const bool lit = e && e->known && e->state == "on";
+  const uint32_t rgb = lit ? lightColourRgb(*e) : 0xFFFFFFFFu;
+  const bool live = rgb != 0xFFFFFFFFu;
+  const lv_opa_t iconOpa = followIcon && lit && e->brightness >= 0 ?
+      (lv_opa_t)(102 + e->brightness * 153 / 255) : LV_OPA_COVER;
+
+  if (followBg) {
+    const uint32_t fixed = tileOnFill(d);
+    uint32_t fill = fixed;
+    if (live) {
+      const int strength = 110 + (e->brightness < 0 ? 145 : e->brightness * 145 / 255);
+      fill = lightTint(rgb, tileBg(d), followIcon ? min(strength, 150) : strength);
+    }
+    lv_obj_set_style_bg_color(r.obj, lv_color_hex(fill), LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(r.obj, lv_color_mix(lv_color_hex(fill), lv_color_black(), 200),
+                              LV_STATE_PRESSED | LV_STATE_CHECKED);
+    if (s_theme == THEME_GLASS && wallBlur() && tileOnOpa(d) < 50)
+      lv_obj_set_style_border_color(r.obj, lv_color_hex(fill), LV_STATE_CHECKED);
+    if (r.fill) lv_obj_set_style_bg_color(r.fill, lv_color_hex(live ? fill : tileAccent(d)), 0);
+    if (live && !d.hasOnTextColor) {
+      const int lum = (((fill >> 16) & 255) * 299 + ((fill >> 8) & 255) * 587 +
+                       (fill & 255) * 114) / 1000;
+      const bool glass = s_theme == THEME_GLASS && wallBlur();
+      const bool darkText = lum * (glass ? tileOnOpa(d) : 100) / 100 >= 115;
+      lv_obj_set_style_text_color(r.obj, lv_color_hex(darkText ? C_TEXT_ON : C_TEXT), LV_STATE_CHECKED);
+    } else if (!d.hasOnTextColor) {
+      lv_obj_set_style_text_color(r.obj, lv_color_hex(onTextColor(d, s_theme == THEME_GLASS && wallBlur())),
+                                  LV_STATE_CHECKED);
+    }
+  }
+
+  if (followIcon && live) {
+    lv_obj_set_style_text_color(r.chip, lv_color_hex(rgb), 0);
   } else if (on && d.hasOnIconColor) {
     lv_obj_set_style_text_color(r.chip, lv_color_hex(d.onIconColor), 0);
   } else if (on && d.iconPlain) {
@@ -172,16 +323,20 @@ void tileIconColor(TileRt& r, const HaEntity* e) {
   } else {
     styleIconChip(r.chip, tileAccent(d));
   }
-  if (lv_obj_get_style_text_opa(r.icon, LV_PART_MAIN) != opa) lv_obj_set_style_text_opa(r.icon, opa, 0);
+  if (lv_obj_get_style_text_opa(r.icon, LV_PART_MAIN) != iconOpa)
+    lv_obj_set_style_text_opa(r.icon, iconOpa, 0);
 }
 
-// Glass tiles are see-through: their glass is baked into the page
-// background (bakeGlass); pressed and on states draw over it.
+// Glass tiles sit over the pre-blurred wallpaper. Ordinary tiles bake their
+// off tint into the wallpaper. Toggle tiles draw BOTH tints at runtime so the
+// checked colour replaces (rather than overlays) the off colour.
 void glassStyle(lv_obj_t* t, const TileDef& def) {
   const int onPct = tileOnOpa(def);
   const lv_opa_t on = (lv_opa_t)(onPct * 255 / 100);
-  lv_obj_set_style_bg_opa(t, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_bg_opa(t, LV_OPA_30, LV_STATE_PRESSED);
+  const bool toggle = def.type == TILE_TOGGLE;
+  const lv_opa_t off = (lv_opa_t)(tileTint(def) * 255 / 100);
+  lv_obj_set_style_bg_opa(t, toggle ? off : LV_OPA_TRANSP, 0);
+  lv_obj_set_style_bg_opa(t, toggle ? off : LV_OPA_30, LV_STATE_PRESSED);
   lv_obj_set_style_bg_opa(t, on, LV_STATE_CHECKED);
   lv_obj_set_style_bg_opa(t, on, LV_STATE_PRESSED | LV_STATE_CHECKED);
   lv_obj_set_style_border_width(t, 0, 0);
@@ -208,7 +363,6 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   const bool glass = s_theme == THEME_GLASS && wallBlur();
 
   lv_obj_t* t = lv_obj_create(grid);
-  lv_obj_set_size(t, 0, 0);  // the grid stretches it; LVGL's default 130 px would be fitted first
   lv_obj_set_grid_cell(t, LV_GRID_ALIGN_STRETCH, col, w, LV_GRID_ALIGN_STRETCH, row, h);
   lv_obj_remove_flag(t, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_radius(t, 16, 0);
@@ -234,143 +388,77 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_add_event_cb(t, fxPressed, LV_EVENT_RELEASED, nullptr);
   lv_obj_add_event_cb(t, fxPressed, LV_EVENT_PRESS_LOST, nullptr);
   if (glass) glassStyle(t, def);
+  // Clock without a card: don't draw a tile fill, outline or shadow.
+  // Glass-theme backgrounds are also omitted from bakeGlass().
+  if ((def.type == TILE_CLOCK ||
+       (def.type == TILE_SENSOR &&
+        (def.style == METRIC_HEADLINE || def.style == METRIC_WEATHER))) && !def.clockBox) {
+    lv_obj_set_style_bg_opa(t, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(t, 0, 0);
+    lv_obj_set_style_shadow_width(t, 0, 0);
+  }
 
-  if (def.type == TILE_PRINTER) {
+#if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
+  if (def.type == TILE_BAMBU) {
     TileRt r = {};
     r.def = &def;
     r.page = page;
     r.obj = t;
-    makePrinterContent(r, t);
     const size_t idx = s_tiles.size();
     s_tiles.push_back(r);
-    applyPrinterToTile(s_tiles.back());
-    // The hero is clickable only while it has errors to list (applyPrinterToTile).
-    if (def.show == PS_LIGHT || def.show == PS_SUMMARY || def.show == PS_HERO)
-      lv_obj_add_event_cb(t, tileEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)idx);
-    if (def.show != PS_LIGHT && def.show != PS_SUMMARY && def.show != PS_HERO)
-      lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);
+    makeBambu(s_tiles.back(), t, idx);
+    applyBambu(s_tiles.back());
+    lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
+    return;
+  }
+#endif
+
+  if (def.type == TILE_HA_MEDIA) {
+    lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);
+    TileRt r = {};
+    r.def = &def;
+    r.page = page;
+    r.obj = t;
+    const size_t idx = s_tiles.size();
+    s_tiles.push_back(r);
+    makeHaMedia(s_tiles.back(), t, idx);
+    HaEntity e;
+    applyHaMedia(s_tiles.back(), haGetEntity(def.entity, e) ? &e : nullptr);
     lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
     return;
   }
 
-  if (def.type == TILE_METRIC || (def.type == TILE_SENSOR && def.style == METRIC_CHART)) {
+  if (def.type == TILE_CLIMATE) {
+    // The card's controls live on the tile itself; the empty background
+    // does not open another modal and the individual buttons take touches.
+    lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);
     TileRt r = {};
     r.def = &def;
     r.page = page;
     r.obj = t;
-    makeMetricContent(r, t);
     const size_t idx = s_tiles.size();
     s_tiles.push_back(r);
-    if (r.spark) {
-      lv_obj_add_event_cb(r.viz, sparkDrawEvent, LV_EVENT_DRAW_MAIN, r.spark);
-      lv_obj_add_event_cb(r.viz, sparkSizeEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
-    }
-    if (def.type == TILE_METRIC) applyPcToTile(s_tiles.back());
-    else {
-      applyHaToTile(s_tiles.back(), true);
-      applySensorHistory(s_tiles.back());
-      lv_obj_add_event_cb(t, tileEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)idx);
-      lv_obj_add_event_cb(t, tileEvent, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)idx);
-    }
+    makeInlineClimate(s_tiles.back(), t, idx);
+    HaEntity e;
+    applyInlineClimate(s_tiles.back(), haGetEntity(def.entity, e) ? &e : nullptr);
     lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
     return;
   }
 
-  if (def.type == TILE_MEDIA) {
+  if (def.type == TILE_SENSOR &&
+      (def.style == METRIC_CHART || def.style == METRIC_HEADLINE || def.style == METRIC_WEATHER)) {
     TileRt r = {};
     r.def = &def;
     r.page = page;
     r.obj = t;
-    r.chip = lv_obj_create(t);
-    lv_obj_remove_style_all(r.chip);
-    lv_obj_remove_flag(r.chip, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
-    lv_obj_set_style_radius(r.chip, 8, 0);
-    lv_obj_set_style_clip_corner(r.chip, true, 0);
-    lv_obj_set_style_bg_color(r.chip, lv_color_hex(C_TRACK), 0);
-    lv_obj_set_style_bg_opa(r.chip, LV_OPA_COVER, 0);
-    r.cover = lv_image_create(r.chip);
-    lv_obj_remove_flag(r.cover, LV_OBJ_FLAG_CLICKABLE);
-    showObj(r.cover, false);
-    r.icon = lv_label_create(r.chip);
-    mediaGlyph(r.icon, "music", "M", 32);
-    lv_obj_center(r.icon);
-    r.name = lv_label_create(t);
-    r.sub = lv_label_create(t);
-    lv_label_set_long_mode(r.name, LV_LABEL_LONG_MODE_DOTS);
-    lv_label_set_long_mode(r.sub, LV_LABEL_LONG_MODE_DOTS);
-    lv_obj_set_style_text_opa(r.sub, LV_OPA_70, 0);
-    r.viz = lv_bar_create(t);
-    lv_obj_remove_style_all(r.viz);
-    lv_obj_remove_flag(r.viz, LV_OBJ_FLAG_CLICKABLE);
-    lv_bar_set_range(r.viz, 0, 1000);
-    lv_obj_set_style_bg_color(r.viz, lv_color_hex(C_TRACK), 0);
-    lv_obj_set_style_bg_opa(r.viz, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(r.viz, lv_color_hex(accent), LV_PART_INDICATOR);
-    lv_obj_set_style_bg_opa(r.viz, LV_OPA_COVER, LV_PART_INDICATOR);
-    lv_obj_set_style_radius(r.viz, 2, 0);
-    lv_obj_set_style_radius(r.viz, 2, LV_PART_INDICATOR);
-    const size_t idx = s_tiles.size();
-    static const char* const icons[] = {"skip-previous", "play", "skip-next"};
-    static const char* const fallback[] = {"|<", ">", ">|"};
-    for (int i = 0; i < 3; i++) {
-      lv_obj_t* button = r.mediaButtons[i] = lv_obj_create(t);
-      lv_obj_remove_style_all(button);
-      lv_obj_remove_flag(button, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_EVENT_BUBBLE));
-      lv_obj_set_style_radius(button, 8, 0);
-      lv_obj_set_style_bg_color(button, lv_color_hex(C_TILE_PRESSED), LV_STATE_PRESSED);
-      lv_obj_set_style_bg_opa(button, LV_OPA_50, LV_STATE_PRESSED);
-      if (i == 1) {
-        r.mediaDisc = lv_obj_create(button);
-        lv_obj_remove_style_all(r.mediaDisc);
-        lv_obj_remove_flag(r.mediaDisc, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
-        lv_obj_set_style_radius(r.mediaDisc, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(r.mediaDisc, lv_color_hex(accent), 0);
-        lv_obj_set_style_bg_opa(r.mediaDisc, LV_OPA_COVER, 0);
-        showObj(r.mediaDisc, false);
-      }
-      r.mediaIcons[i] = lv_label_create(button);
-      mediaGlyph(r.mediaIcons[i], icons[i], fallback[i], 24);
-      lv_obj_center(r.mediaIcons[i]);
-      lv_obj_add_event_cb(button, mediaEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)(idx * 8 + i));
-    }
-    r.volBar = lv_bar_create(t);
-    lv_obj_remove_style_all(r.volBar);
-    lv_obj_add_flag(r.volBar, LV_OBJ_FLAG_CLICKABLE);
-    for (lv_event_code_t c : {LV_EVENT_PRESSED, LV_EVENT_PRESSING, LV_EVENT_SHORT_CLICKED, LV_EVENT_LONG_PRESSED,
-                              LV_EVENT_LONG_PRESSED_REPEAT, LV_EVENT_RELEASED, LV_EVENT_PRESS_LOST})
-      lv_obj_add_event_cb(r.volBar, mediaVolEvent, c, (void*)(uintptr_t)idx);
-    lv_bar_set_range(r.volBar, 0, 100);
-    lv_obj_set_style_bg_color(r.volBar, lv_color_hex(C_TRACK), 0);
-    lv_obj_set_style_bg_opa(r.volBar, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(r.volBar, lv_color_hex(accent), LV_PART_INDICATOR);
-    lv_obj_set_style_bg_opa(r.volBar, LV_OPA_COVER, LV_PART_INDICATOR);
-    lv_obj_set_style_radius(r.volBar, 14, 0);
-    lv_obj_set_style_clip_corner(r.volBar, true, 0);
-    showObj(r.volBar, false);
-    static const char* const volIcons[] = {"volume-minus", "volume-plus"};
-    static const char* const volFallback[] = {"-", "+"};
-    for (int i = 0; i < 2; i++) {
-      r.volIcons[i] = lv_label_create(r.volBar);
-      mediaGlyph(r.volIcons[i], volIcons[i], volFallback[i], 24);
-    }
-    r.iconCp = 2;  // force the first play glyph
-    s_tiles.push_back(r);
-    applyMedia(s_tiles.back());
-    lv_obj_add_event_cb(t, mediaEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)(idx * 8 + 3));
-    lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
-    return;
-  }
-
-  if (def.type == TILE_VIZ) {
-    lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);  // read-only
-    TileRt r = {};
-    r.def = &def;
-    r.page = page;
-    r.obj = t;
-    makeVizContent(r, t);
+    if (def.style == METRIC_WEATHER) makeWeatherContent(r, t);
+    else makeMetricContent(r, t);
     const size_t idx = s_tiles.size();
     s_tiles.push_back(r);
-    lv_obj_add_event_cb(r.viz, vizDrawEvent, LV_EVENT_DRAW_MAIN, r.vz);
+    applyHaToTile(s_tiles.back(), true);
+    if (def.style == METRIC_CHART) applySensorHistory(s_tiles.back());
+    lv_obj_add_event_cb(t, tileEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)idx);
+    lv_obj_add_event_cb(t, tileEvent, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)idx);
     lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
     return;
   }
@@ -433,7 +521,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_set_style_border_width(chip, 0, 0);
   lv_obj_set_style_pad_all(chip, 0, 0);
   styleIconChip(chip, accent);
-  if (def.iconPlain) lv_obj_set_style_bg_opa(chip, LV_OPA_TRANSP, 0);
+  if (def.iconPlain || def.type == TILE_NAV) lv_obj_set_style_bg_opa(chip, LV_OPA_TRANSP, 0);
   if (def.hasIconColor) lv_obj_set_style_text_color(chip, lv_color_hex(def.iconColor), 0);
   lv_obj_t* ic = lv_label_create(chip);
   lv_obj_center(ic);
@@ -451,7 +539,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     lv_obj_set_style_text_align(sub, LV_TEXT_ALIGN_RIGHT, 0);
   }
 
-  const int iconPx = def.type == TILE_SENSOR ? 16 : 20;
+  const int iconPx = def.type == TILE_SENSOR ? 16 : def.type == TILE_NAV ? 28 : 20;
   TileRt r = {};
   r.def = &def;
   r.page = page;
@@ -462,6 +550,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   r.chip = chip;
   r.iconPx = iconPx;
   r.iconCp = showIcon(ic, def, nullptr, false, iconPx, 0);
+  updatePngIcon(r, false);
   r.fill = fill;
   if (def.type == TILE_SENSOR) {
     r.detail = makeDetail(t, def);
@@ -470,7 +559,6 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_label_set_text(sub, tileSub(r).c_str());
   const size_t idx = s_tiles.size();
   s_tiles.push_back(r);
-  if (def.tap.kind == ACT_PC) applyPcStateToTile(s_tiles.back());
   lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
   lv_obj_add_event_cb(t, tileEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)idx);
   lv_obj_add_event_cb(t, tileEvent, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)idx);

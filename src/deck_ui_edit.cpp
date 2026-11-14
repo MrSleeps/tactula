@@ -13,7 +13,7 @@ constexpr int ED_BAR_H = 48;
 constexpr int ED_PAD = 8;
 constexpr int ED_GAP = 7;
 constexpr int ED_SLOP = 6;
-constexpr uint32_t C_ED_OK = 0x5CC9A7;
+constexpr uint32_t C_ED_OK = 0x927DFF;
 constexpr uint32_t C_ED_BAD = 0xE5534B;
 
 EditState s_ed;
@@ -587,15 +587,11 @@ void edCancelEvent(lv_event_t*) { s_ed.pending = EditState::P_CANCEL; }
 String edTileName(const TileDef& d) {
   for (const TileRt& r : s_tiles)
     if (r.def == &d && r.name && *lv_label_get_text(r.name)) return lv_label_get_text(r.name);
-  if (d.type != TILE_METRIC || d.label.length()) return tileLabel(d);
-  const PcMetric* m = pcMetricFind(pcSource(d.pc), d.metric);
-  return m ? String(m->name) : "PC metric " + String(d.metric);
+  return tileLabel(d);
 }
 
 void edMakeBox(int k, const TileDef& d) {
-  const uint32_t accent = d.type == TILE_METRIC ? metricAccent(d)
-                          : d.hasColor          ? d.color
-                                                : domainColor(entityDomain(d.entity));
+  const uint32_t accent = d.hasColor ? d.color : domainColor(entityDomain(d.entity));
   lv_obj_t* b = lv_obj_create(s_ed.root);
   lv_obj_remove_style_all(b);
   lv_obj_remove_flag(b, LV_OBJ_FLAG_SCROLLABLE);
@@ -810,7 +806,8 @@ bool edBuild(String& out, String& err) {
     const TileDef& d = s_ed.added[j];
     JsonObject tv = tiles.add<JsonObject>();
     tv["id"] = d.id;
-    tv["type"] = d.type == TILE_TOGGLE ? "toggle" : d.type == TILE_SENSOR ? "sensor" : "action";
+    tv["type"] = d.type == TILE_TOGGLE ? "toggle" : d.type == TILE_SENSOR ? "sensor" :
+                 d.type == TILE_CLIMATE ? "climate" : d.type == TILE_HA_MEDIA ? "ha-media" : "action";
     tv["entity"] = d.entity;
     JsonObject q = tv["pos"][key].to<JsonObject>();
     putHalves(q, t.c);

@@ -1,6 +1,9 @@
-# TouchDeck guide
+# tactula guide
 
-Full reference for the deck's features. For installing and first-time setup, see the [web flasher](https://touchdeck.stolaris.dev); for an overview, the [README](README.md).
+> **Upstream credit:** tactula is based on [TouchDeck](https://github.com/Keralots/TouchDeck), created by [Rafał Stolarek (Keralots)](https://github.com/Keralots). Original software, documentation and underlying display work belong to the upstream project; see [LICENSE](LICENSE) for the retained MIT copyright notice.
+
+
+Full reference for the deck's features. For initial installation, build the full image below (the upstream TouchDeck web flasher does not install tactula); for an overview, the [README](README.md).
 
 - [Pages and tiles](#pages-and-tiles)
 - [Web portal](#web-portal)
@@ -12,27 +15,36 @@ Full reference for the deck's features. For installing and first-time setup, see
 - [MQTT (Home Assistant discovery)](#mqtt-home-assistant-discovery)
 - [HTTP buttons](#http-buttons)
 - [HTTP sensors](#http-sensors)
-- [Bambu Lab printers](#bambu-lab-printers)
-- [PC stats and control: TouchDeck Companion](#pc-stats-and-control-touchdeck-companion)
+- [Home Assistant media controls](#home-assistant-media-controls)
 - [Status LED](#status-led)
 - [Flashing without the web flasher](#flashing-without-the-web-flasher)
 - [Building from source](#building-from-source)
+- [Automatic firmware updates](#automatic-firmware-updates)
 
 ## Pages and tiles
 
+On a **new installation** with no saved `/deck.json`, tactula starts with one **Home** page containing a large standalone clock. The firmware no longer ships the original personalised bedroom, TV or fish-tank sample layout. This also applies to a fresh `with_bambu` build; Bambu connection settings are under **Configuration → Bambu printer** in the portal, visible only in `with_bambu` builds. Existing valid `/deck.json` layouts are loaded without being replaced. An ordinary firmware update **will not reset** your existing layout.
+
+With `with_bambu`, enabling and saving a valid printer under **Configuration → Bambu printer** installs the original-inspired **P1S Printer** and **P1S AMS** page templates into the same internal `/deck.json` as your other pages (once, not on every reboot). The **P1S Printer** starter now follows Keralots' original three-row layout: a full-width job/progress header, four temperature cards (left/right nozzle, bed, chamber), then a two-column filament card, layer and light controls. On the single-nozzle P1S, the unavailable second nozzle is labelled accordingly; dual-nozzle hardware shows both. The additional AMS page remains stacked below. They appear in **Pages & tiles** and can be renamed, reordered, deleted, dragged/resized and mixed with other tiles; the Bambu widgets have a selector for print status, temperatures, filament, layer, chamber light, AMS status and slot colours. Saving edits persists them like any other page. Switching the printer off hides those saved pages on the touchscreen without deleting their layouts; switching it back on restores them. A deleted default page will **not** be recreated automatically, and printer credentials remain separately in NVS (never in `deck.json`).
+
+### Internal flash storage
+
+**Pages and tiles are saved to the ESP32's internal LittleFS flash partition** as `/deck.json`. No SD card is needed. tactula automatically mounts an existing filesystem. If the mount fails on a **completely erased, never-initialized flash partition**, it checks the entire partition for erased bytes (`0xFF`) and automatically creates/mounts LittleFS. Saving your first page therefore works without manual formatting.
+
+If the partition is **not blank**, or a flash read fails, tactula will **never automatically format it**: this might be an older or recoverable filesystem. In that situation, go to **Maintenance → Internal flash storage** to diagnose the problem. If you are certain there is nothing on that partition you need to preserve, type **FORMAT INTERNAL FLASH** and explicitly initialize it. That action erases its existing files (`deck.json`, icon fonts and wallpapers) but does not intentionally clear the separate NVS Wi-Fi/Home Assistant credentials.
+
 - **Grid:** up to 6x4 cells per page. Tiles are placed and sized in half-cell steps (1x1.5, 1.5x1, 0.5x0.5...); text and icons scale with the tile, so small tiles shrink instead of overlapping.
 - **Columns:** pages stacked into a column. Swipe left and right between columns, up and down between the pages of a column.
+- **Navigation tiles:** use **+ Add navigation** in Pages & tiles to create a dedicated icon-only button, then select its destination page. The icon (MDI or installed custom brand icon) is centred and scales with the tile; no label, state or Home Assistant entity is shown. Under the tile's More options use the explicit **Choose MDI / Brand icon** button to search the installed icons, or select an uploaded PNG (`*_off.png`) from **Maintenance → Custom PNG icons**. PNG takes priority while selected; choosing an icon switches the tile back to the icon display; the image is centred and uses the tile's full available area rather than reserving space for a label. The navigation button uses the existing page swipe/navigation action and can be resized like other tiles.
 - **Home Assistant tiles:** live state over the WebSocket API, optimistic toggles, scenes / scripts / buttons, a detail card on long press with a level slider (light brightness, cover position, fan speed, volume, numbers). Icons come from Material Design Icons, the set Home Assistant uses (the font is installed from the portal).
-- **Sensor history:** `style: "chart"` and `hours` (1..168, default 24) show Home Assistant history; the detail card includes min / max / now. Optional `warn` and `crit` thresholds colour the value and line amber or red; `crit` below `warn` makes lower values worse, such as battery levels. `"format": "duration"` shows a reading in s, min, h or d as `1h 49m` or `3d 2h` (uptime, time left on a print, a battery runtime).
+- **Sensor history:** `style: "chart"` and `hours` (1..168, default 24) show Home Assistant history; the detail card includes min / max / now. Optional `warn` and `crit` thresholds colour the value and line amber or red; `crit` below `warn` makes lower values worse, such as battery levels. `"format": "duration"` shows a reading in s, min, h or d as `1h 49m` or `3d 2h` (uptime, a battery runtime).
+- **Large temperature:** add with **+ Add temperature** and select a `sensor.*` **or** `climate.*` entity. Sensor tiles show the sensor's numeric state; climate tiles show its **current_temperature** (actual room temperature), **not** the thermostat target or HVAC mode. It displays a single large reading using the Clock tile's digit font (no chart) and a small label. By default it is standalone with no tile background; choose **Boxed** under More options to add the themed fill. Existing sensor tiles can select **Style → Large temperature**. When a large temperature tile is in the same row as a Clock tile, its value aligns with the clock's time by reserving a matching lower line for the sensor label (or a visually hidden spacer when the label is disabled). Without an adjacent clock, its normal centred layout is unchanged.
+- **Weather:** add with **+ Add weather** and select any `weather.*` entity (for example Met Office or PirateWeather). Its current temperature, conditions and weather icon refresh from Home Assistant. With **Automatic** selected in the icon picker, the weather icon also follows `sun.sun` (above/below horizon): clear and partly-cloudy conditions switch between sun and moon versions at sunrise/sunset, even if the weather condition stays the same. A manually chosen MDI/brand icon remains fixed. If `sun.sun` is unavailable, TouchDeck uses the condition's regular icon. Tap to open a scrollable detail popup showing available feels-like temperature, humidity, wind/gusts, pressure, visibility and UV. Missing data is omitted. This shows **current observations only**; the separate Home Assistant `weather.get_forecasts` response is not yet included. Switch between weather providers via the tile's **Entity** selector. The tile can be Boxed or Standalone. On short 2×1 cards, the condition and icon share a compact top row so the temperature remains large and readable; taller cards show the title and condition separately. Readings are re-fitted whenever Home Assistant changes them.
 - **Climate tiles:** a thermostat shows its mode and setpoint ("Heat 21.5°"). Tap toggles it; hold opens the card with - / + to move the setpoint in the entity's own step (0.5° when it reports none, within its min / max), the room temperature and what it is doing ("Now 20.5° • Heating"), and its HVAC modes as buttons. Taps in a row are sent as one `set_temperature` once they stop; a heat/cool range moves low and high together.
 - **Slider tiles:** a light, cover, fan, media player or number as a tile that fills to its level; drag sideways on it to change the level (the page does not swipe there), tap to toggle, hold for the card. Pick "Slider" as the tile type in the portal.
-- **Now playing from Home Assistant:** set the source of a "+ Add now playing" tile to "Home Assistant player" and pick a `media_player` (a speaker, a streamer, a TV) to show its title, artist, progress and cover and to control it with previous / play-pause / next, without a PC. The cover comes through Home Assistant's own image proxy and is decoded on the device (JPEG, including progressive; a PNG cover, such as an input icon, shows the music icon instead).
-- **Now playing size:** the tile grows with its size. From 2x2 the buttons get bigger with play in a circle; a taller tile (2x3) puts a big cover over the title with an upright volume bar beside it, a wider one (3x2, 4x2) puts the volume bar beside the buttons. Drag along the bar to set the level, tap its + or - half for a 5 % step, or hold a half to keep going. Smaller tiles show the track and tap to play or pause. Volume works for both sources; a slider tile for the same player is the other way.
-- **Now playing auto source:** "Auto: PC ... or HA player" shows whichever of the two plays and sends the buttons there; when both play, the PC wins. A Home Assistant player playing one of its own inputs (optical, HDMI: often the PC itself) does not count as playing. With nothing playing the tile stays on the last source.
-- **Confirm before acting:** a tile can ask on the device before it turns something off (a printer mid-print) or before every action. Set it under the tile's "more options" button in the portal.
 - **Tile colours:** per tile, the accent, icon (off and on), text, off background and on fill colours, and in Glass its own glass and on opacity, all optional on top of the theme ("more options" in Pages & tiles).
-- **Icon style:** buttons, switches, sliders and sensors show their icon in a circle or without one (then it fills its place). A switch can show a different icon while on, and a light's icon can follow the light's own colour and brightness. The grid editor shows each tile's icon style and colour.
-- **Quick panel:** pull down from the top edge for screen and LED brightness, link status, screen off, night mode, the top bar switch and the page editor.
+- **Icon style:** buttons, switches, sliders and sensors show their icon in a circle or without one (then it fills its place). A switch can show a different icon while on. For Home Assistant lights, **Follow light colour** can use the light's live colour for the icon, tile background, both, or neither (fixed). The off state keeps its normal colours; colour temperature is supported too. The grid editor shows each tile's icon style and colour.
+- **Quick panel:** pull down from the top edge for screen and LED brightness, link status, screen off, night mode, the top bar switch and the page editor. When a page contains a visible clock tile, the header's duplicate time is automatically hidden on that page; the page name and Wi-Fi remain, and the Wi-Fi moves to the right. Other pages retain their header clocks. Conditional clock tiles follow their current visibility.
 - **Edit on the device:** long press an empty spot of a page (or Edit in the quick panel) to move (swap works as in the portal), resize or remove its tiles, or add one with + (a list of Home Assistant entities by group, from the list cached with "Update from HA" in the portal); Done saves the page.
 - **System screens** for start-up, WiFi setup (with a QR code to join the setup network), connecting, and a firmware update screen with progress.
 
@@ -40,29 +52,28 @@ Full reference for the deck's features. For installing and first-time setup, see
 
 Open the device IP (or `http://<hostname>.local`) in a browser:
 
-- **Overview:** live picture of the screen, PC stream, Home Assistant link, diagnostics.
-- **Pages & tiles:** Home Assistant address and token, the icon font, pages (Duplicate copies one as a plain page), tiles, entity and icon pickers (None leaves a tile without an icon; a name of just a space leaves it without a name, `"label": ""`), columns, and a grid editor: drag tiles to move them (dropped onto another tile, that tile jumps to the dragged one's old place if it fits there), resize from the corner (half-cell steps), separately for landscape and portrait.
-- **Display:** rotation, theme (Midnight, Daylight, or Glass: tinted glass tiles over a wallpaper), the Glass look, animations, PC metric tile scales.
+- **Overview:** live picture of the screen, Home Assistant link and device diagnostics.
+- **Home Assistant:** connection address and token, connection status, plus optional MQTT discovery and broker settings.
+- **Pages & tiles:** the icon font, pages (Duplicate copies one as a plain page), tiles, entity and icon pickers (None leaves a tile without an icon; a name of just a space leaves it without a name, `"label": ""`), columns, and a grid editor: drag tiles to move them (dropped onto another tile, that tile jumps to the dragged one's old place if it fits there), resize from the corner (half-cell steps), separately for landscape and portrait.
+- **Display:** rotation, theme (Midnight, Daylight, or Glass: tinted glass tiles over a wallpaper), the Glass look and animations. In **Glass look**, **Wallpaper black overlay** (0–80%, 25% default on new installations) darkens both the sharp wallpaper and blurred glass beneath the tiles, leaving text/icons untouched. Its existing saved dimming setting is preserved during upgrades, so adjust the slider to taste. The overlay is pre-applied only when a wallpaper loads or its setting changes—no per-frame overlay or extra framebuffer.
 - **Wallpapers:** pictures for the Glass theme and the photo frame: your own uploads, daily pictures the deck downloads from Windows Spotlight once a day, or both mixed. See [Wallpapers and microSD](#wallpapers-and-microsd).
-- **Printers:** Bambu Lab printers, their errors and alerts, the energy of a print. Shown once printers are turned on under Advanced. See [Bambu Lab printers](#bambu-lab-printers).
-- **Screen:** day brightness and the night schedule, screen sleep and presence.
-- **Hardware:** the speaker, the status LED and its Home Assistant entity, the vibration motor.
-- **Time:** 12/24 h clock, timezone, and where the time comes from: network time (pool.ntp.org, the default) or Home Assistant, for a deck on a network that reaches only Home Assistant. With Home Assistant the deck reads its clock over the WebSocket on every connection and then hourly; the timezone is still the deck's own.
+- **Screen & light:** day brightness and the night schedule, screen sleep and presence, the status LED and its Home Assistant entity.
+- **Time:** 12/24 h clock and timezone.
 - **Network:** WiFi, hostname / mDNS, static IP.
-- **Advanced:** optional features, off by default: Bambu Lab printers and MQTT.
+- **Advanced:** configure MQTT discovery.
 - **Maintenance:** microSD card, configuration backup (pages and settings; WiFi and the Home Assistant token are never included), firmware update, factory reset.
 
 ## Home Assistant
 
-In **Pages & tiles**, enter the Home Assistant address (for example `http://192.168.0.7:8123`) and a long-lived access token (HA profile, Security tab). The token is stored only on the device. Install the icon font, click "Update from HA" to cache the entity list, then add tiles from the entity picker.
+In **Home Assistant**, enter the Home Assistant address (for example `http://192.168.0.7:8123`) and a long-lived access token (HA profile, Security tab). The token is stored only on the device. Click **Save and connect** and check the status. Then open **Pages & tiles**, install the icon font, click "Update from HA" to cache the entity list, and add tiles from the entity picker.
 
 ## Brand icons
 
-Optional [Custom Brand Icons by elax46](https://github.com/elax46/custom-brand-icons), available under the [MIT license](https://github.com/elax46/custom-brand-icons/blob/main/LICENSE), complement the MDI icon font. They require a mounted microSD card: enable **Maintenance > microSD card > Use the microSD card** first (the deck restarts). In **Pages & tiles > Icons > Brand icons**, install the latest GitHub release or upload the `.js` files: a single `custom-brand-icons.js` (also a subset from the upstream Icon Finder), or the release's `dist` loader together with its `cbi-*.js` chunks. The browser converts and installs the set on the card under `/touchdeck/icons/`; no brand icons are bundled with the firmware. Use `phu:<name>` in tiles or Home Assistant entity icons, or select one in the portal's icon picker.
+Optional [Custom Brand Icons by elax46](https://github.com/elax46/custom-brand-icons), available under the [MIT license](https://github.com/elax46/custom-brand-icons/blob/main/LICENSE), complement the MDI icon font. They require a mounted microSD card: enable **Maintenance > microSD card > Use the microSD card** first (the deck restarts). In **Pages & tiles > Icons > Brand icons**, install the latest GitHub release or upload a JavaScript file. New releases use a `custom-brand-icons.js` index and separate `cbi-N.js` chunks: **Install latest** downloads and combines all the chunks automatically. Uploading a matching `custom-brand-icons.js` index also downloads its chunks; for an offline subset upload one `cbi-N.js` chunk, or an older standalone `icons` file from the upstream Icon Finder. Chunk-index uploads need internet access to fetch their matching release. The browser converts and installs the set on the card under `/touchdeck/icons/`; no brand icons are bundled with the firmware. Use `phu:<name>` in tiles or Home Assistant entity icons, or select one in the portal's icon picker. **Browse & search** opens a visual catalogue of only the installed brand icons: search by name, click an icon to copy its `phu:` identifier, or use **Download names** to save a TXT list. The regular tile icon picker also searches brand icons and selects them directly. The gallery loads its names and font from the deck's microSD card; no second download is needed.
 
 ## Conditional tiles
 
-In **Pages & tiles**, a tile's "more options" has "Show": Always, Only while the PC is on, Only while the PC is off, Only while an entity is (or is not) in a state, or Only while a printer is on or printing. A tile whose condition does not hold takes no cell, so a tile with the opposite condition can share it: volume buttons while the PC runs, a "PC power" switch in the same place while it is off. The page is laid out again when a condition changes (once nothing is being touched). When a page has conditional tiles, "Preview" above the grid switches each condition so you can place the tiles for both cases.
+In **Pages & tiles**, a tile's "more options" has "Show": Always, Only while the PC is on, Only while the PC is off, or Only while an entity is (or is not) in a state. A tile whose condition does not hold takes no cell, so a tile with the opposite condition can share it: volume buttons while the PC runs, a "PC power" switch in the same place while it is off. The page is laid out again when a condition changes (once nothing is being touched). When a page has conditional tiles, "Preview" above the grid switches each condition so you can place the tiles for both cases.
 
 ```json
 { "id": "vol", "type": "action", "when": "pc-on",
@@ -74,9 +85,7 @@ In **Pages & tiles**, a tile's "more options" has "Show": Always, Only while the
 ```
 
 - `"pc-on"` / `"pc-off"` follow the tile's own PC (the PC of its command or metric, otherwise the first known PC). The PC counts as off about a minute after its companion stops sending, so a companion restart does not rearrange the page; it counts as on again with the first packet.
-- `"sound-on"` / `"sound-off"` follow the audio a companion streams for the visualizer (its Audio visualizer switch must be on). Sound counts after 2 s without a break, so a notification sound does not count; silence counts after 30 s, so a pause between tracks does not rearrange the page.
 - `{ "entity": ..., "state": ... }` compares the state Home Assistant reports (`on`, `off`, `home`, `playing`...); a leading `!` means "is not". The tile stays hidden until Home Assistant has reported the entity; while Home Assistant is unreachable the last known state stands.
-- `{ "printer": "h2c", "state": "on" }` shows the tile while the printer is powered and reports. `{ "printer": "h2c", "state": "printing", "idle": 30 }` shows it while a job runs (preparing, printing or paused) and for `idle` minutes after it ends (0 = only during the job). After a restart a printer counts as idle until its next job.
 
 A whole page can follow a condition the same way ("Page shown" in the page settings; its PC is the first known one). With "Switch to it when it appears" (`"auto": true`) the deck slides to the page when the condition starts to hold, for example a PC stats page when the PC comes on, and back to the page shown before when it stops:
 
@@ -86,13 +95,11 @@ A whole page can follow a condition the same way ("Page shown" in the page setti
 
 A page that goes away while it is shown always hands over to another page first; a slide waits until nothing is being touched and no card is open.
 
-**Home page** in the page settings (`"home": true`, one page only) is the page the deck starts on after power-on or a restart, and the one it falls back to when a shown page goes away with no page to go back to. The order of the pages does not change. While the home page is hidden (its condition does not hold, its printer is off) the first page takes its place.
-
 ## Screen sleep
 
-On the **Screen** page, the Sleep card sets the time without touch and without presence after which the screen fades out or dims (the night level still applies when it is lower), and what counts as presence:
+On the **Screen & light** page, the Sleep card sets the time without touch and without presence after which the screen fades out or dims (the night level still applies when it is lower), and what counts as presence:
 
-- Up to four Home Assistant entities (motion, occupancy, a person); one counts as present while its state is `on` or `home`. Optionally any PC sending metrics, and any printer preparing, printing or paused. Presence starting wakes the screen, also after Off in the quick panel.
+- Up to four Home Assistant entities (motion, occupancy, a person); one counts as present while its state is `on` or `home`. Optionally any PC sending metrics. Presence starting wakes the screen, also after Off in the quick panel.
 - A touch always wakes it; that first touch does nothing else. With a night brightness of 0 a touch lights the screen at 10% until a minute after the last touch.
 - **Night wake brightness** (off by default): during the night schedule, presence lights the screen at its own level, held for the sleep time after presence ends. Manual night from the quick panel is not affected. While it is lit this way, the quick panel's Screen slider sets the night wake level.
 
@@ -100,9 +107,7 @@ On the **Screen** page, the Sleep card sets the time without touch and without p
 
 The **Wallpapers** page (used by the Glass theme and the photo frame) picks the pictures: My pictures (uploaded in the portal, cropped in the browser), Daily (Windows Spotlight, downloaded by the deck at a set hour) or Both. Internal storage fits a few dozen pictures, and Daily replaces its set every day.
 
-Daily runs at the set hour while the deck is on; a day missed while it was off waits for the next one, and **Download now** on the Wallpapers page fetches at once. During the download Home Assistant and MQTT are paused, because the pictures need the memory their connections hold: tiles keep their last state for a few minutes. A note at the top of the screen shows the progress; a tap on it skips the rest for today.
-
-With a microSD card in the slot, turn on **Maintenance > microSD card > Use the microSD card** (the deck restarts). It is off by default. Both galleries then live on the card under `/touchdeck/wall/` (`l`, `p` = own landscape / portrait, `dl`, `dp` = daily), Daily downloads up to 32 new pictures a day and keeps an archive (50 to 500 per orientation) from which the oldest are removed. Pinned pictures and the one on screen are never removed. The card must be FAT formatted; pictures already on internal storage stay there. **Maintenance > microSD card** shows how the card is connected: "SD 1-bit" is the normal mode, "SPI" is a slower fallback that a card left in from an older firmware uses until the deck is powered off and on. When a card is not mounted, the same card shows why. If the card is found but its file system is not accepted, **Format card** erases it and creates one FAT partition the deck can read (copy anything you need off the card first).
+With a microSD card in the slot, turn on **Maintenance > microSD card > Use the microSD card** (the deck restarts). It is off by default. Both galleries then live on the card under `/touchdeck/wall/` (`l`, `p` = own landscape / portrait, `dl`, `dp` = daily), Daily downloads up to 32 new pictures a day and keeps an archive (50 to 500 per orientation) from which the oldest are removed. Pinned pictures and the one on screen are never removed. The card must be FAT formatted; pictures already on internal storage stay there. The Display page shows how the card is connected: "SD 1-bit" is the normal mode, "SPI" is a slower fallback that a card left in from an older firmware uses until the deck is powered off and on.
 
 The companion's **Wallpapers** page does this on the PC, much faster than on the deck: it downloads Spotlight pictures into the daily archive (microSD only), or crops a folder of your photos and sends them to My pictures, skipping pictures the deck already has. The folder itself is only read.
 
@@ -119,7 +124,7 @@ Or copy the folders straight onto the card under `/touchdeck/wall/` and restart 
 
 ## MQTT (Home Assistant discovery)
 
-Under **Advanced**, enable **Connect to an MQTT broker**, enter its host and port (plain TCP, default 1883), and optional username/password. Broker accepts `host`, `host:port` or `mqtt://host:port`. Leave the discovery prefix as `homeassistant` unless your MQTT integration uses another one. Save the form; its status line shows the connection. The deck appears under **Settings > Devices > MQTT** with the configured hostname. Home Assistant needs its MQTT integration and a broker such as the Mosquitto add-on.
+Under **Home Assistant → Optional MQTT integration**, enable **Connect to an MQTT broker**, enter its host and port (plain TCP, default 1883), and optional username/password. Broker accepts `host`, `host:port` or `mqtt://host:port`. Leave the discovery prefix as `homeassistant` unless your MQTT integration uses another one. Save the form; its status line shows the connection. The deck appears under **Settings > Devices > MQTT** with the configured hostname. Home Assistant needs its MQTT integration and a broker such as the Mosquitto add-on.
 
 - **Screen (light):** wake or turn off the display, and set the current day/night brightness.
 - **Page (select):** choose a currently visible page; duplicate names get numbered suffixes.
@@ -212,56 +217,11 @@ A row's optional `value` is a template like `detail`: the bar still follows `pat
 
 The portal keeps `rows` when a tile is edited but has no editor for them yet; add them in the JSON.
 
-## Bambu Lab printers
+## Home Assistant media controls
 
-Up to two Bambu Lab printers report to the deck over the LAN (MQTT over TLS, port 8883), so the printer needs LAN mode or LAN access turned on. Printers are off by default: turn them on under **Advanced**. Turned off again, the deck drops the printer connections and hides printer pages and tiles, but keeps their setup. On the **Printers** page: add the printer's IP address, then store its serial number and LAN access code (both stay on the device and are never shown again). "Create printer page" adds a page with progress and time left on top, the nozzle, bed and chamber temperatures, the filament in use, the layer and the chamber light. An AMS page is stacked below it, with one tile per unit and an all-slots strip when a row is free.
+In **Pages & tiles**, use **+ Add media controls** and select the `media_player.*` entity to control. The tile shows the selected player's name, playback state and reported volume and offers previous, play/pause, next, volume down, stop and volume up. You can change the entity from the tile editor. Available actions depend on the selected integration.
 
-A printer that is already in Home Assistant through the [Bambu Lab integration](https://github.com/greghesp/ha-bambulab) can be read from there instead: set its source to "Home Assistant" and pick it from the list. No IP, serial or access code is needed, the printer does not need LAN mode, and the deck opens no connection to the printer (less RAM in use). The deck finds the printer's entities by their registry ids, so renamed entities and non-English installations work. Through Home Assistant the deck cannot tell which filaments a job uses in slicer order (only the slots from the integration's print weight) or which nozzle of a dual nozzle printer is active (it is inferred from the temperatures).
-
-A printer can have a plug: a Home Assistant switch that powers it. The printer then connects only while the plug is on, and pages set to "Only while ... is on" appear with it; with the plug off the deck holds no connection, buffers or pages for it. Without a plug the printer is always tried.
-
-```json
-"printers": [{ "id": "h2c", "name": "H2C", "ip": "192.168.0.54",
-               "plug": "switch.printer_plug" },
-             { "id": "p1s", "name": "P1S", "source": "ha", "serial": "01P00A000000000" }]
-```
-
-A page with `"printer": "h2c"` follows that printer. A printer tile is `{ "type": "printer", "printer": "h2c", "show": "hero" }`; `show` is `hero`, `nozzle` (with `"nozzle": "left"` on dual nozzle printers), `bed`, `chamber`, `filament`, `layer` or `light` (a tap switches the chamber light). The tiles sit on the page grid like any other tile. Three more views are available:
-
-- `ams` with `"unit": 1` shows one AMS unit, its humidity, temperature and spools. The unit is its 1-based position in the printer's reported list (1..6), default 1. Use 2x1 for a four-slot AMS or 1x1 for an AMS HT.
-- `slots` shows every unit's slots in one colour strip, best at 4x1 or 2x1.
-- `summary` shows compact status, progress and time left on a normal page, best at 2x1. A tap opens the printer's first page when it is available; the tile shows Off while its printer is not powered.
-
-The rest of the **Printers** page:
-
-- **Printer page:** "Show the printer page while it prints" (off by default). A print start wakes the deck and slides it to that printer's page. When the print is over, the deck goes back to the page it showed before, a minute after the bed is down to the bed cooled temperature, or 30 minutes after the print at the latest. If you leave the printer page yourself, it stays where you are.
-- **Printer errors:** HMS codes and print errors with Bambu's own text, from both sources (LAN and Home Assistant). The hero tile shows an ERROR badge in the severity colour and the error on its job line; a tap lists every error with its module and code. Common errors are listed but raise the badge only with "Also common errors". "Wake the deck and show the printer on a new error" wakes the screen and slides to the printer's page; errors already standing when the deck connects never alert. A canceled print reads CANCELED, not FAILED, and an open door shows a DOOR OPEN badge next to the printer name.
-- **Bed cooled:** after a print the deck wakes with a message once the bed is down to the set temperature, so the print comes off the plate easily.
-- **Energy of a print:** give a printer an energy meter in the list above (a Home Assistant sensor counting kWh or Wh, such as a smart plug's total energy). After a print the hero shows what the print used, and its cost with a price per kWh and a currency. A deck restart during the print keeps the reading from the start.
-
-With the speaker on, a finished print, a new error and a cooled bed also play a sound, see [Speaker](#speaker).
-
-## PC stats and control: TouchDeck Companion
-
-The companion runs on the PC, reads the sensors and pushes a JSON packet to UDP port `4210` of the device every second. It lives in [`TouchDeck-CompanionApp/`](TouchDeck-CompanionApp/); the Windows build is attached to each [release](https://github.com/Keralots/TouchDeck/releases) as `TouchDeckCompanion-<version>.exe`.
-
-- **Windows:** reads [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor), which must be running (as administrator for full coverage), with its remote web server enabled (port `8085`) or through WMI.
-- **Linux:** reads the sensors directly.
-
-The companion UI opens at `http://127.0.0.1:8750`; point it at the device IP. The PC and the device must share a subnet with UDP `4210` reachable. Add metric tiles in **Pages & tiles** with "+ Add PC metric": values, units, history chart and an amber warning colour above a set share of the scale.
-
-- **Several PCs:** each companion sends its own id and name (Connection page, "This PC's name"); the device keeps up to four PCs and a metric tile picks one.
-- **Control:** on the companion's Device page, click "Pair for control", then tap Allow on the device. If the device ever loses the pairing (a full flash erase), the companion notices and the device asks Allow again by itself; Deny stops those prompts until the companion restarts. Tiles made with "+ Add PC control" then send media keys, volume, lock, sleep, restart or shut down to that PC (Sleep, Restart and Shut down ask on the device first). Commands are signed with the key from pairing and arrive on UDP `4211` (allow it in the firewall).
-- **Volume slider:** "+ Add PC volume" adds a slider for the PC's master volume: drag sideways to set it, tap to mute. In deck.json: `{ "type": "slider", "control": "pc-volume" }` (optional `"pc"`). The companion receives it as `volume_set:N` (Windows through the audio endpoint, Linux through `pactl`).
-- **Now playing:** "+ Add now playing" adds a 2x2 tile with cover art, title, artist, progress and previous/play/next controls. Smaller tiles show the track and tap to play or pause. Covers travel over TCP port `8751` on the PC (or an available port if busy), so allow the companion through the firewall. Covers always travel over the network: with the companion on USB the device still fetches them over WiFi from the PC's LAN address, so both must be on the same network. Playback controls also work over USB alone.
-- **Hotkeys:** the command "Hotkey" sends a key combination such as `ctrl+shift+m` (up to five keys: ctrl, shift, alt, win, a-z, 0-9, f1-f24 and named keys like enter, esc or pageup) to the PC's focused window, handy for app shortcuts bound to F13-F24. In deck.json: `{ "action": "pc", "cmd": "hotkey", "keys": "ctrl+shift+m" }`. Windows does not let it reach a window running as administrator unless the companion runs as administrator too. On Linux it uses `xdotool`, so X11 only.
-- **USB cable:** when the device is plugged into the PC, the companion finds it (Espressif USB serial, 303A:1001) and sends metrics and commands over the cable instead of WiFi. While it holds the port, USB flashing and the serial monitor cannot open it: use OTA, or set "USB cable" to Off.
-
-## Speaker
-
-The board has a built-in amplifier for a small speaker on its speaker connector. Turn it on under **Hardware > Speaker** (off by default) and set the volume; a very small speaker may need it at 100. It plays a sound when a print finishes, on a new printer error and when the bed has cooled (each one can be switched off), and optionally a short click on tile taps. "Quiet at night" keeps it silent during the screen's night schedule.
-
-Each event uses a built-in sound or your own: add a 16-bit PCM WAV (mono or stereo, 8 to 48 kHz, up to 4 MB) under "Your sounds". Sounds are stored on the microSD card when it is in use, otherwise in the internal flash, which has little room. A missing or broken file falls back to the built-in sound. The Test buttons play the picked sound at the set volume before saving.
+The older PC Companion application, PC stats, pairing and PC media controls have been retired. Saved legacy PC tiles are ignored when loading older deck configurations; Home Assistant and HTTP tiles are retained.
 
 ## Status LED
 
@@ -306,11 +266,41 @@ If the board keeps connecting and disconnecting, hold **BOOT** while plugging in
 
 ## Building from source
 
-Built with [PlatformIO](https://platformio.org/), one environment:
+Built with [PlatformIO](https://platformio.org/) for two firmware environments. Both identify as **tactula**; only one includes the optional Bambu printer code:
 
 ```sh
-pio run                       # build
-pio run -t upload             # flash over USB
-curl -F "firmware=@.pio/build/jc3248w535/firmware.bin" http://<device-ip>/ota/upload
-python create_firmware.py     # full and OTA images in release/<version>/
+pio run -e without_bambu                      # no printer, e.g. bedroom
+pio run -e with_bambu                    # with Bambu printer, e.g. office
+pio run -e with_bambu -t upload          # USB flash, printer-enabled
+pio run -e without_bambu -t upload            # USB flash, no printer
+python create_firmware.py --env with_bambu   # package full + OTA printer images
 ```
+
+App-only OTA firmware is at `.pio/build/<environment>/firmware.bin` and can be uploaded using the device's **Maintenance > Firmware update** (on an existing device with compatible partitions). A fresh device needs the full install image.
+
+The product/splash-screen name is always **tactula**. New devices default to a unique `tactula-XXXX.local` hostname and `tactula-XXXX` setup hotspot. Older saved hostnames are normalised to include `touchdeck` without resetting Wi-Fi credentials; users can set `tactula-office` or `tactula-bedroom` in **Network**. A first-boot migration copies old `bedroomdeck` settings to `touchdeck`. The internal `touchdeck` NVS namespace remains unchanged after migration as a compatibility detail; the original `bedroomdeck` namespace remains as a rollback copy; if migration cannot complete, that boot continues using the old settings and retries at startup. Home Assistant and MQTT credentials are stored in their existing separate namespaces.
+
+## Automatic firmware updates
+
+Tactula supports **automatic update checks and optional automatic downloads**, with **physical touchscreen approval required for every installation**.
+
+In the device's web portal, open **Maintenance → Automatic firmware update checks**:
+
+- **Check for updates:** enabled by default. The first check runs about **45 seconds after boot**, then **every six hours** after a successful check. Failed checks retry after **30 minutes**. **Check now** requests an immediate check when the updater is idle.
+- **Automatically download verified firmware:** disabled by default. When enabled, discovering a newer version downloads it promptly into the *inactive OTA flash partition*. It verifies the expected board/edition, image byte count, SHA-256 checksum and ESP application image before marking it ready.
+- **Show an update icon:** controls the normal top-bar update notification. A successfully staged **automatic** download is quiet and shows an icon (when the top bar is enabled), **not a popup**. Tap the icon to open the confirmation.
+- **Download OTA** (manual): downloads and verifies the selected update and **automatically displays** the installation confirmation on the touchscreen once staging finishes, whether or not the optional update icon is enabled. Choosing **Not now** closes it without repeated interruptions.
+- **Install and restart** is only available **on the physical touchscreen**. Neither checking nor downloading installs firmware, changes the boot partition, or reboots on its own. No web-based remote install endpoint is provided.
+
+### Where updates come from
+
+The device reads the small HTTPS manifest at `https://firmware.mrsleeps.uk/tactula/releases/current.json` rather than querying the large GitHub Releases API. The website's release mirror obtains published assets from [MrSleeps/tactula GitHub Releases](https://github.com/MrSleeps/tactula/releases), verifies their sizes and SHA-256 digests, then atomically exposes the versioned firmware and manifest. Firmware also verifies HTTPS, the exact model and edition, the canonical OTA path, expected size, and the image hash. A temporary check error does not erase a previously verified update.
+
+The download is **not a separate file on the SD card**. It occupies the ESP32's inactive OTA partition. If a newer version is discovered while an earlier one is waiting for installation, the old image is marked unavailable and the newer verified image **overwrites that same partition** when downloaded (if automatic downloading is enabled). No history of older images accumulates. The installed/running partition is not overwritten by this process.
+
+### Manual OTA and troubleshooting
+
+Use **Maintenance → Firmware update** and upload the matching `firmware.bin` (or the release's `*-ota.bin`) for your edition. **Never upload `firmware.factory.bin` or `*-full.bin` into the OTA page**; those are for initial/full USB flashing. Manual OTA is also how to recover from an update-checker bug without publishing a broken release.
+
+If the device cannot see a published update, confirm that `current.json` and the corresponding `/tactula/releases/vX.Y.Z/*-ota.bin` return HTTP 200 on the firmware website, that the **new** version is higher than the firmware currently installed, and that the firmware edition matches. If download links fail despite being present on disk, check the nginx file permissions and rerun the website mirror. Certificate validation remains mandatory; do not use insecure HTTPS workarounds. The automatic-install option is intentionally unsupported.
+

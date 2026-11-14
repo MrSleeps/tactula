@@ -7,6 +7,7 @@
 struct MqttSettings {
   bool enabled = false;
   String host, user, pass;
+  String deviceName = "tactula";  // Home Assistant display name only, never identity/topic.
   uint16_t port = 1883;
   String prefix = "homeassistant";
 };
@@ -14,15 +15,13 @@ struct MqttSettings {
 // NVS and these entry points belong to the loop task.
 void mqttBegin();
 void mqttTick();
-// Drop the broker connection until resumed (the daily download needs its RAM).
-void mqttPause(bool pause);
 const MqttSettings& mqttSettings();
 bool mqttNormalize(MqttSettings& settings, String& error);
 bool mqttSaveSettings(const MqttSettings& settings);
 void mqttConfigJson(JsonObject out, bool includeHasPass);
 void mqttStatusJson(JsonObject out);
 
-enum MqttObject { MQ_SCREEN, MQ_PAGE, MQ_NIGHT, MQ_TOUCH, MQ_MESSAGE, MQ_LED, MQ_RSSI, MQ_IP, MQ_RESTART, MQ_COUNT };
+enum MqttObject { MQ_SCREEN, MQ_PAGE, MQ_NIGHT, MQ_TOUCH, MQ_MESSAGE, MQ_LED, MQ_RSSI, MQ_IP, MQ_RESTART, MQ_NIGHT_BRIGHTNESS, MQ_COUNT };
 struct MqttSnapshot {
   String state[MQ_COUNT];
   std::vector<String> pages;

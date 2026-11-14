@@ -1,9 +1,5 @@
 // Guition deck: daily wallpapers. See deck_daily.h.
 #include "deck_daily.h"
-#include "deck_bambu.h"
-#include "deck_ha.h"
-#include "deck_mqtt.h"
-#include "pc_metrics.h"
 #include "deck_wall.h"
 #include "deck_config.h"
 #include "deck_touch.h"
@@ -17,16 +13,22 @@
 #include <Preferences.h>
 #include <esp_heap_caps.h>
 #include <esp_rom_crc.h>
-#include <esp_timer.h>
 #include <math.h>
 #include <time.h>
 #include <algorithm>
 #include <vector>
-#include "deck_jpeg.h"
-#include "deck_panel.h"
+#include "img_converters.h"
+#include "esp32s3/rom/tjpgd.h"
 
 namespace deck {
 namespace {
+
+// ROM TJpgDec can scale while it decodes (LVGL's copy is built without that).
+// Called by address (esp32s3.rom.ld) because LVGL defines the same names.
+using PrepareFn = JRESULT (*)(JDEC*, UINT (*)(JDEC*, BYTE*, UINT), void*, UINT, void*);
+using DecompFn = JRESULT (*)(JDEC*, UINT (*)(JDEC*, void*, JRECT*), BYTE);
+const PrepareFn romPrepare = (PrepareFn)0x40000858;
+const DecompFn romDecomp = (DecompFn)0x40000864;
 
 constexpr const char* API_URL =
     "https://fd.api.iris.microsoft.com/v4/api/selection?placement=88000820&bcnt=4&country=US&locale=en-US&fmt=json";
@@ -99,15 +101,9 @@ volatile bool s_changed[2] = {}, s_finished = false;
 bool s_replan = false, s_lastLoaded = false;
 uint32_t s_lastRun = 0;  // epoch of the last run that stored a picture (NVS "dlast")
 uint32_t s_checkMs = 0, s_retryAtMs = 0, s_triesDay = 0;
-time_t s_clockSeen = 0;
-uint32_t s_scheduledDay = 0;
 int s_tries = 0;
-bool s_holding = false;  // printer sessions closed for this run
-volatile bool s_skip = false;
-// The run's task. On the card its stack is in PSRAM (no flash access there),
-// and such a task is deleted by the loop task once it has parked itself.
 TaskHandle_t s_task = nullptr;
-bool s_taskCaps = false;
+bool s_taskCaps = false;  // Only SD-backed download tasks may use PSRAM stacks.
 
 template <typename F>
 void update(F f) {
@@ -146,11 +142,8 @@ bool fetchApi(std::vector<Pick>& picks) {
   sampleRam();
   if (code != 200) {
     http.end();
-    char tlsText[48] = "";
-    if (code < 0) tls.lastError(tlsText, sizeof(tlsText));
-    char text[64];
-    if (code >= 0) snprintf(text, sizeof(text), "Spotlight HTTP %d", code);
-    else snprintf(text, sizeof(text), "Spotlight unreachable (%d) %s", code, tlsText);
+    char text[40];
+    snprintf(text, sizeof(text), code < 0 ? "Spotlight unreachable (%d)" : "Spotlight HTTP %d", code);
     setError(text);
     return false;
   }
@@ -177,19 +170,16 @@ bool fetchApi(std::vector<Pick>& picks) {
 
 struct Decode {
   NetworkClient* stream;
-  uint8_t* band;
-  uint8_t* out;
-  float* acc;
-  int w, h, tw, th, bandW, left, bottom, y, sy;
-  float cx, cy, fx, fy;
+  uint8_t* px;  // RGB888 at the decoded scale
+  int w, h;
   uint32_t bytes, blocks;
 };
 
-size_t readInput(void* ctx, uint8_t* buf, size_t n) {
-  Decode& d = *(Decode*)ctx;
-  if (!d.stream) return 0;  // getStreamPtr() after the server closed
+UINT readInput(JDEC* jd, BYTE* buf, UINT n) {
+  Decode& d = *(Decode*)jd->device;
+  if (!d.stream) return 0;  // HTTP connection already closed
   uint8_t skip[64];
-  size_t got = 0;
+  UINT got = 0;
   uint32_t last = millis();
   while (got < n) {
     const size_t want = buf ? n - got : std::min<size_t>(n - got, sizeof(skip));
@@ -198,7 +188,7 @@ size_t readInput(void* ctx, uint8_t* buf, size_t n) {
     if (r > 0) {
       got += r;
       last = millis();
-    } else if (s_skip || (!d.stream->connected() && !d.stream->available()) || millis() - last > 15000) {
+    } else if ((!d.stream->connected() && !d.stream->available()) || millis() - last > 15000) {
       break;
     } else {
       vTaskDelay(1);
@@ -208,142 +198,72 @@ size_t readInput(void* ctx, uint8_t* buf, size_t n) {
   return got;
 }
 
-// Filter the cropped part of one source row without changing its pixel weights.
-void areaRow(const Decode& d, const uint8_t* row, float* out) {
-  for (int x = 0; x < d.tw; x++) {
-    const float a = d.cx + x * d.fx, b = a + d.fx;
-    float r = 0, g = 0, bl = 0;
-    for (int sx = (int)a; sx < (int)ceilf(b) && sx < d.w; sx++) {
-      const float w = fminf(b, sx + 1) - fmaxf(a, sx);
-      const uint8_t* p = row + (sx - d.left) * 3;
-      r += w * p[0];
-      g += w * p[1];
-      bl += w * p[2];
-    }
-    out[x * 3] = r / d.fx;
-    out[x * 3 + 1] = g / d.fx;
-    out[x * 3 + 2] = bl / d.fx;
+UINT writeOutput(JDEC* jd, void* bitmap, JRECT* rect) {
+  Decode& d = *(Decode*)jd->device;
+  const uint8_t* src = (const uint8_t*)bitmap;
+  const int rw = rect->right - rect->left + 1;
+  for (int y = rect->top; y <= rect->bottom; y++, src += rw * 3) {
+    if (y >= d.h) continue;
+    const int n = std::min(rw, d.w - (int)rect->left);
+    if (n > 0) memcpy(d.px + ((size_t)y * d.w + rect->left) * 3, src, n * 3);
   }
-}
-
-// Fold each completed band into the current filter window before reusing it.
-// A fractional boundary row also contributes to the next target row here.
-void foldBand(Decode& d, int top, int bottom) {
-  float* row = d.acc + d.tw * 3;
-  while (d.y < d.th) {
-    const float a = d.cy + d.y * d.fy, b = a + d.fy;
-    const int end = std::min((int)ceilf(b), d.h);
-    for (; d.sy < end && d.sy <= bottom; d.sy++) {
-      const float w = fminf(b, d.sy + 1) - fmaxf(a, d.sy);
-      areaRow(d, d.band + (size_t)(d.sy - top) * d.bandW * 3, row);
-      for (int i = 0; i < d.tw * 3; i++) d.acc[i] += w * row[i];
-    }
-    if (d.sy < end) break;
-    // Decoded as R, G, B; out in the encoder's order.
-    uint8_t* out = d.out + (size_t)d.y * d.tw * 3;
-    for (int i = 0; i < d.tw * 3; i++) {
-      const float v = d.acc[JPEG_ENCODE_BGR ? i - i % 3 + 2 - i % 3 : i] / d.fy;
-      out[i] = v <= 0 ? 0 : v >= 255 ? 255 : (uint8_t)(v + 0.5f);
-    }
-    if ((d.y & 15) == 15) vTaskDelay(1);
-    d.y++;
-    d.sy = (int)(d.cy + d.y * d.fy);
-    memset(d.acc, 0, d.tw * 3 * sizeof(float));
-  }
-}
-
-// Decoded size known: centre crop to the target aspect and the buffers.
-bool beginDecode(void* ctx, int w, int h, int bandH) {
-  Decode& d = *(Decode*)ctx;
-  const int tw = d.tw, th = d.th;
-  d.w = w;
-  d.h = h;
-  float cw = w, ch = h;
-  if ((float)w / h > (float)tw / th) cw = h * (float)tw / th;
-  else ch = w * (float)th / tw;
-  d.cx = (w - cw) / 2;
-  d.cy = (h - ch) / 2;
-  d.fx = cw / tw;
-  d.fy = ch / th;
-  d.left = (int)d.cx;
-  d.sy = (int)d.cy;
-  d.bandW = std::min((int)ceilf(d.cx + (tw - 1) * d.fx + d.fx), w) - d.left;
-  d.bottom = std::min((int)ceilf(d.cy + (th - 1) * d.fy + d.fy), h);
-  d.out = (uint8_t*)heap_caps_malloc(tw * th * 3, MALLOC_CAP_SPIRAM);
-  d.band = (uint8_t*)heap_caps_malloc((size_t)d.bandW * bandH * 3, MALLOC_CAP_SPIRAM);
-  d.acc = (float*)heap_caps_calloc(tw * 3 * 2, sizeof(float), MALLOC_CAP_SPIRAM);
-  return d.out && d.band && d.acc;
-}
-
-void writeOutput(void* ctx, int x0, int y0, int x1, int y1, const uint8_t* src) {
-  Decode& d = *(Decode*)ctx;
-  const int rw = x1 - x0 + 1;
-  const int left = std::max(x0, d.left);
-  const int right = std::min(x1 + 1, d.left + d.bandW);
-  if (left < right && d.y < d.th) {
-    for (int y = std::max(y0, d.sy); y <= y1 && y < d.bottom; y++) {
-      memcpy(d.band + ((size_t)(y - y0) * d.bandW + left - d.left) * 3,
-             src + ((size_t)(y - y0) * rw + left - x0) * 3, (right - left) * 3);
-    }
-  }
-  if (x1 + 1 >= d.w) foldBand(d, y0, y1);
   // Let the core 0 idle task feed its watchdog during long decodes.
   if ((++d.blocks & 255) == 0) {
     sampleRam();
     vTaskDelay(1);
   }
+  return 1;
 }
 
-struct JpegBuf {
-  uint8_t* data;
-  size_t len, cap;
-  bool over;
-};
-
-size_t appendJpeg(void* arg, const uint8_t* data, size_t len) {
-  JpegBuf& b = *(JpegBuf*)arg;
-  if (b.len + len > b.cap) {
-    b.over = true;
-    return len;
+// Area average of one source row into tw pixels, starting at x0 with step fx.
+void areaRow(const uint8_t* row, int sw, float x0, float fx, int tw, float* out) {
+  for (int x = 0; x < tw; x++) {
+    const float a = x0 + x * fx, b = a + fx;
+    float r = 0, g = 0, bl = 0;
+    for (int sx = (int)a; sx < (int)ceilf(b) && sx < sw; sx++) {
+      const float w = fminf(b, sx + 1) - fmaxf(a, sx);
+      const uint8_t* p = row + sx * 3;
+      r += w * p[0];
+      g += w * p[1];
+      bl += w * p[2];
+    }
+    out[x * 3] = r / fx;
+    out[x * 3 + 1] = g / fx;
+    out[x * 3 + 2] = bl / fx;
   }
-  memcpy(b.data + b.len, data, len);
-  b.len += len;
-  return len;
 }
 
-// Written in chunks from internal RAM and read back: files written through
-// PSRAM-backed buffers came out with garbage headers on .46.
-uint8_t* s_ioChunk = nullptr;  // 4 KB internal DMA buffer, taken while internal RAM is free
-
-// Whole sectors straight from internal RAM need no SD driver bounce buffer,
-// which it could not get once the downloads had fragmented internal RAM: the
-// file then kept stale sectors. Read back to be sure.
-bool writeChecked(const char* path, const uint8_t* data, size_t len) {
-  for (int attempt = 0; attempt < 3; attempt++) {
-    File f = wallFs().open(path, "w");
-    if (!f) return false;
-    f.setBufferSize(512);
-    size_t done = 0;
-    while (done < len) {
-      const size_t n = std::min<size_t>(4096, len - done);
-      memcpy(s_ioChunk, data + done, n);
-      if (f.write(s_ioChunk, n) != n) break;
-      done += n;
+// Centre crop to the target aspect, then box-filter down to tw x th.
+bool resample(const uint8_t* src, int sw, int sh, uint8_t* dst, int tw, int th) {
+  float cw = sw, ch = sh;
+  if ((float)sw / sh > (float)tw / th) cw = sh * (float)tw / th;
+  else ch = sw * (float)th / tw;
+  const float cx = (sw - cw) / 2, cy = (sh - ch) / 2, fx = cw / tw, fy = ch / th;
+  float* acc = (float*)heap_caps_malloc(tw * 3 * sizeof(float) * 2, MALLOC_CAP_SPIRAM);
+  if (!acc) return false;
+  float* row = acc + tw * 3;
+  for (int y = 0; y < th; y++) {
+    const float a = cy + y * fy, b = a + fy;
+    memset(acc, 0, tw * 3 * sizeof(float));
+    for (int sy = (int)a; sy < (int)ceilf(b) && sy < sh; sy++) {
+      const float w = fminf(b, sy + 1) - fmaxf(a, sy);
+      areaRow(src + (size_t)sy * sw * 3, sw, cx, fx, tw, row);
+      for (int i = 0; i < tw * 3; i++) acc[i] += w * row[i];
     }
-    f.close();
-    if (done != len) continue;
-    File r = wallFs().open(path, "r");
-    if (!r) continue;
-    r.setBufferSize(512);
-    bool same = r.size() == len;
-    for (size_t at = 0; same && at < len; at += 4096) {
-      const size_t n = std::min<size_t>(4096, len - at);
-      same = r.read(s_ioChunk, n) == n && !memcmp(s_ioChunk, data + at, n);
+    // ROM TJpgDec emits R, G, B; the esp32-camera encoder reads B, G, R.
+    uint8_t* out = dst + (size_t)y * tw * 3;
+    for (int i = 0; i < tw * 3; i++) {
+      const float v = acc[i - i % 3 + 2 - i % 3] / fy;
+      out[i] = v <= 0 ? 0 : v >= 255 ? 255 : (uint8_t)(v + 0.5f);
     }
-    r.close();
-    if (same) return true;
+    if ((y & 15) == 15) vTaskDelay(1);
   }
-  return false;
+  free(acc);
+  return true;
+}
+
+size_t writeJpeg(void* arg, size_t, const void* data, size_t len) {
+  return ((File*)arg)->write((const uint8_t*)data, len);
 }
 
 uint64_t fsFree() { return wallFreeBytes(); }
@@ -396,12 +316,11 @@ void clearDaily(bool portrait) {
   }
 }
 
-// Download, decode (at 1/2^n scale where the decoder can), crop, resample,
-// encode and store one picture.
+// Download, decode at 1/2^n scale, crop, resample, encode and store one picture.
 // False with log.error set; a network failure also sets *offline.
 bool fetchImage(const Pick& pick, const String& name, LogEntry& log, bool* offline) {
   const bool p = pick.portrait;
-  const int tw = screenW(p), th = screenH(p);
+  const int tw = p ? 320 : 480, th = p ? 480 : 320;
   WiFiClientSecure tls;
   tls.setCACert(ROOT_CA);
   HTTPClient http;
@@ -419,38 +338,50 @@ bool fetchImage(const Pick& pick, const String& name, LogEntry& log, bool* offli
     snprintf(log.error, sizeof(log.error), "HTTP %d", code);
     return false;
   }
-  Decode d = {};
-  d.stream = http.getStreamPtr();
-  d.tw = tw;
-  d.th = th;
-  const JpegSink sink = {beginDecode, writeOutput, &d};
-  JpegResult r = jpegDecode(readInput, &d, tw, th, sink);
-  if (r == JPEG_OK && d.y != th) r = JPEG_BAD;
+  Decode d = {http.getStreamPtr(), nullptr, 0, 0, 0, 0};
+  void* pool = heap_caps_malloc(4096, MALLOC_CAP_SPIRAM);
+  JDEC jd;
+  JRESULT r = pool ? romPrepare(&jd, readInput, pool, 4096, &d) : JDR_MEM1;
+  uint8_t scale = 0;
+  if (r == JDR_OK) {
+    while (scale < 3 && (int)(jd.width >> (scale + 1)) >= tw && (int)(jd.height >> (scale + 1)) >= th) scale++;
+    d.w = (jd.width + (1 << scale) - 1) >> scale;
+    d.h = (jd.height + (1 << scale) - 1) >> scale;
+    if (d.w < tw || d.h < th) r = JDR_FMT2;
+    else {
+      d.px = (uint8_t*)heap_caps_malloc((size_t)d.w * d.h * 3, MALLOC_CAP_SPIRAM);
+      r = d.px ? romDecomp(&jd, writeOutput, scale) : JDR_MEM1;
+    }
+  }
   http.end();
-  free(d.band);
-  free(d.acc);
+  free(pool);
   log.bytesIn = d.bytes;
-  if (r != JPEG_OK) {
-    free(d.out);
+  if (r != JDR_OK) {
+    free(d.px);
     strlcpy(log.error,
-            r == JPEG_PROGRESSIVE ? "progressive JPEG" : r == JPEG_TOO_SMALL ? "picture too small"
-            : r == JPEG_NO_MEMORY ? "no PSRAM" : r == JPEG_CUT ? "download cut" : "bad JPEG",
+            r == JDR_FMT3 ? "progressive JPEG" : r == JDR_FMT2 ? "picture too small"
+            : r == JDR_MEM1 ? "no PSRAM" : r == JDR_INP ? "download cut" : "bad JPEG",
             sizeof(log.error));
     return false;
   }
-  uint8_t* out = d.out;
-  JpegBuf jpg = {(uint8_t*)heap_caps_malloc(WALL_MAX_JPEG, MALLOC_CAP_SPIRAM), 0, WALL_MAX_JPEG, false};
+  uint8_t* out = (uint8_t*)heap_caps_malloc(tw * th * 3, MALLOC_CAP_SPIRAM);
+  const bool scaled = out && resample(d.px, d.w, d.h, out, tw, th);
+  free(d.px);
+  if (!scaled) {
+    free(out);
+    strlcpy(log.error, "no PSRAM", sizeof(log.error));
+    return false;
+  }
   bool ok = false;
-  for (int quality = 85; quality >= 60 && !ok && jpg.data; quality -= 10) {
-    jpg.len = 0;
-    jpg.over = false;
-    ok = jpegEncode(out, tw, th, quality, appendJpeg, &jpg) && !jpg.over;
+  for (int quality = 85; quality >= 60 && !ok; quality -= 10) {
+    File f = wallFs().open(tempPath(), "w");
+    ok = f && fmt2jpg_cb(out, tw * th * 3, tw, th, PIXFORMAT_RGB888, quality, writeJpeg, &f);
+    log.bytesOut = f ? f.position() : 0;
+    f.close();
+    ok = ok && log.bytesOut <= WALL_MAX_JPEG;
   }
   free(out);
-  log.bytesOut = jpg.len;
-  // Read back byte for byte, so the stored JPEG needs no second decode check.
-  ok = ok && writeChecked(tempPath(), jpg.data, jpg.len);
-  free(jpg.data);
+  ok = ok && wallValidateJpeg(tempPath(), p);
   if (ok) {
     wallFs().remove(dailyPath(p, name));
     ok = wallFs().rename(tempPath(), dailyPath(p, name));
@@ -468,13 +399,7 @@ void runTask(void*) {
   want[1] = s_status->want[1];
   archiveMax = s_status->archiveMax;
   portEXIT_CRITICAL(&s_mux);
-  // The paused HA, MQTT and PC sockets must be closed before the first
-  // handshake: starting at once failed every API call with -5 on .46.
-  for (int i = 0; i < 50 && haLink() == HA_CONNECTED; i++) vTaskDelay(pdMS_TO_TICKS(100));
-  vTaskDelay(pdMS_TO_TICKS(1000));
-  s_ioChunk = (uint8_t*)heap_caps_malloc(4096, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
-  if (!s_ioChunk) setError("Not enough internal RAM");
-  else if (!tlsPsramInstall()) setError("TLS setup failed");
+  if (!tlsPsramInstall()) setError("TLS setup failed");
   else {
     wallFs().remove(tempPath());
     wallFs().mkdir(wallRoot());
@@ -489,21 +414,13 @@ void runTask(void*) {
           seen.push_back((uint64_t)(uint32_t)f.id | (uint64_t)p << 32);
     bool stop = false;
     int got[2] = {}, offlineRun = 0;
-    for (int call = 0; call < MAX_API_CALLS && !stop && !s_skip && (got[0] < want[0] || got[1] < want[1]); call++) {
+    for (int call = 0; call < MAX_API_CALLS && !stop && (got[0] < want[0] || got[1] < want[1]); call++) {
       setStep("Asking Spotlight");
       update([](Status& s) { s.apiCalls++; });
       std::vector<Pick> picks;
-      // The API resets a handshake now and then; one miss should not end the run.
-      bool apiOk = false;
-      for (int t = 0; t < 3 && !apiOk && !s_skip; t++) {
-        if (t) vTaskDelay(pdMS_TO_TICKS(5000));
-        apiOk = fetchApi(picks);
-      }
-      if (!apiOk) break;
-      setError("");
+      if (!fetchApi(picks)) break;
       for (const Pick& pick : picks) {
         const bool p = pick.portrait;
-        if (s_skip) break;
         if (got[p] >= want[p]) continue;
         char name[13];
         snprintf(name, sizeof(name), "%08lx.jpg",
@@ -561,17 +478,15 @@ void runTask(void*) {
         }
     }
   }
-  free(s_ioChunk);
-  s_ioChunk = nullptr;
   wallRebuildIndex();
   update([&](Status& s) {
     s.running = false;
     s.totalMs = millis() - s.startMs;
     strlcpy(s.step, "Done", sizeof(s.step));
-    s_finished = true;  // with running, so no start slips in before the reap
   });
   const bool caps = s_taskCaps;
-  if (caps) vTaskSuspend(nullptr);
+  s_finished = true;
+  if (caps) vTaskSuspend(nullptr);  // loop deletes caps-allocated stacks safely
   vTaskDelete(nullptr);
 }
 
@@ -602,30 +517,15 @@ void saveLastRun(uint32_t t) {
 
 bool wants(int p) { return dispSettings.dailyOrient == 2 || dispSettings.dailyOrient == p; }
 
-void holdPrinters(bool hold) {
-  if (s_holding == hold) return;
-  s_holding = hold;
-  printersHold(hold);
-}
-
-// HA, MQTT and PC sockets hold internal RAM that the picture downloads need:
-// with them closed, 20 of 20 pictures came through instead of 3 of 28.
-void pauseClients(bool pause) {
-  haPause(pause);
-  mqttPause(pause);
-  pcMetricsPause(pause);
-}
-
 }  // namespace
 
 bool dailyStart() {
   if (!s_status) s_status = (Status*)heap_caps_calloc(1, sizeof(Status), MALLOC_CAP_SPIRAM);
-  // A printer session leaves too little internal RAM for a second TLS session.
-  if (!s_status || (!wallOnSd() && !deckFsReady()) || !WiFi.isConnected() || printersBusy() ||
+  if (!s_status || s_finished || (!wallOnSd() && !deckFsReady()) || !WiFi.isConnected() ||
       (wallOnSd() && time(nullptr) < 1700000000)) return false;
   bool busy;
   portENTER_CRITICAL(&s_mux);
-  busy = s_status->running || s_finished;
+  busy = s_status->running;
   if (!busy) {
     memset(s_status, 0, sizeof(Status));
     s_status->running = true;
@@ -638,23 +538,21 @@ bool dailyStart() {
   }
   portEXIT_CRITICAL(&s_mux);
   if (busy) return false;
-  // LittleFS writes disable the PSRAM cache, so only a run on the card may
-  // have its stack there; internal RAM often has no 8 KB block left.
-  s_skip = false;
-  pauseClients(true);
+  // LittleFS temporarily disables the PSRAM cache: use an internal stack
+  // for flash storage, but a PSRAM stack when downloading to the SD card.
   s_taskCaps = wallOnSd();
-  const BaseType_t made =
-      s_taskCaps ? xTaskCreatePinnedToCoreWithCaps(runTask, "deck_daily", 8192, nullptr, 1, &s_task, 0, MALLOC_CAP_SPIRAM)
-                 : xTaskCreatePinnedToCore(runTask, "deck_daily", 8192, nullptr, 1, &s_task, 0);
-  if (made != pdPASS) {
+  const BaseType_t started = s_taskCaps
+      ? xTaskCreatePinnedToCoreWithCaps(runTask, "deck_daily", 8192, nullptr, 1,
+                                        &s_task, 0, MALLOC_CAP_SPIRAM)
+      : xTaskCreatePinnedToCore(runTask, "deck_daily", 8192, nullptr, 1, &s_task, 0);
+  if (started != pdPASS) {
     s_taskCaps = false;
-    pauseClients(false);
     update([](Status& s) {
       s.running = false;
       strlcpy(s.step, "Not started", sizeof(s.step));
       strlcpy(s.error, "Not enough memory to start", sizeof(s.error));
     });
-    // Counts as a failed run: the poll would otherwise retry every 10 s for good.
+    // Without a retry delay the scheduler attempts again every 10 seconds.
     s_tries++;
     s_retryAtMs = millis() + RETRY_MS;
     return false;
@@ -684,8 +582,6 @@ bool dailyProgress(int& done, int& total) {
   portEXIT_CRITICAL(&s_mux);
   return running;
 }
-
-void dailySkip() { s_skip = true; }
 
 void dailyReplan() {
   s_replan = true;
@@ -744,63 +640,46 @@ void dailyPoll() {
     }
   if (s_finished) {
     if (s_taskCaps) {
-      if (eTaskGetState(s_task) != eSuspended) return;  // still on its way out
+      if (eTaskGetState(s_task) != eSuspended) return;
       vTaskDeleteWithCaps(s_task);
       s_taskCaps = false;
     }
+    s_task = nullptr;
     s_finished = false;
     portENTER_CRITICAL(&s_mux);
     const bool stored = s_status->got[0] + s_status->got[1] > 0;
     portEXIT_CRITICAL(&s_mux);
-    holdPrinters(false);
-    pauseClients(false);
     if (stored) saveLastRun(time(nullptr));
-    else if (s_skip) s_tries = MAX_TRIES;
     else s_retryAtMs = millis() + RETRY_MS;
   }
   if (dailyRunning() || millis() - s_checkMs < 10000) return;
   s_checkMs = millis();
   if (!dailyDue()) {
-    holdPrinters(false);
-    return;
-  }
-  // One printer TLS session leaves too little internal RAM for the download:
-  // close them for the run, unless a printer has a job.
-  if (printersBusy()) {
-    if (!printersLanJob()) holdPrinters(true);
     return;
   }
   if (dailyStart()) {
     s_tries++;
     s_retryAtMs = 0;
   } else {
-    holdPrinters(false);
   }
 }
 
 bool dailyDue() {
+  if (!wallDaily()) return false;
   const time_t now = time(nullptr);
-  if (now < 1700000000) return false;  // clock not set yet
+  if (now < 1700000000 || !WiFi.isConnected()) return false;  // clock not set yet
+  loadLastRun();
   struct tm tm;
   localtime_r(&now, &tm);
   const uint32_t today = dayKey(now);
-  tm.tm_hour = dispSettings.dailyHour;
-  tm.tm_min = tm.tm_sec = 0;
-  tm.tm_isdst = -1;
-  const time_t scheduled = mktime(&tm);
-  // Only an hour crossed while the deck runs (also before the first clock
-  // sync); one missed while it was off waits for the next day.
-  if (!s_clockSeen) s_clockSeen = now - (time_t)(esp_timer_get_time() / 1000000);
-  if (s_clockSeen < scheduled && now >= scheduled) s_scheduledDay = today;
-  s_clockSeen = now;
-  if (!wallDaily() || !WiFi.isConnected()) return false;
-  loadLastRun();
   if (s_triesDay != today) {
     s_triesDay = today;
     s_tries = 0;
   }
-  const bool missing = !s_lastRun || dayKey(s_lastRun) != today;
-  const bool due = s_replan || (missing && s_scheduledDay == today);
+  bool empty = false;
+  for (int p = 0; p < 2; p++) empty |= wants(p) && wallListDir(wallDir(p, true)).empty();
+  const bool due = s_replan || empty ||
+                   ((!s_lastRun || dayKey(s_lastRun) != today) && tm.tm_hour >= dispSettings.dailyHour);
   if (!due || s_tries >= MAX_TRIES) return false;
   if (s_retryAtMs && (int32_t)(millis() - s_retryAtMs) < 0) return false;
   // Not while someone is using the screen: decoding slows page swipes.

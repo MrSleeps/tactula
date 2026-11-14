@@ -1,16 +1,16 @@
 // Guition JC3248W535 deck UI. See deck_ui.h for the threading contract.
 #include "deck_ui_int.h"
-#include <src/misc/lv_anim_private.h>  // lv_anim_enable_vsync_mode
 #include "deck_mqtt.h"
+#if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
+#include "deck_office_bambu.h"
+#endif
 #include "psram_json.h"
-#include "deck_viz.h"
 
 namespace deckui {
 
 // Page images are refreshed one per pass, at most this often (each costs
 // ~40 ms of loop time at 480x320).
 constexpr uint32_t SNAP_SPACING_MS = 40;
-constexpr uint32_t NEAR_SNAP_MAX_MS = 30000;  // a neighbour image older than this is refreshed at once
 constexpr uint32_t PANEL_SNAP_MS = 5000;  // a stale panel image waits at most this long behind busy pages
 constexpr uint32_t STATS_MS = 10000;
 constexpr uint32_t SLIDE_MS = 280;
@@ -41,20 +41,20 @@ void setPalette(uint8_t theme) {
   clearGlassCache();
   s_theme = theme <= THEME_GLASS ? theme : THEME_MIDNIGHT;
   const bool day = s_theme == THEME_DAYLIGHT, glass = s_theme == THEME_GLASS;
-  C_BG = day ? 0xECEFF3 : 0x0D0F13;
-  C_TILE = day ? 0xFFFFFF : glass ? 0x0B0E13 : 0x1A1D23;  // glass: the tint
-  C_TILE_PRESSED = day ? 0xDFE3E9 : glass ? 0x000000 : 0x2A2F38;
-  C_TILE_LINE = day ? 0xD9DDE4 : glass ? 0xFFFFFF : 0x1A1D23;
-  C_CHIP = day ? 0xE9ECF1 : 0x272B33;
-  C_TEXT = day ? 0x1D2129 : 0xE6E8EC;
-  C_TEXT_ON = 0x221602;
-  C_TITLE = day ? 0x161A20 : 0xF1F2F4;
-  C_CLOCK = day ? 0x4A5160 : 0xC9CDD6;
-  C_OK = day ? 0x23966F : 0x5CC9A7;
-  C_DIM = day ? 0x8D95A3 : 0x596070;
-  C_PANEL = day ? 0xF8F9FB : 0x161A20;
-  C_TRACK = day ? 0xD9DEE5 : 0x2E333C;
-  C_BUTTON = day ? 0xDFE3E9 : 0x272B33;
+  C_BG = day ? 0xF5F6FB : 0x0C1019;
+  C_TILE = day ? 0xFFFFFF : glass ? 0x101622 : 0x171E2C;  // glass: the tint
+  C_TILE_PRESSED = day ? 0xE9EDF6 : glass ? 0x151C2B : 0x252E43;
+  C_TILE_LINE = day ? 0xDFE4EF : glass ? 0xFFFFFF : 0x2B3445;
+  C_CHIP = day ? 0xE9EDF6 : 0x252E3D;
+  C_TEXT = day ? 0x242940 : 0xEDF0F8;
+  C_TEXT_ON = 0xFFFFFF;
+  C_TITLE = day ? 0x242940 : 0xEDF0F8;
+  C_CLOCK = day ? 0x66738B : 0xD3DAEA;
+  C_OK = day ? 0x7664E4 : 0x927DFF;  // tactula violet, not legacy green
+  C_DIM = day ? 0x78859D : 0x8795AC;
+  C_PANEL = day ? 0xFFFFFF : 0x171E2C;
+  C_TRACK = day ? 0xDFE4EF : 0x2B3445;
+  C_BUTTON = day ? 0xE9EDF6 : 0x252E3D;
 }
 
 // An icon in its round chip: on Daylight a light tint of the accent behind a
@@ -71,6 +71,8 @@ lv_indev_t* s_indev = nullptr;
 DeckConfig s_cfg;
 Page s_pages[MAX_PAGES];
 std::vector<TileRt> s_tiles;
+// A web upload/delete can happen while a gesture is active. Rebuild lazily.
+static bool s_bedroomIconsRefreshPending = false;
 int s_count = 0;
 uint32_t s_gen = 1;
 uint32_t s_lastSnapMs = 0;
@@ -90,16 +92,14 @@ portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 Shared sh;
 int s_zonesPage = -1;     // page the zones were taken from
 bool s_zonesDirty = true;  // tiles rebuilt or moved: take them again
-static bool s_prnPagesUp = false;  // a printer page is built: no automatic wallpaper change
 
 // --- LVGL glue ---------------------------------------------------------------------
-uint32_t tickCb() { return panelFrameClockMs(); }
+uint32_t tickCb() { return millis(); }
 
 // Posted LVGL frames whose framebuffer the flush task has not released yet.
 int s_lvOut = 0;
 
-void flushCb(lv_display_t* d, const lv_area_t* a, uint8_t* px) {
-  panelLvDirty(a->x1, a->y1, a->x2, a->y2);
+void flushCb(lv_display_t* d, const lv_area_t*, uint8_t* px) {
   if (!lv_display_flush_is_last(d)) {
     lv_display_flush_ready(d);
     return;
@@ -162,13 +162,6 @@ String activePageId() {
   return a >= 0 && a < s_count && s_pages[a].def ? s_pages[a].def->id : String();
 }
 
-// The page marked "home" while it is built, else the first page.
-int homePage() {
-  for (const PageDef& pd : s_cfg.pages)
-    if (pd.home) return max(pageIndexOf(pd.id), 0);
-  return 0;
-}
-
 void goToPage(const String& id) {
   if (frameActive() && !s_frameSync) stopGestures();
   for (int i = 0; i < s_count; i++) {
@@ -187,15 +180,98 @@ void goToPage(const String& id) {
   }
 }
 
+
+static lv_obj_t* s_firmwareConfirm = nullptr;
+// Track a freshly staged image independently of top-bar badge preferences.
+// Declining the popup must not make it appear once per second.
+static bool s_firmwarePrompted = false;
+static void closeFirmwareConfirm(lv_event_t*) {
+  if (s_firmwareConfirm) {
+    lv_obj_delete_async(s_firmwareConfirm);
+    s_firmwareConfirm = nullptr;
+  }
+}
+static void approveFirmwareFromTouch(lv_event_t*) {
+  const bool approved = firmwareUpdate::installStagedFromTouch();
+  closeFirmwareConfirm(nullptr);
+  if (!approved) Serial.println("Update: staged image no longer ready");
+}
+static void downloadFirmwareFromTouch(lv_event_t*) {
+  // Queue a verified OTA download; the firmware is never installed without
+  // a second physical confirmation after staging and validation.
+  firmwareUpdate::requestDownload();
+  closeFirmwareConfirm(nullptr);
+}
+static void openFirmwareConfirmation(lv_event_t*) {
+  if (s_firmwareConfirm) return;
+  const auto st = firmwareUpdate::snapshot();
+  if (!st.available && !st.staged && !st.downloading) return;
+  lv_obj_t* layer = lv_layer_top();
+  s_firmwareConfirm = lv_obj_create(layer);
+  lv_obj_set_size(s_firmwareConfirm, min<int>(logicalW() - 20, 340), LV_SIZE_CONTENT);
+  lv_obj_center(s_firmwareConfirm);
+  lv_obj_set_style_bg_color(s_firmwareConfirm, lv_color_hex(C_PANEL), 0);
+  lv_obj_set_style_border_color(s_firmwareConfirm, lv_color_hex(C_OK), 0);
+  lv_obj_set_style_border_width(s_firmwareConfirm, 2, 0);
+  lv_obj_set_style_pad_all(s_firmwareConfirm, 15, 0);
+  lv_obj_set_layout(s_firmwareConfirm, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(s_firmwareConfirm, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(s_firmwareConfirm, 12, 0);
+  lv_obj_t* title = lv_label_create(s_firmwareConfirm);
+  lv_label_set_text(title, st.staged ? "Install verified update?" :
+                    st.downloading ? "Firmware downloading" :
+                    "Firmware update available");
+  lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
+  lv_obj_t* version = lv_label_create(s_firmwareConfirm);
+  if (st.staged)
+    lv_label_set_text_fmt(version, "%s ready. The screen will restart.", st.version);
+  else if (st.downloading)
+    lv_label_set_text_fmt(version, "Downloading %s. Return here when ready.", st.version);
+  else
+    lv_label_set_text_fmt(version, "%s available. Download and verify it first.", st.version);
+  lv_label_set_long_mode(version, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(version, LV_PCT(100));
+  lv_obj_set_style_text_color(version, lv_color_hex(C_DIM), 0);
+  lv_obj_t* cancel = lv_button_create(s_firmwareConfirm);
+  lv_obj_set_width(cancel, LV_PCT(100));
+  lv_obj_t* cancelText = lv_label_create(cancel);
+  lv_label_set_text(cancelText, "Not now");
+  lv_obj_center(cancelText);
+  lv_obj_add_event_cb(cancel, closeFirmwareConfirm, LV_EVENT_CLICKED, nullptr);
+  if (!st.downloading) {
+    lv_obj_t* action = lv_button_create(s_firmwareConfirm);
+    lv_obj_set_width(action, LV_PCT(100));
+    lv_obj_t* actionText = lv_label_create(action);
+    lv_label_set_text(actionText, st.staged ? "Install and restart" : "Download update");
+    lv_obj_center(actionText);
+    lv_obj_add_event_cb(action,
+                        st.staged ? approveFirmwareFromTouch : downloadFirmwareFromTouch,
+                        LV_EVENT_CLICKED, nullptr);
+  }
+}
+
 // Shows or hides a tiles page's top bar; the grid takes the freed height.
 void layoutHeader(Page& p) {
   if (!p.grid) return;
   s_zonesDirty = true;
   const int w = logicalW(), h = logicalH();
-  for (lv_obj_t* o : {p.title, p.clock, p.wifi}) {
+  for (lv_obj_t* o : {p.title, p.wifi}) {
     if (s_header) lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
   }
+  if (p.updateBadge) {
+    const auto st = firmwareUpdate::snapshot();
+    if (s_header && st.checksEnabled && (st.showBadge || (st.staged && !st.promptOnStage)) && (st.available || st.staged))
+      lv_obj_remove_flag(p.updateBadge, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(p.updateBadge, LV_OBJ_FLAG_HIDDEN);
+  }
+  // A clock tile already displays time on this page. Keep the header strip,
+  // title and Wi-Fi, but hide only its duplicate clock.
+  if (s_header && !p.hasClockTile) lv_obj_remove_flag(p.clock, LV_OBJ_FLAG_HIDDEN);
+  else lv_obj_add_flag(p.clock, LV_OBJ_FLAG_HIDDEN);
+  // Reclaim the clock's space for the Wi-Fi indicator on clock-tile pages.
+  lv_obj_align(p.wifi, LV_ALIGN_TOP_RIGHT, p.hasClockTile ? -12 : -62, 8);
+  if (p.updateBadge) lv_obj_align(p.updateBadge, LV_ALIGN_TOP_RIGHT, p.hasClockTile ? -31 : -81, 0);
   const int top = s_header ? HEADER_H : 0;
   lv_obj_set_pos(p.grid, 0, top);
   lv_obj_set_size(p.grid, w, h - top);
@@ -206,7 +282,7 @@ void layoutHeader(Page& p) {
 
 void placeTiles(const PageDef& def, int orient, std::vector<Cell>& out) {
   const int cols = def.cols[orient] * 2, rows = def.rows[orient] * 2;
-  bool used[2 * GRID_MAX][2 * GRID_MAX] = {};
+  bool used[12][12] = {};
   auto fits = [&](int x, int y, int tw, int th) {
     if (x + tw > cols || y + th > rows) return false;
     for (int yy = y; yy < y + th; yy++)
@@ -226,7 +302,7 @@ void placeTiles(const PageDef& def, int orient, std::vector<Cell>& out) {
     const TilePos& ps = def.tiles[i].pos[orient];
     out[i].w = ps.w;
     out[i].h = ps.h;
-    out[i].off = (def.tiles[i].type == TILE_PRINTER && !advSettings.printers) || !def.tiles[i].shown;
+    out[i].off = !def.tiles[i].shown;
     if (!out[i].off && ps.set && fits(ps.x, ps.y, ps.w, ps.h)) take(out[i], ps.x, ps.y);
   }
   for (Cell& c : out) {
@@ -253,7 +329,14 @@ void addTilesPage(const PageDef& def) {
 
   lv_obj_t* t = lv_label_create(p.root);
   p.title = t;
-  lv_label_set_text(t, def.name.length() ? def.name.c_str() : def.id.c_str());
+  String pageTitle = def.name.length() ? def.name : def.id;
+#if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
+  if (def.id == "office_printer") {
+    const String friendlyName = deck::officeBambuDisplayName();
+    if (friendlyName.length()) pageTitle = friendlyName;
+  }
+#endif
+  lv_label_set_text(t, pageTitle.c_str());
   lv_obj_set_style_text_font(t, &deck_font_20, 0);
   lv_obj_set_style_text_color(t, lv_color_hex(C_TITLE), 0);
   lv_obj_set_pos(t, 12, 5);
@@ -265,12 +348,27 @@ void addTilesPage(const PageDef& def) {
   lv_label_set_text(p.wifi, LV_SYMBOL_WIFI);
   lv_obj_set_style_text_color(p.wifi, lv_color_hex(C_DIM), 0);
   lv_obj_align(p.wifi, LV_ALIGN_TOP_RIGHT, -62, 8);
+  // A small LVGL label is difficult to hit on the 3.5-inch panel.
+  // Use a real 36x36 touch target with a centred download glyph.
+  p.updateBadge = lv_button_create(p.root);
+  lv_obj_set_size(p.updateBadge, 36, 36);
+  lv_obj_set_style_bg_opa(p.updateBadge, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_shadow_width(p.updateBadge, 0, 0);
+  lv_obj_set_style_border_width(p.updateBadge, 0, 0);
+  lv_obj_set_style_pad_all(p.updateBadge, 0, 0);
+  lv_obj_t* updateGlyph = lv_label_create(p.updateBadge);
+  lv_label_set_text(updateGlyph, LV_SYMBOL_DOWNLOAD);
+  lv_obj_set_style_text_color(updateGlyph, lv_color_hex(C_OK), 0);
+  lv_obj_center(updateGlyph);
+  lv_obj_align(p.updateBadge, LV_ALIGN_TOP_RIGHT, -81, 0);
+  lv_obj_add_flag(p.updateBadge, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_event_cb(p.updateBadge, openFirmwareConfirmation, LV_EVENT_CLICKED, nullptr);
 
   // Two tracks per cell: tiles sit and span in half cells. Static descriptor
   // arrays per page (LVGL keeps the pointers).
   const int cols = def.cols[orient] * 2, rows = def.rows[orient] * 2;
-  static int32_t colDsc[MAX_PAGES][2 * GRID_MAX + 1];
-  static int32_t rowDsc[MAX_PAGES][2 * GRID_MAX + 1];
+  static int32_t colDsc[MAX_PAGES][13];
+  static int32_t rowDsc[MAX_PAGES][13];
   for (int i = 0; i < cols; i++) colDsc[page][i] = LV_GRID_FR(1);
   colDsc[page][cols] = LV_GRID_TEMPLATE_LAST;
   for (int i = 0; i < rows; i++) rowDsc[page][i] = LV_GRID_FR(1);
@@ -283,6 +381,17 @@ void addTilesPage(const PageDef& def) {
   lv_obj_set_layout(grid, LV_LAYOUT_GRID);
   lv_obj_set_grid_dsc_array(grid, colDsc[page], rowDsc[page]);
   lv_obj_set_style_pad_all(grid, 8, 0);
+
+  // Decide this from actually placed/visible tiles, not merely the page's
+  // configuration: a conditional clock or one that cannot fit must not
+  // suppress the header time.
+  std::vector<Cell> cells;
+  placeTiles(def, orient, cells);
+  for (size_t i = 0; i < cells.size(); i++)
+    if (cells[i].placed && def.tiles[i].type == TILE_CLOCK) {
+      p.hasClockTile = true;
+      break;
+    }
   layoutHeader(p);
   lv_obj_set_style_pad_row(grid, 7, 0);
   lv_obj_set_style_pad_column(grid, 7, 0);
@@ -291,19 +400,17 @@ void addTilesPage(const PageDef& def) {
   lv_obj_add_flag(grid, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(grid, onGridHold, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)page);
 
-  // Tiles without a cell ("when" not met, no room) are built hidden, so a
-  // "when" flip only re-places the page (placePage).
-  std::vector<Cell> cells;
-  placeTiles(def, orient, cells);
+  // Build even conditionally hidden tiles. They keep stable LVGL callbacks
+  // and can be rearranged without destroying every page on a when flip.
   for (size_t i = 0; i < cells.size(); i++) {
     const Cell& c = cells[i];
     if (!c.placed && !c.off) Serial.printf("Deck: page '%s' has no room for tile '%s'\n",
-                                           def.id.c_str(), def.tiles[i].id.c_str());
-    if (def.tiles[i].type == TILE_PRINTER && !advSettings.printers) continue;
+                       def.id.c_str(), def.tiles[i].id.c_str());
     makeTile(grid, def.tiles[i], page, c.placed ? c.x : 0, c.placed ? c.y : 0, c.w, c.h);
-    if (c.placed) continue;
-    s_tiles.back().off = true;
-    lv_obj_add_flag(s_tiles.back().obj, LV_OBJ_FLAG_HIDDEN);
+    if (!c.placed) {
+      s_tiles.back().off = true;
+      lv_obj_add_flag(s_tiles.back().obj, LV_OBJ_FLAG_HIDDEN);
+    }
   }
 
   p.snap = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
@@ -311,52 +418,65 @@ void addTilesPage(const PageDef& def) {
   s_count++;
 }
 
-// The page's built tiles take the cells its "when" conditions give them now.
-// The glass is baked again only where a tile came, went or moved.
+// Update just the affected page's tile grid; retain every tile's LVGL state.
 void placePage(int page) {
   Page& p = s_pages[page];
   const PageDef& def = *p.def;
   std::vector<Cell> cells;
   placeTiles(def, logicalW() > logicalH() ? ORIENT_LANDSCAPE : ORIENT_PORTRAIT, cells);
-  struct Was {
-    TileRt* r;
-    bool off;
-    lv_area_t a;
-  };
+  struct Was { TileRt* r; bool off; lv_area_t area; };
   std::vector<Was> was;
+  bool clockVisible = false;
+  for (size_t i = 0; i < cells.size(); ++i)
+    if (cells[i].placed && def.tiles[i].type == TILE_CLOCK) clockVisible = true;
+  lv_obj_update_layout(p.root);
   for (TileRt& r : s_tiles) {
     if (r.page != page) continue;
-    const Cell& c = cells[r.def - def.tiles.data()];
-    lv_obj_t* t = r.obj;
+    const size_t index = r.def - def.tiles.data();
+    if (index >= cells.size()) continue;
+    const Cell& c = cells[index];
+    lv_obj_t* tile = r.obj;
     was.push_back({&r, r.off, {}});
-    lv_obj_get_coords(t, &was.back().a);
-    if (c.placed && (lv_obj_get_style_grid_cell_column_pos(t, LV_PART_MAIN) != c.x ||
-                     lv_obj_get_style_grid_cell_row_pos(t, LV_PART_MAIN) != c.y ||
-                     lv_obj_get_style_grid_cell_column_span(t, LV_PART_MAIN) != c.w ||
-                     lv_obj_get_style_grid_cell_row_span(t, LV_PART_MAIN) != c.h))
-      lv_obj_set_grid_cell(t, LV_GRID_ALIGN_STRETCH, c.x, c.w, LV_GRID_ALIGN_STRETCH, c.y, c.h);
-    if (c.placed != r.off) continue;
+    lv_obj_get_coords(tile, &was.back().area);
+    if (c.placed && (lv_obj_get_style_grid_cell_column_pos(tile, LV_PART_MAIN) != c.x ||
+                     lv_obj_get_style_grid_cell_row_pos(tile, LV_PART_MAIN) != c.y ||
+                     lv_obj_get_style_grid_cell_column_span(tile, LV_PART_MAIN) != c.w ||
+                     lv_obj_get_style_grid_cell_row_span(tile, LV_PART_MAIN) != c.h))
+      lv_obj_set_grid_cell(tile, LV_GRID_ALIGN_STRETCH, c.x, c.w, LV_GRID_ALIGN_STRETCH, c.y, c.h);
+    if (r.off == !c.placed) continue;
     r.off = !c.placed;
-    showObj(t, c.placed);
+    if (c.placed) lv_obj_remove_flag(tile, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(tile, LV_OBJ_FLAG_HIDDEN);
+  }
+  const bool clockChanged = p.hasClockTile != clockVisible;
+  if (clockChanged) {
+    p.hasClockTile = clockVisible;
+    layoutHeader(p);
   }
   lv_obj_update_layout(p.root);
   lv_area_t rc, changed = {LV_COORD_MAX, LV_COORD_MAX, LV_COORD_MIN, LV_COORD_MIN};
   lv_obj_get_coords(p.root, &rc);
   auto add = [&](const lv_area_t& a) {
-    changed = {LV_MIN(changed.x1, a.x1 - rc.x1), LV_MIN(changed.y1, a.y1 - rc.y1),
-               LV_MAX(changed.x2, a.x2 - rc.x1), LV_MAX(changed.y2, a.y2 - rc.y1)};
+    changed.x1 = LV_MIN(changed.x1, a.x1 - rc.x1);
+    changed.y1 = LV_MIN(changed.y1, a.y1 - rc.y1);
+    changed.x2 = LV_MAX(changed.x2, a.x2 - rc.x1);
+    changed.y2 = LV_MAX(changed.y2, a.y2 - rc.y1);
   };
-  for (const Was& k : was) {
+  for (const Was& prev : was) {
     lv_area_t now;
-    lv_obj_get_coords(k.r->obj, &now);
-    const bool same = now.x1 == k.a.x1 && now.y1 == k.a.y1 && now.x2 == k.a.x2 && now.y2 == k.a.y2;
-    if (k.off == k.r->off && (k.off || same)) continue;
-    if (!k.off) add(k.a);
-    if (!k.r->off) add(now);
+    lv_obj_get_coords(prev.r->obj, &now);
+    const bool same = now.x1 == prev.area.x1 && now.y1 == prev.area.y1 &&
+                      now.x2 == prev.area.x2 && now.y2 == prev.area.y2;
+    if (prev.off == prev.r->off && (prev.off || same)) continue;
+    if (!prev.off) add(prev.area);
+    if (!prev.r->off) add(now);
   }
-  if (changed.x1 > changed.x2) return;
-  // A failed bake is tried again as a wallpaper bake (tickWallpaper).
-  if (s_theme == THEME_GLASS && !p.wallBake && wallBlur() && !bakeGlass(p, &changed)) p.wallBake = true;
+  if (changed.x1 > changed.x2) {
+    if (clockChanged) p.stale = true;
+    return;
+  }
+  // Re-bake only where tiles moved. A missing glass buffer falls back to full bake.
+  if (s_theme == THEME_GLASS && wallBlur()) bakeGlass(p, &changed);
   p.stale = true;
   s_zonesDirty = true;
 }
@@ -372,12 +492,9 @@ void buildPages() {
   s_tiles.reserve(64);
   whenApply();
   int keep = -1;
-  s_prnPagesUp = false;
   for (const PageDef& pd : s_cfg.pages) {
     if (s_count >= MAX_PAGES) break;
-    if (pd.printer.length() && !printerPowered(pd.printer)) continue;
     if (!pd.shown) continue;
-    if (pd.printer.length()) s_prnPagesUp = true;
     if (s_keepPage.length() && pd.id == s_keepPage) keep = s_count;
     addTilesPage(pd);
   }
@@ -454,6 +571,7 @@ void setPager(int page) {
 }
 
 void destroyPages(bool keepGlass = false) {
+  inlineClimateFlush();  // Don't lose an unsent setpoint during page rebuild.
   clearGlassCache();
   edClose();
   closeModal();
@@ -474,11 +592,7 @@ void destroyPages(bool keepGlass = false) {
   }
   s_count = 0;
   for (TileRt& r : s_tiles) {
-    r.art.reset();
     if (r.pts) lv_free(r.pts);
-    sparkFree(r.spark);
-    vizFree(r.vz);
-    prnFxFree(r.pfx);
   }
   s_tiles.clear();
   portENTER_CRITICAL(&s_mux);
@@ -499,12 +613,9 @@ void syncSwipeZones() {
     lv_area_t root;
     lv_obj_get_coords(s_pages[a].root, &root);
     for (const TileRt& r : s_tiles) {
-      // A slider tile, or the volume row of a Now playing tile.
-      const bool vol = r.def->type == TILE_MEDIA && r.volBar && !lv_obj_has_flag(r.volBar, LV_OBJ_FLAG_HIDDEN);
-      if (r.page != a || r.off || (!r.fill && !vol) || n == MAX_PAGE_TILES) continue;
+      if (r.page != a || !r.fill || n == MAX_PAGE_TILES) continue;
       lv_area_t t;
       lv_obj_get_coords(r.obj, &t);
-      if (vol) lv_obj_get_coords(r.volBar, &t);
       z[n++] = {(int16_t)(t.x1 - root.x1), (int16_t)(t.y1 - root.y1), (int16_t)(t.x2 - root.x1),
                 (int16_t)(t.y2 - root.y1)};
     }
@@ -579,29 +690,14 @@ void refreshOneSnapshot() {
                         a + 1 < s_count && sh.col[a + 1] == c ? a + 1 : -1,
                         a > 0 && sh.col[a - 1] == c ? a - 1 : -1};
   // The shown page swipes from the live frame; only closing the panel slides
-  // off its image (showPanel marks it), so then it goes first. Pages further
-  // away jump (goToPage), so their old image stands until they are neighbours.
-  auto near = [&](int p) { return p == a || p == order[0] || p == order[1] || p == order[2] || p == order[3]; };
-  auto due = [&](int p) {
-    return p >= 0 && s_pages[p].stale && !s_pages[p].wallBake && (p != a || s_qp.open) && (!sh.valid[p] || near(p));
-  };
+  // off its image (showPanel marks it), so then it goes first.
+  auto due = [&](int p) { return p >= 0 && s_pages[p].stale && !s_pages[p].wallBake && (p != a || s_qp.open); };
   if (s_qp.open && due(a)) pick = a;
-  // A page without an image cannot be swiped to at all. Nor should a page
-  // just jumped next to show an image from when it was far (not refreshed).
-  const bool anim = lv_anim_count_running() > 0;
+  // A page without an image cannot be swiped to at all.
   for (int k = 0; k < 4 && pick < 0; k++)
-    if (due(order[k]) && (!sh.valid[order[k]] || (!anim && now - s_pages[order[k]].snapMs > NEAR_SNAP_MAX_MS)))
-      pick = order[k];
+    if (due(order[k]) && !sh.valid[order[k]]) pick = order[k];
   for (int p = 0; p < s_count && pick < 0; p++)
     if (due(p) && !sh.valid[p]) pick = p;
-  // A whole page snapshot stalls gliding charts and tile effects for about
-  // 45 ms: meanwhile, one image every few seconds, the oldest first so none is starved.
-  const bool busy = now - s_sparkPaintMs < 1000 || anim;
-  if (pick < 0 && busy) {
-    if (now - s_lastSnapMs < SPARK_SNAP_MS) return;
-    for (int p = 0; p < s_count; p++)
-      if (due(p) && (pick < 0 || (int32_t)(s_pages[p].snapMs - s_pages[pick].snapMs) < 0)) pick = p;
-  }
   for (int k = 0; k < 4 && pick < 0; k++)
     if (due(order[k])) pick = order[k];
   for (int p = 0; p < s_count && pick < 0; p++)
@@ -658,22 +754,13 @@ void tickWallpaper() {
                     !touchIsDown() && !s_qp.open && !s_modalCard && !s_ed.root &&
                     s_ed.pending == EditState::P_NONE && compMode() == COMP_NONE && !sh.owned;
   const bool idle = millis() - touchLastActivity() >= WALL_IDLE_MS;
-  // On small PSRAM boards printer pages leave too little for a reliable change.
-  const bool rotate = !(BOARD_WALL_PRINTER_PAUSE && s_prnPagesUp);
   bool baking = false;
   for (int i = 0; i < s_count; i++) baking |= s_pages[i].wallBake;
-  // A job starts only when safe: no card is open, so its two screen sized
-  // buffers can make room for the new wallpaper.
-  auto makeRoom = [] {
-    cardUnderFree();
-    fxCardPicFree();
-  };
-  if (wallPoll(logicalW(), logicalH(), idle, safe && !baking, rotate, makeRoom)) {
+  if (wallPoll(logicalW(), logicalH(), idle, safe && !baking)) {
     stopGestures();
     for (int i = 0; i < s_count; i++) s_pages[i].stale = true;
     // A touch may have started while the compositor was being quiesced.
-    if (!wallPoll(logicalW(), logicalH(), millis() - touchLastActivity() >= WALL_IDLE_MS, !touchIsDown(), rotate))
-      return;
+    if (!wallPoll(logicalW(), logicalH(), millis() - touchLastActivity() >= WALL_IDLE_MS, !touchIsDown())) return;
     wallCommit();
     for (int i = 0; i < s_count; i++) s_pages[i].wallBake = true;
     bakeWallpaperPage(sh.active);
@@ -711,7 +798,35 @@ void updateHeaders() {
   const uint32_t now = millis();
   if (now - s_lastClockCheck < 1000) return;
   s_lastClockCheck = now;
-  for (TileRt& r : s_tiles) if (r.def->type == TILE_MEDIA) mediaTick(r);
+  const auto updateState = firmwareUpdate::snapshot();
+  // Requests from the local web UI only bring the existing LVGL physical
+  // confirmation to the foreground; they never install or reboot remotely.
+  if (firmwareUpdate::takeTouchConfirmationRequest())
+    openFirmwareConfirmation(nullptr);
+  // Staging happens asynchronously in the updater task. Show the physical
+  // install confirmation once as soon as the image is verified, even if the
+  // optional header update badge (or the whole header) is disabled.
+  if (!updateState.staged) {
+    s_firmwarePrompted = false;
+  } else if (!s_firmwarePrompted && updateState.promptOnStage) {
+    // Only a manual Download OTA request interrupts the touchscreen.
+    // Automatic downloads advertise readiness through the header icon.
+    s_firmwarePrompted = true;
+    openFirmwareConfirmation(nullptr);
+  }
+  for (int i = 0; i < s_count; ++i) {
+    Page& page = s_pages[i];
+    if (!page.updateBadge) continue;
+    const bool visible = s_header && updateState.checksEnabled &&
+      (updateState.showBadge || (updateState.staged && !updateState.promptOnStage)) &&
+      (updateState.available || updateState.staged);
+    const bool hidden = lv_obj_has_flag(page.updateBadge, LV_OBJ_FLAG_HIDDEN);
+    if (visible == hidden) {
+      if (visible) lv_obj_remove_flag(page.updateBadge, LV_OBJ_FLAG_HIDDEN);
+      else lv_obj_add_flag(page.updateBadge, LV_OBJ_FLAG_HIDDEN);
+      page.stale = true;
+    }
+  }
   const int wifi = WiFi.status() == WL_CONNECTED ? 1 : 0;
   if (wifi != s_lastWifi) {
     s_lastWifi = wifi;
@@ -733,7 +848,7 @@ void updateHeaders() {
   else snprintf(buf, sizeof(buf), "%d:%02d %s", (lt.tm_hour + 11) % 12 + 1, lt.tm_min,
                 lt.tm_hour < 12 ? "AM" : "PM");
   for (int i = 0; i < s_count; i++) {
-    if (!s_pages[i].clock) continue;
+    if (!s_pages[i].clock || s_pages[i].hasClockTile) continue;
     lv_label_set_text(s_pages[i].clock, buf);
     s_pages[i].stale = true;
   }
@@ -752,40 +867,6 @@ void rebuildPages() {
   buildPages();
   s_gen++;
   lv_obj_invalidate(lv_screen_active());
-}
-
-// Plugs power the printers; a printer page comes and goes with its printer.
-void printerSync() {
-  if (printersPowerSync(s_cfg)) s_prnRebuild = true;
-  if (s_prnRebuild && canRebuild()) {
-    bool pages = false;
-    for (const PageDef& pd : s_cfg.pages) pages |= pd.printer.length() > 0;
-    s_prnRebuild = false;
-    if (pages) {
-      rebuildPages();
-      return;
-    }
-  }
-  const uint32_t v = printersVersion();
-  const bool graceOver = s_prnGraceAt && (int32_t)(millis() - s_prnGraceAt) >= 0;
-  if (v == s_prnSeen && !graceOver) return;
-  if (graceOver) s_prnGraceAt = 0;
-  s_prnSeen = v;
-  readPrinters();
-  printerEvents();
-  for (TileRt& r : s_tiles) applyPrinterToTile(r);
-  printerToast();
-}
-
-// Under the photo frame only the printer events run (a new error or the bed
-// cooling wakes the deck); the tiles follow once the frame is gone.
-uint32_t s_prnWatchSeen = 0;
-void printerWatch() {
-  const uint32_t v = printersVersion();
-  if (v == s_prnWatchSeen) return;
-  s_prnWatchSeen = v;
-  readPrinters();
-  printerEvents();
 }
 
 String s_autoFrom;  // the page shown before an "auto" page took over
@@ -808,18 +889,11 @@ void autoNavTick() {
   s_autoTo = "";
 }
 
-// Same slide for a printer error (printerEvents); the "auto" return stays as it was.
-void autoNavTo(const String& id) {
-  s_autoTo = id;
-  s_autoUntil = millis() + AUTO_WAIT_MS;
-}
 
-// A "when" page whose condition flipped rebuilds the pages; tiles alone are
-// re-placed on their page. A page that goes while shown is left first (back
-// where an "auto" switch came from).
+// A page condition rebuilds all pages; tile conditions re-place one page. A page
+// that goes while shown is left first (back where an "auto" switch came from).
 void whenSync() {
   whenTrack();
-  printerFollowTick();
   autoNavTick();
   if (!canRebuild() || compMode() != COMP_NONE) return;
   const String cur = activePageId();
@@ -829,8 +903,7 @@ void whenSync() {
     if (pd.when.kind == WHEN_ALWAYS || whenWanted(pd) == pd.shown) continue;
     if (pd.shown && pd.id == cur) {
       int back = pageIndexOf(s_autoFrom);
-      if (back < 0 || back == sh.active) back = homePage();
-      if (back == sh.active) back = 0;
+      if (back < 0 || back == sh.active) back = 0;
       if (back != sh.active) {
         s_autoFrom = "";
         goToPage(s_pages[back].def->id);
@@ -869,59 +942,20 @@ void frameCatchUp() {
   s_frameSync = true;
   updateHeaders();
   haSync();
+#if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
+  bambuSync();
+#endif
+  inlineClimateTick();
   httpSync();
-  printerSync();
   whenSync();
-  pcSync(false);
-  mediaArtTick();
   s_frameSync = false;
-}
-
-// Bench timing for GET /api/deck/perf.
-enum PerfPart { PP_WEB, PP_PC, PP_OTHER, PP_WHEN, PP_PCSYNC, PP_MEDIA, PP_ANIM, PP_LV, PP_SNAP, PP_N };
-const char* const PERF_COLS = "ms,web,pc,other,when,pcsync,media,anim,lv,snap";
-struct PerfRow {
-  uint32_t ms;
-  uint32_t us[PP_N];
-};
-constexpr int PERF_ROWS = 256;
-PerfRow* s_perfRows = nullptr;  // PSRAM ring, allocated by the first read
-int s_perfHead = 0, s_perfCount = 0;
-uint32_t s_perfLost = 0, s_perfMinUs = 25000, s_perfPasses = 0, s_perfPassMax = 0;
-PanelStats s_perfPanel = {};
-
-// Every panelTakeStats goes through here, so the serial log and the bench share the counters.
-PanelStats takePanelStats() {
-  const PanelStats p = panelTakeStats();
-  s_perfPanel.frames += p.frames;
-  s_perfPanel.compFrames += p.compFrames;
-  s_perfPanel.teLate += p.teLate;
-  s_perfPanel.teTimeouts += p.teTimeouts;
-  s_perfPanel.lvDropped += p.lvDropped;
-  s_perfPanel.flushUsMax = std::max(s_perfPanel.flushUsMax, p.flushUsMax);
-  s_perfPanel.gapMaxUs = std::max(s_perfPanel.gapMaxUs, p.gapMaxUs);
-  return p;
-}
-
-void perfPass(const uint32_t (&us)[PP_N]) {
-  uint32_t total = 0;
-  for (uint32_t u : us) total += u;
-  s_perfPasses++;
-  s_perfPassMax = std::max(s_perfPassMax, total);
-  if (!s_perfRows || total < s_perfMinUs) return;
-  if (s_perfCount == PERF_ROWS) s_perfLost++;
-  else s_perfCount++;
-  PerfRow& r = s_perfRows[s_perfHead];
-  s_perfHead = (s_perfHead + 1) % PERF_ROWS;
-  r.ms = millis();
-  memcpy(r.us, us, sizeof(r.us));
 }
 
 void logStats() {
   const uint32_t now = millis();
   if (now - s_lastStats < STATS_MS) return;
   s_lastStats = now;
-  const PanelStats p = takePanelStats();
+  const PanelStats p = panelTakeStats();
   if (!p.frames && !s_waitTimeouts) return;
   Serial.printf("Deck: frames=%u comp=%u flush=%u/%uus build=%uus te_late=%u te_to=%u "
                 "lv_drop=%u gap_max=%uus wait_to=%u snap_max=%uus int_free=%u\n",
@@ -955,14 +989,6 @@ bool deckBegin(uint8_t rotation) {
   lv_display_set_flush_cb(s_disp, flushCb);
   lv_display_set_flush_wait_cb(s_disp, flushWaitCb);
 
-  // Timers run newest first: recreate animation before adding input,
-  // so each pass reads input, advances animations, then draws.
-  lv_anim_enable_vsync_mode(true);
-  lv_anim_enable_vsync_mode(false);
-  // The tick moves once per TE edge, by 16 or 17 ms: a shorter period fires on every step.
-  lv_timer_set_period(lv_anim_get_timer(), 10);
-  lv_timer_set_period(lv_display_get_refr_timer(s_disp), 10);
-
   s_indev = lv_indev_create();
   lv_indev_set_type(s_indev, LV_INDEV_TYPE_POINTER);
   lv_indev_set_read_cb(s_indev, indevRead);
@@ -989,38 +1015,12 @@ bool deckBegin(uint8_t rotation) {
     }
   }
   haBegin();
-  for (const PageDef& pd : s_cfg.pages)
-    if (pd.home && !s_keepPage.length()) s_keepPage = pd.id;  // boot on it (first page while hidden)
   buildPages();
   touchBegin();
   Serial.printf("Deck: LVGL %d.%d.%d up, %d pages, %dx%d\n", LVGL_VERSION_MAJOR,
                 LVGL_VERSION_MINOR, LVGL_VERSION_PATCH, s_count, logicalW(), logicalH());
   return true;
 }
-
-namespace deckui {
-
-// The shown page's PC charts glide at about 30 fps while the screen is lit
-// and nothing covers the page.
-uint32_t s_sparkMs = 0;
-
-bool sparkGliding() {
-  return dispSettings.smoothCharts && !manualDisplayOff() && currentBacklightLevel() && !s_qp.open &&
-         !s_modalCard && !s_ed.root;
-}
-
-void sparkTick() {
-  const uint32_t now = millis();
-  const uint32_t dt = now - s_sparkMs;
-  if (dt < SPARK_FRAME_MS) return;
-  s_sparkMs = now;
-  if (!sparkGliding()) return;
-  for (TileRt& r : s_tiles)
-    if (r.spark && r.page == sh.active && !r.off && sparkRender(r, now, true, std::min<uint32_t>(dt, 200)))
-      s_sparkPaintMs = now;
-}
-
-}  // namespace deckui
 
 void deckTick() {
   if (!s_disp) return;
@@ -1058,7 +1058,7 @@ void deckTick() {
     }
     // Same edge formula as the compositor; a tile across one drops that cut.
     for (const TileRt& r : s_tiles) {
-      if (r.page < 0 || r.page >= MAX_PAGES || cols[r.page] < 2 || r.off) continue;
+      if (r.page < 0 || r.page >= MAX_PAGES || cols[r.page] < 2) continue;
       const int n = cols[r.page], x1 = lv_obj_get_x(r.obj), x2 = x1 + lv_obj_get_width(r.obj);
       const float cw = (float)(w - 16 - 7 * (n - 1)) / n;
       for (int k = 1; k < n; k++) {
@@ -1111,7 +1111,6 @@ void deckTick() {
   if (compOwnsScreen()) return;
 
   if (frameActive()) {
-    printerWatch();
     frameTick();
     if (!compOwnsScreen()) {
       dailyBarSync();
@@ -1120,13 +1119,19 @@ void deckTick() {
     return;
   }
 
-  uint32_t us[PP_N] = {deckPerfWebUs, deckPerfPcUs};
-  uint32_t t = micros();
-  const auto lap = [&](PerfPart p) {
-    const uint32_t n = micros();
-    us[p] += n - t;
-    t = n;
-  };
+  // A PNG may have appeared, changed in-place, or been deleted on the SD card.
+  // Recreate tile image widgets when idle, after dropping cached decoded PNGs.
+  // This happens on the loop task (the same task as the web server and LVGL).
+  if (s_bedroomIconsRefreshPending && canRebuild()) {
+    s_bedroomIconsRefreshPending = false;
+    stopGestures();
+    s_keepPage = activePageId();
+    destroyPages(true);
+    lv_image_cache_drop(nullptr);  // drop all stale file-backed PNG decodes
+    buildPages();
+    s_gen++;
+    lv_obj_invalidate(lv_screen_active());
+  }
   if (s_ed.pending != EditState::P_NONE) edFinish();
   tickWallpaper();
   dailyBarSync();
@@ -1134,74 +1139,28 @@ void deckTick() {
   blinkClocks();
   qpUpdateStatus(false);
   haSync();
+#if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
+  // Printer state is updated by a worker on the other core. Normal deck
+  // frames must sync it too; frameCatchUp() only runs after a photo frame wake.
+  bambuSync();
+#endif
+  inlineClimateTick();
   httpSync();
-  printerSync();
-  lap(PP_OTHER);
   whenSync();
-  lap(PP_WHEN);
-  pcCmdSync();
-  pairSync();
-  pcSync(false);
-  lap(PP_PCSYNC);
-  mediaArtTick();
-  pcVolumeTick();
-  lap(PP_MEDIA);
-  if (!systemScreen) {
-    sparkTick();
-    heroTick();
-    vizTick();
-  }
   syncSwipeZones();
-  lap(PP_ANIM);
   lv_timer_handler();
-  lap(PP_LV);
   if (!systemScreen) refreshOneSnapshot();
-  lap(PP_SNAP);
   logStats();
-  perfPass(us);
-}
-
-uint32_t deckPerfWebUs = 0, deckPerfPcUs = 0;
-
-void deckPerfJson(String& out, uint32_t minUs) {
-  static uint32_t t0 = millis(), viz0 = vizSerial();
-  takePanelStats();
-  const PanelStats& p = s_perfPanel;
-  const uint32_t ms = millis() - t0;
-  char b[400];
-  snprintf(b, sizeof(b),
-           "{\"ms\":%u,\"frames\":%u,\"fps\":%.1f,\"comp\":%u,\"teLate\":%u,\"teTimeouts\":%u,\"lvDrop\":%u,"
-           "\"flushUsMax\":%u,\"gapMaxUs\":%u,\"passes\":%u,\"passUsMax\":%u,\"vizPackets\":%u,\"vizPeak\":%u,"
-           "\"sound\":%s,\"minUs\":%u,\"lost\":%u,\"cols\":\"%s\",\"rows\":[",
-           (unsigned)ms, (unsigned)p.frames, ms ? p.frames * 1000.0f / ms : 0.0f, (unsigned)p.compFrames,
-           (unsigned)p.teLate, (unsigned)p.teTimeouts, (unsigned)p.lvDropped, (unsigned)p.flushUsMax,
-           (unsigned)p.gapMaxUs, (unsigned)s_perfPasses, (unsigned)s_perfPassMax, (unsigned)(vizSerial() - viz0),
-           (unsigned)vizPeak(), vizSoundOn() ? "true" : "false", (unsigned)s_perfMinUs, (unsigned)s_perfLost,
-           PERF_COLS);
-  out = b;
-  out.reserve(out.length() + s_perfCount * 64 + 4);
-  for (int i = 0; i < s_perfCount; i++) {
-    const PerfRow& r = s_perfRows[(s_perfHead - s_perfCount + i + PERF_ROWS) % PERF_ROWS];
-    out += i ? ",[" : "[";
-    out += r.ms;
-    for (uint32_t u : r.us) {
-      out += ',';
-      out += u;
-    }
-    out += ']';
-  }
-  out += "]}";
-  if (!s_perfRows) s_perfRows = (PerfRow*)heap_caps_malloc(PERF_ROWS * sizeof(PerfRow), MALLOC_CAP_SPIRAM);
-  s_perfHead = s_perfCount = 0;
-  s_perfLost = s_perfPasses = s_perfPassMax = 0;
-  s_perfMinUs = minUs;
-  s_perfPanel = {};
-  t0 = millis();
-  viz0 = vizSerial();
 }
 
 void deckToast(const char* text) {
   if (s_disp) deckToastShow(text, 1800);
+}
+
+void deckBedroomIconsChanged() {
+  // Never rebuild inside a multipart upload handler. deckTick() waits until
+  // the user isn't touching the screen, preserving their current page.
+  s_bedroomIconsRefreshPending = true;
 }
 
 void deckRefreshNow() {
@@ -1303,6 +1262,30 @@ bool deckApplyConfig(const String& text, String& err) {
   return true;
 }
 
+#if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
+void deckRefreshPrinterPage() {
+  if (!s_disp) return;
+  String saved, error;
+  deckConfigText(saved);
+  DeckConfig next;
+  if (!deckConfigParse(saved.c_str(), saved.length(), next, &error)) {
+    Serial.printf("Deck: printer page refresh rejected: %s\n", error.c_str());
+    return;
+  }
+  // Generated Bambu tiles exist only in memory. Keep the currently shown
+  // page by ID, so a printer being enabled/disabled doesn't jump the user.
+  s_keepPage = activePageId();
+  stopGestures();
+  destroyPages(true);
+  s_cfg = next;
+  buildPages();
+  s_gen++;
+  lv_obj_invalidate(lv_screen_active());
+  Serial.printf("Deck: printer configuration changed, %u pages\n",
+                (unsigned)s_cfg.pages.size());
+}
+#endif
+
 String deckLedEntity() { return s_cfg.ledEntity; }
 
 bool deckSetLedEntity(const String& id, String& err) {
@@ -1402,54 +1385,11 @@ bool deckRemoveBrand(String& err) {
   return ok;
 }
 
-String deckPrintersJson() {
-  JsonDocument doc;
-  JsonArray arr = doc["printers"].to<JsonArray>();
-  doc["stack_free"] = printersStackFree();
-  PrinterState* s = (PrinterState*)heap_caps_malloc(sizeof(PrinterState), MALLOC_CAP_SPIRAM);
-  if (s) new (s) PrinterState();
-  for (const PrinterDef& d : s_cfg.printers) {
-    JsonObject o = arr.add<JsonObject>();
-    o["id"] = d.id;
-    o["secret"] = printerHasSecret(d.id);
-    o["source"] = d.ha ? "ha" : "lan";
-    o["powered"] = printerPowered(d.id);
-    if (!s || !printerRead(d.id, *s)) continue;
-    static const char* const kLink[] = {"off", "connecting", "online", "failed"};
-    o["link"] = kLink[s->link < 4 ? s->link : 0];
-    o["err"] = s->err;
-    o["state"] = s->gcodeState;
-    o["progress"] = s->progress;
-    o["dual"] = s->dualNozzle;
-    o["chamber"] = isfinite(s->chamber);
-    o["ams"] = s->amsCount;
-  }
-  heap_caps_free(s);
-  String out;
-  serializeJson(doc, out);
-  return out;
-}
-
-void deckPrintersReapply() { printersApply(s_cfg); }
-
-void deckSetPrinters(bool on) {
-  if (on == advSettings.printers) return;
-  advSettings.printers = on;
-  printersApply(s_cfg);  // before the rebuild: a printer page shows only while powered
-  if (!s_disp) return;
-  stopGestures();
-  destroyPages(true);
-  buildPages();
-  s_gen++;
-  lv_obj_invalidate(lv_screen_active());
-}
-
 bool deckTestCard(const String& tileId) {
   if (frameActive()) return false;
   if (s_ed.root) return false;  // the editor blocks gestures until it closes
   for (size_t i = 0; i < s_tiles.size(); i++) {
-    if (s_tiles[i].def->id != tileId || s_tiles[i].off) continue;
-    if (s_tiles[i].def->type == TILE_PRINTER) return false;  // touch never opens a card there
+    if (s_tiles[i].def->id != tileId) continue;
     openModal((int)i);
     return true;
   }
@@ -1460,10 +1400,8 @@ bool deckTestTap(const String& tileId, bool hold) {
   if (frameActive()) return false;
   if (s_ed.root) return false;
   for (TileRt& r : s_tiles) {
-    if (r.def->id != tileId || r.off || r.def->type == TILE_METRIC || r.def->type == TILE_CLOCK ||
-        r.def->type == TILE_MEDIA || r.def->type == TILE_VIZ) continue;
+    if (r.def->id != tileId || r.def->type == TILE_CLOCK) continue;
     const TileAction& a = hold ? r.def->hold : r.def->tap;
-    if (a.kind == ACT_PC) return false;  // PC commands require a real touch.
     requestAction(r, hold);
     return true;
   }
@@ -1473,8 +1411,7 @@ bool deckTestTap(const String& tileId, bool hold) {
 bool deckTestSlide(const String& tileId, int pct) {
   if (frameActive()) return false;
   for (TileRt& r : s_tiles) {
-    if (r.def->id != tileId || !r.fill || r.off) continue;
-    if (r.def->pcVolume) return false;  // PC commands require a real touch.
+    if (r.def->id != tileId || !r.fill) continue;
     const float f = constrain(pct, 0, 100) / 100.0f;
     return setWish(r.def->entity, true, f);
   }
@@ -1485,7 +1422,6 @@ bool deckTestConfirm(bool ok) {
   if (s_confirmHold < 0 || s_modalTile < 0 || (size_t)s_modalTile >= s_tiles.size()) return false;
   const TileDef& d = *s_tiles[s_modalTile].def;
   const TileAction& a = s_confirmHold ? d.hold : d.tap;
-  if (a.kind == ACT_PC) return false;  // PC commands require a real touch.
   if (ok) onConfirmOk(nullptr);
   else closeModal();
   return true;
@@ -1659,4 +1595,3 @@ bool uiPanelIsOpen() {
 
 }  // namespace deck
 
-void deckPrinterSettingsChanged() { deckui::s_prnSeen = 0; }

@@ -6,8 +6,6 @@
 #include <WiFi.h>
 #include <DNSServer.h>
 #include <ESPmDNS.h>
-#include <esp_sntp.h>
-#include "deck_ha.h"
 
 static bool apMode = false;
 static DNSServer* dnsServer = nullptr;
@@ -68,7 +66,7 @@ static void startAP() {
   // Build SSID from MAC
   uint32_t mac = (uint32_t)(ESP.getEfuseMac() & 0xFFFF);
   char ssidBuf[32];
-  snprintf(ssidBuf, sizeof(ssidBuf), "%s%04X", WIFI_AP_PREFIX, mac);
+  snprintf(ssidBuf, sizeof(ssidBuf), "%s%04x", WIFI_AP_PREFIX, mac);
   apSSID = ssidBuf;
 
   // Use AP+STA so we can probe STA while serving the config portal
@@ -149,20 +147,6 @@ static void startMDNS() {
   }
 }
 
-// The timezone, and the clock's source: NTP, or Home Assistant (no NTP then,
-// so the two never take turns setting the clock).
-void configureClock() {
-  const bool ha = timeSource == TIME_SRC_HA;
-  deck::haSetTimeSync(ha);
-  if (!ha) {
-    configTzTime(netSettings.timezoneStr, "pool.ntp.org", "time.nist.gov");
-    return;
-  }
-  if (esp_sntp_enabled()) esp_sntp_stop();
-  setenv("TZ", netSettings.timezoneStr, 1);
-  tzset();
-}
-
 static void completeWiFiStartup() {
   Serial.printf("WiFi connected! IP: %s\n",
                 WiFi.localIP().toString().c_str());
@@ -172,10 +156,9 @@ static void completeWiFiStartup() {
   reconnectAttempts = 0;
   splashStaStarted = false;
 
-  // Time from NTP or Home Assistant, with automatic DST
-  configureClock();
-  Serial.printf("Clock: %s, %s\n", timeSource == TIME_SRC_HA ? "Home Assistant" : "NTP",
-                netSettings.timezoneStr);
+  // Sync time via NTP with automatic DST
+  configTzTime(netSettings.timezoneStr, "pool.ntp.org", "time.nist.gov");
+  Serial.printf("NTP configured: %s\n", netSettings.timezoneStr);
 
   startMDNS();
 
@@ -190,16 +173,32 @@ static void completeWiFiStartup() {
   }
 }
 
-static void beginStaConnectAttempt() {
-  // Modem sleep delays inbound ACKs to the beacon interval and stalls web
-  // transfers for seconds. The core re-applies this on every STA start.
+static void configureStaConnection() {
+  // When multiple APs broadcast the same SSID, prefer the best signal
+  // during a new connection attempt. No scans or handoffs while connected.
+  WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+  WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
+  // Modem sleep delays inbound ACKs and can stall the web UI and MQTT.
   WiFi.setSleep(false);
+}
+
+static void beginStaConnectAttempt() {
   WiFi.mode(WIFI_STA);
+  configureStaConnection();
   applyStaticNetworkConfig();
   WiFi.begin(wifiSSID, wifiPass);
 }
 
 void startWiFiDuringSplash() {
+  // Supply the configured device hostname to DHCP, not just to mDNS.
+  // Must happen before the first WiFi.mode()/WiFi.begin()/softAP().
+  char host[sizeof(netSettings.hostname)];
+  sanitizeHostname(netSettings.hostname, host, sizeof(host));
+  if (!WiFi.setHostname(host))
+    Serial.printf("WiFi: failed to set DHCP hostname %s\n", host);
+  else
+    Serial.printf("WiFi DHCP hostname: %s\n", host);
+
   if (strlen(wifiSSID) == 0) return;
 
   registerWiFiDiagnostics();
@@ -310,6 +309,7 @@ void handleWiFi() {
     if (!staProbing && now - lastStaProbe >= WIFI_STA_PROBE_INTERVAL) {
       // Start a non-blocking STA probe; result checked after WIFI_STA_PROBE_CHECK_MS
       Serial.println("AP mode: probing STA connection...");
+      configureStaConnection();
       WiFi.begin(wifiSSID, wifiPass);
       staProbing = true;
       probeStartTime = now;
@@ -327,7 +327,7 @@ void handleWiFi() {
         lastReconnectAttempt = 0;
         phase3StartTime = 0;
 
-        configureClock();
+        configTzTime(netSettings.timezoneStr, "pool.ntp.org", "time.nist.gov");
         startMDNS();
         setScreenState(SCREEN_WIFI_CONNECTED);
       } else {
@@ -377,6 +377,7 @@ void handleWiFi() {
       }
 
       WiFi.disconnect();
+      configureStaConnection();
       WiFi.begin(wifiSSID, wifiPass);
     }
   } else {

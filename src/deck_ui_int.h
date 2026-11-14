@@ -1,12 +1,11 @@
 // Internal to the deck UI (src/deck_ui*.cpp): shared types, state and helpers.
 #pragma once
 #include "deck_ui.h"
+#include "deck_updates.h"
 #include "deck_config.h"
-#include "deck_bambu.h"
 #include "deck_ha.h"
 #include "deck_http.h"
 #include "deck_icons.h"
-#include "deck_printers.h"
 #include "deck_sys.h"
 #include "deck_touch.h"
 #include "deck_wall.h"
@@ -16,8 +15,6 @@
 #include "led.h"
 #include "haptic.h"
 #include "audio.h"
-#include "pc_metrics.h"
-#include "metric_format.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <Preferences.h>
@@ -47,6 +44,8 @@ struct Page {
   lv_obj_t* title;
   lv_obj_t* clock;
   lv_obj_t* wifi;
+  lv_obj_t* updateBadge;
+  bool hasClockTile;  // a visible, placed clock tile replaces the header clock
   lv_obj_t* grid;
   lv_draw_buf_t* snap;
   lv_draw_buf_t* glass;  // Glass theme: the baked background
@@ -57,27 +56,18 @@ struct Page {
   uint32_t snapMs;  // when snap was last taken
 };
 
-// Stable descriptors shared by tiles showing the same cover and size.
-struct MediaArt {
-  String id;
-  int px = 0;
-  lv_image_dsc_t dsc = {};
-  uint8_t* pixels = nullptr;
-  ~MediaArt() {
-    lv_image_cache_drop(&dsc);
-    heap_caps_free(pixels);
-  }
-};
-
 // One tile on screen. LVGL user data holds the index into s_tiles.
 struct TileRt {
   const TileDef* def;
+  bool off = false;   // Built but hidden when condition fails or no grid cell is available.
   int page;
-  bool off;               // built but hidden: "when" not met or no room, takes no cell
   lv_obj_t* obj;
   lv_obj_t* name;
   lv_obj_t* sub;
   lv_obj_t* icon;
+  lv_obj_t* pngIcon;    // optional transparent PNG from microSD, on top of MDI fallback
+  String pngSource;    // last image path, avoids decoding on every HA refresh
+  uint16_t pngWidth = 0, pngHeight = 0;  // native PNG size for fitting
   lv_obj_t* chip;
   int iconPx;
   uint32_t iconCp;        // MDI codepoint shown, 0 = LVGL symbol
@@ -107,13 +97,9 @@ struct TileRt {
   bool sliding;           // this press became a drag: no tap or hold action
   int16_t slX0;
   float slFrac0, slValue;
-  struct Spark* spark;    // PC metric chart, drawn by the deck (see sparkPaint)
   lv_obj_t* detail;       // HTTP sensor: the "detail" line
   lv_obj_t* rows;         // HTTP sensor rows: one box per row (label, bar, value)
   int16_t rowH;           // height of one row box
-  lv_obj_t* px[4];        // printer tiles: extra labels, swatches
-  uint32_t prnKey;        // printer tiles: what the last apply showed, 0 = redraw
-  struct PrnFx* pfx;      // printer tiles: counted reading and animations
   lv_obj_t* fx;           // touch effect running on this tile
   lv_obj_t* halo;         // on/off effect running on this tile
   lv_point_t press;       // last touch on the tile (screen coords), for effects
@@ -122,23 +108,27 @@ struct TileRt {
   lv_obj_t* colon;
   lv_obj_t* mins;
   bool colonLit;
-  lv_obj_t* cover;
-  lv_obj_t* mediaButtons[3];
-  lv_obj_t* mediaIcons[3];
-  std::shared_ptr<MediaArt> art;
-  String artWanted;
-  uint32_t artAttempt;
-  String artFailed;       // HA cover that failed (PNG, network): retried after 2 min
-  int16_t coverPx;
-  bool mediaFull;
-  bool mediaVol;          // the volume row is shown
-  bool mediaHa;           // the HA player is the source (auto tiles switch it)
-  uint8_t mediaPx;        // transport icon size
-  lv_obj_t* mediaDisc;    // accent disc behind play on bigger tiles
-  lv_obj_t* volBar;       // volume pill: bar, drag and tap target in one
-  lv_obj_t* volIcons[2];  // minus and plus on it
-  bool volHeld;           // a drag or a held half is moving the level
-  struct VizRt* vz;        // visualizer tiles: bar levels
+  // Inline thermostat: the same setpoint and HVAC services as the climate
+  // detail popup, but shown directly on the page.
+  lv_obj_t* climValue = nullptr;
+  lv_obj_t* climInfo = nullptr;
+  lv_obj_t* climMinus = nullptr;
+  lv_obj_t* climPlus = nullptr;
+  lv_obj_t* climModeRow = nullptr;
+  lv_obj_t* climModeBtns[6] = {};
+  String climModeIds[6];
+  uint8_t climModeCount = 0;
+  String climModePending;
+  uint32_t climModeAt = 0;
+  bool climPending = false, climSent = false;
+  float climWant = NAN, climWantHigh = NAN;
+  uint32_t climAt = 0;
+  // Home Assistant media remote: six independent clickable controls.
+  lv_obj_t* haMediaButtons[6] = {};
+  lv_obj_t* haMediaIcons[6] = {};
+  // Original TouchDeck-inspired printer renderer: LVGL references for
+  // hero badges/time/ETA, temperature targets and filament swatches.
+  lv_obj_t* bambuParts[8] = {};
   // Glass auto text: the colour picked from the picture under the tile.
   uint32_t autoText;
   bool hasAuto;
@@ -198,7 +188,6 @@ struct QuickPanel {
   lv_obj_t* scrim;
   lv_obj_t* box;
   lv_obj_t* wifi;
-  lv_obj_t* pc;
   lv_obj_t* ha;
   lv_obj_t* ip;
   lv_obj_t* screenLbl;
@@ -214,42 +203,10 @@ struct QuickPanel {
   bool open;
   bool stale;
   uint32_t lastStatus;
-  int rssi;  // shown on the WiFi chip, 0 = none yet
 };
 
 constexpr int NAME_LINE_SP = -2;  // Montserrat's line height has room for accents
 
-constexpr uint32_t C_PRN_HEAT = 0xF5B83D;  // heating, light on
-
-// The companion sends about once a second. The chart lags one sample and
-// glides at the packet rate, so the newest reading walks in instead of the
-// line jumping a column per packet. It eases toward the packet clock rather
-// than snapping to it, so an early or late packet causes no jump; a few extra
-// older samples keep the left edge on real data while it catches up.
-constexpr int SPARK_FRAME_MS = 33;
-
-constexpr uint32_t SPARK_SNAP_MS = 5000;
-
-constexpr int SPARK_KEEP = PC_HISTORY_LEN + 4;
-
-struct Spark {
-  float v[SPARK_KEEP];      // oldest first
-  uint8_t n;
-  uint8_t head, cnt;        // the metric's history ring when last copied
-  float off;                // right edge minus the newest sample, in samples (<= 0)
-  float lo, hi;             // axis range the samples ask for
-  float viewLo, viewHi;     // range on screen, eased toward lo / hi
-  bool haveView;
-  uint32_t rxMs;            // arrival of the newest sample
-  uint32_t gapMs;           // average interval between samples
-  uint32_t color;
-  lv_draw_buf_t* buf;       // A8 coverage, the chart object's size; drawn in color
-  int32_t key;              // glide step last painted, -1 = repaint
-  bool painted;             // buf holds a chart (a repaint keeps the old one until then)
-  bool dirty;               // new data since the last paint
-  bool drawPaint;           // paint on the next draw: not gliding (another page, panel open)
-  float paintLo, paintHi;
-};
 
 // Where each tile of a page lands: explicit cells first (in tile order), then
 // the rest flow into the first free place that fits. The portal grid editor
@@ -257,7 +214,7 @@ struct Spark {
 struct Cell {
   bool placed;
   int x, y, w, h;
-  bool off = false;  // printer tiles with printers disabled, "when" not met: no cell, stored pos untouched
+  bool off = false;  // invisible tiles have no cell
 };
 
 struct EdTile {
@@ -293,9 +250,6 @@ struct PickRow {
 };
 
 // deck_ui_bind.cpp
-extern uint32_t s_prnSeen;
-extern uint32_t s_prnGraceAt;
-extern bool s_prnRebuild;
 extern String s_keepPage;
 extern std::vector<std::pair<String, String>> s_whenStates;
 uint32_t tileTextRt(const TileRt& r);
@@ -323,8 +277,7 @@ void setSliderFill(TileRt& r, float frac);
 void applyHaToTile(TileRt& r, bool force);
 bool ledToHa(uint8_t v);
 void haSync();
-void pcCmdSync();
-bool whenWanted(const WhenDef& w, const String& pcId);
+bool whenWanted(const WhenDef& w);
 bool whenWanted(const TileDef& t);
 bool whenWanted(const PageDef& p);
 void whenTrack();
@@ -348,11 +301,6 @@ bool needsConfirm(const TileRt& r, const TileAction& a);
 const char* actionVerb(const TileRt& r, const TileAction& a);
 void requestAction(TileRt& r, bool hold);
 void tileEvent(lv_event_t* e);
-bool pcVolHeld();
-void pcVolumeAsk(const String& pc, int pct);
-int pcVolWanted(const String& pc);
-bool pcIsOnline(const String& id);
-void pcVolumeTick();
 void sliderEvent(lv_event_t* e);
 
 // deck_ui_panel.cpp
@@ -378,8 +326,6 @@ extern lv_obj_t* s_modalCard;
 extern int s_modalTile;
 extern int8_t s_confirmHold;
 bool modalShown();
-void cardUnderFree();
-void fxCardPicFree();
 void setModalOpen(bool open);
 void deckToastShow(const char* text, uint32_t holdMs);
 void dailyBarSync();
@@ -388,15 +334,11 @@ void refreshModal();
 void openModal(int tileIdx);
 void onConfirmOk(lv_event_t*);
 void openConfirm(int tileIdx, bool hold);
-void openPrinterErrors(const String& title, const PrinterState& s);
-void pairSync();
 
 // deck_ui_fit.cpp
 lv_obj_t* makeRoot(int w, int h);
-uint32_t metricAccent(const TileDef& d);
-uint32_t metricChart(const TileDef& d);
 uint32_t tileText(const TileDef& d);
-bool setText(lv_obj_t* l, const char* text);  // true when the text changed
+void setText(lv_obj_t* l, const char* text);
 int lineH(const lv_font_t* f);
 int textH(const lv_font_t* f, int lines);
 void showObj(lv_obj_t* o, bool on);
@@ -405,68 +347,49 @@ int textW(const char* text, const lv_font_t* f);
 void fitNameText(TileRt& r);
 void layoutRows(TileRt& r);
 void fitValue(TileRt& r);
+void fitWeather(TileRt& r, int cw, int ch);  // also re-fit when weather value/unit changes
+void fitTile(TileRt& r);  // shared tile layout; also used when PNG icon visibility changes
 void fitEvent(lv_event_t* e);
 
-// deck_ui_media.cpp
-void mediaGlyph(lv_obj_t* label, const char* name, const char* fallback, int px);
-void mediaTick(TileRt& r);
-void applyMedia(TileRt& r);
-void mediaArtTick();
-void mediaEvent(lv_event_t* e);
-void mediaVolEvent(lv_event_t* e);
-extern bool s_zonesDirty;
-void fitMedia(TileRt& r, int cw, int ch);
-void fitClock(TileRt& r, int cw, int ch);
-
-// deck_ui_viz.cpp
-void vizFree(VizRt* v);
-void makeVizContent(TileRt& r, lv_obj_t* t);
-void fitViz(TileRt& r, int cw, int ch);
-void vizDrawEvent(lv_event_t* e);
-void vizTick();
-
-// deck_ui_printer.cpp
-void readPrinters();
-bool printersJobActive();
-bool printerWhenWanted(const WhenDef& w);
-void makePrinterContent(TileRt& r, lv_obj_t* t);
-void fitPrinter(TileRt& r, int cw, int ch);
-void applyPrinterToTile(TileRt& r);
-void printerTap(TileRt& r);
-void printerEvents();
-void printerFollowTick();
-void printerToast();
-void autoNavTo(const String& id);
-void heroTick();
-
-// deck_ui_prnfx.cpp
-void prnFxMake(TileRt& r, lv_obj_t* t);
-void prnFxFree(PrnFx* f);
-void prnFxFit(TileRt& r, int size);
-void prnTempSet(TileRt& r, float now, float target, float scale, uint32_t color);
-void prnFilamentSet(TileRt& r, bool has, uint32_t rgb, bool clear, bool feeding, bool printing,
-                    const char* name);
-bool prnFxTick(uint32_t now, bool lit);
-
 // deck_ui_metric.cpp
-extern uint32_t s_sparkPaintMs;
-void sparkFree(Spark* s);
-bool sparkRender(TileRt& r, uint32_t now, bool ease, uint32_t dtMs);
-void sparkDrawEvent(lv_event_t* e);
-void sparkSizeEvent(lv_event_t* e);
-bool applyPcToTile(TileRt& r);  // true when the tile changed
 lv_obj_t* makeRows(lv_obj_t* t, const TileDef& d);
 lv_obj_t* makeDetail(lv_obj_t* t, const TileDef& d);
 void makeMetricContent(TileRt& r, lv_obj_t* t);
-void applyPcStateToTile(TileRt& r);
+void makeWeatherContent(TileRt& r, lv_obj_t* t);
+const char* weatherIcon(const String& state);
+String weatherCondition(const String& state);
+String weatherTempText(const HaEntity& e, bool withUnit);
+String climateCurrentUnit(const HaEntity& e);
+String climateCurrentText(const HaEntity& e, bool withUnit);
 void applyClock(TileRt& r);
-void pcSync(bool force);
+
+#if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
+// deck_ui_bambu.cpp
+void makeBambu(TileRt& r, lv_obj_t* parent, size_t index);
+void fitBambu(TileRt& r, int cw, int ch);
+void applyBambu(TileRt& r);
+void bambuSync();
+#endif
+
+// deck_ui_ha_media.cpp
+void makeHaMedia(TileRt& r, lv_obj_t* parent, size_t index);
+void fitHaMedia(TileRt& r, int cw, int ch);
+void applyHaMedia(TileRt& r, const HaEntity* e);
+
+// deck_ui_climate.cpp
+void makeInlineClimate(TileRt& r, lv_obj_t* tile, size_t index);
+void fitInlineClimate(TileRt& r, int cw, int ch);
+void applyInlineClimate(TileRt& r, const HaEntity* entity);
+void inlineClimateTick();
+void inlineClimateFlush();
 
 // deck_ui_tile.cpp
 String entityDomain(const String& entity);
 uint32_t domainColor(const String& domain);
 uint32_t showIcon(lv_obj_t* label, const TileDef& d, const HaEntity* e, bool on, int px, uint32_t shown);
 void tileIconColor(TileRt& r, const HaEntity* e = nullptr);
+void updatePngIcon(TileRt& r, bool on);
+void fitPngIcon(TileRt& r);
 String tileLabel(const TileDef& t);
 String tileSub(const TileRt& r);
 void markPageStale(int page);
@@ -474,7 +397,6 @@ void markPageStale(int page);
 bool snapPage(int page);
 extern uint32_t s_gen;  // UI generation, see compSetHoldGen
 uint32_t tileBg(const TileDef& d);
-uint32_t tileAccent(const TileDef& def);
 int tileTint(const TileDef& d);
 uint32_t onTextColor(const TileDef& def, bool glass);
 void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, int w, int h);
@@ -489,7 +411,6 @@ void fxRipple(TileRt& r, lv_point_t p);  // the touch effect, p in screen coords
 bool fxCancelRipples();  // true when one was running
 void fxBeforeTileOn(TileRt& r, bool on);  // before the CHECKED state changes
 void fxTileOn(TileRt& r, bool wasOn);
-void fxCardOpenBegin(int tileIdx, deck::FrameRect to, int r1);
 void fxCardOpen(lv_obj_t* card, int tileIdx);
 void fxCardClose(lv_obj_t* card, int tileIdx);
 
@@ -534,7 +455,6 @@ String activePageId();
 void placeTiles(const PageDef& def, int orient, std::vector<Cell>& out);
 void setPager(int page);
 void releaseSwipe();
-bool sparkGliding();
 void setHeader(bool on);
 
 }  // namespace deckui

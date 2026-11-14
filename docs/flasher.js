@@ -15,18 +15,14 @@ async function loadVersion() {
 }
 
 function buildManifest(version) {
-  const binUrl = board => new URL(`firmware/latest/TouchDeck-${version}${board}-full.bin`, document.baseURI).href;
+  const binUrl = new URL(`firmware/latest/TouchDeck-${version}-full.bin`, document.baseURI).href;
   return {
     name: 'TouchDeck',
     version,
     new_install_prompt_erase: true,
     // Allow first boot to expose Improv Serial for WiFi setup.
     new_install_improv_wait_time: 15,
-    // The installer picks the build by the chip it finds; the P4 build is the 7B (rev v3.x only).
-    builds: [
-      { chipFamily: 'ESP32-S3', parts: [{ path: binUrl(''), offset: 0 }] },
-      { chipFamily: 'ESP32-P4', parts: [{ path: binUrl('-p4-7b'), offset: 0 }] },
-    ],
+    builds: [{ chipFamily: 'ESP32-S3', parts: [{ path: binUrl, offset: 0 }] }],
   };
 }
 

@@ -4,7 +4,6 @@
 #include "deck_panel.h"
 #include <LittleFS.h>
 #include <time.h>
-#include <sys/time.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
@@ -312,40 +311,38 @@ void clearClimate(HaEntity& e) {
   e.hvacModes = "";
 }
 
-bool historyEpoch(const char* s, time_t& epoch);
-
-void clearMedia(HaEntity& e) {
-  e.mediaTitle = "";
-  e.mediaArtist = "";
-  e.mediaPicture = "";
-  e.mediaPictureRemote = "";
-  e.mediaSource = "";
-  e.mediaInputs = "";
-  e.mediaDuration = e.mediaPosition = 0;
-  e.mediaPosAt = 0;
+float* weatherField(HaEntity& e, const char* k) {
+  if (!strcmp(k, "temperature")) return &e.weatherTemp;
+  if (!strcmp(k, "apparent_temperature")) return &e.weatherFeels;
+  if (!strcmp(k, "humidity")) return &e.weatherHumidity;
+  if (!strcmp(k, "wind_speed")) return &e.weatherWind;
+  if (!strcmp(k, "wind_gust_speed")) return &e.weatherGust;
+  if (!strcmp(k, "pressure")) return &e.weatherPressure;
+  if (!strcmp(k, "visibility")) return &e.weatherVisibility;
+  if (!strcmp(k, "uv_index")) return &e.weatherUV;
+  if (!strcmp(k, "dew_point")) return &e.weatherDew;
+  if (!strcmp(k, "precipitation_probability")) return &e.weatherRainChance;
+  if (!strcmp(k, "wind_bearing")) return &e.weatherBearing;
+  return nullptr;
 }
 
-// True when k is a media attribute (absent or null clears it).
-bool mediaField(HaEntity& e, const char* k, JsonVariantConst v) {
-  if (!strcmp(k, "media_title")) e.mediaTitle = v.is<const char*>() ? (const char*)v : "";
-  else if (!strcmp(k, "media_artist")) e.mediaArtist = v.is<const char*>() ? (const char*)v : "";
-  else if (!strcmp(k, "entity_picture")) e.mediaPictureRemote = v.is<const char*>() ? (const char*)v : "";
-  else if (!strcmp(k, "entity_picture_local")) e.mediaPicture = v.is<const char*>() ? (const char*)v : "";
-  else if (!strcmp(k, "source")) e.mediaSource = v.is<const char*>() ? (const char*)v : "";
-  else if (!strcmp(k, "source_list")) {
-    e.mediaInputs = "";
-    for (JsonVariantConst s : v.as<JsonArrayConst>())
-      if (s.is<const char*>()) e.mediaInputs += String('\n') + s.as<const char*>();
-    if (e.mediaInputs.length()) e.mediaInputs += '\n';
-  } else if (!strcmp(k, "media_duration")) e.mediaDuration = v.is<float>() ? (int32_t)lroundf(v.as<float>()) : 0;
-  else if (!strcmp(k, "media_position")) e.mediaPosition = v.is<float>() ? (int32_t)lroundf(v.as<float>()) : 0;
-  else if (!strcmp(k, "media_position_updated_at")) {
-    if (!v.is<const char*>() || !historyEpoch(v.as<const char*>(), e.mediaPosAt)) e.mediaPosAt = 0;
-  } else return false;
-  return true;
+String* weatherUnitField(HaEntity& e, const char* k) {
+  if (!strcmp(k, "temperature_unit")) return &e.weatherTempUnit;
+  if (!strcmp(k, "wind_speed_unit")) return &e.weatherWindUnit;
+  if (!strcmp(k, "pressure_unit")) return &e.weatherPressureUnit;
+  if (!strcmp(k, "visibility_unit")) return &e.weatherVisibilityUnit;
+  return nullptr;
 }
 
-void entityFromAttrs(HaEntity& e, JsonObjectConst a) {
+void clearWeather(HaEntity& e) {
+  e.weatherTemp = e.weatherFeels = e.weatherHumidity = NAN;
+  e.weatherWind = e.weatherGust = e.weatherPressure = NAN;
+  e.weatherVisibility = e.weatherUV = e.weatherDew = NAN;
+  e.weatherRainChance = e.weatherBearing = NAN;
+  e.weatherTempUnit = e.weatherWindUnit = e.weatherPressureUnit = e.weatherVisibilityUnit = "";
+}
+
+void entityFromAttrs(HaEntity& e, JsonObjectConst a, bool isWeather) {
   if (a.isNull()) return;
   if (a["friendly_name"].is<const char*>()) e.name = (const char*)a["friendly_name"];
   if (a["icon"].is<const char*>()) e.icon = (const char*)a["icon"];
@@ -360,13 +357,29 @@ void entityFromAttrs(HaEntity& e, JsonObjectConst a) {
     } else if (!strcmp(k, "rgb_color")) {
       JsonArrayConst c = kv.value().as<JsonArrayConst>();
       e.rgb = c.size() == 3 ? (int32_t)((c[0].as<int>() & 255) << 16 | (c[1].as<int>() & 255) << 8 | (c[2].as<int>() & 255)) : -1;
+    } else if (!strcmp(k, "color_temp_kelvin")) {
+      e.colorTempKelvin = kv.value().is<int>() ? kv.value().as<int>() : -1;
     } else if (!strcmp(k, "current_position") || !strcmp(k, "percentage")) {
       e.level = kv.value().is<float>() ? (int)lroundf(kv.value().as<float>()) : -1;
     } else if (!strcmp(k, "volume_level")) {
       e.level = kv.value().is<float>() ? (int)lroundf(kv.value().as<float>() * 100) : -1;
+    } else if (!strcmp(k, "media_title")) {
+      e.mediaTitle = kv.value().is<const char*>() ? (const char*)kv.value() : "";
+    } else if (!strcmp(k, "media_artist")) {
+      e.mediaArtist = kv.value().is<const char*>() ? (const char*)kv.value() : "";
+    } else if (!strcmp(k, "media_position")) {
+      e.mediaPosition = kv.value().is<float>() ? kv.value().as<float>() : NAN;
+    } else if (!strcmp(k, "media_duration")) {
+      e.mediaDuration = kv.value().is<float>() ? kv.value().as<float>() : NAN;
+    } else if (float* f = isWeather ? weatherField(e, k) : nullptr) {
+      // Weather and climate both use "temperature", but mean different things.
+      // Some providers publish integer humidity/UV/wind observations.
+      const JsonVariantConst v = kv.value();
+      *f = (v.is<float>() || v.is<int>() || v.is<unsigned>()) ? v.as<float>() : NAN;
     } else if (float* f = climateField(e, k)) {
       *f = kv.value().is<float>() ? kv.value().as<float>() : NAN;  // null when off
-    } else if (mediaField(e, k, kv.value())) {
+    } else if (String* u = weatherUnitField(e, k)) {
+      *u = kv.value().is<const char*>() ? (const char*)kv.value() : "";
     } else if (!strcmp(k, "hvac_action")) {
       e.hvacAction = kv.value().is<const char*>() ? (const char*)kv.value() : "";
     } else if (!strcmp(k, "hvac_modes")) {
@@ -417,11 +430,15 @@ void applyEvent(JsonObjectConst ev) {
     e.deviceClass = "";
     e.brightness = -1;
     e.rgb = -1;
+    e.colorTempKelvin = -1;
     e.level = -1;
+    e.mediaTitle = e.mediaArtist = "";
+    e.mediaPosition = e.mediaDuration = NAN;
     e.numMin = e.numMax = e.numStep = NAN;
     clearClimate(e);
-    clearMedia(e);
-    entityFromAttrs(e, kv.value()["a"].as<JsonObjectConst>());
+    clearWeather(e);
+    entityFromAttrs(e, kv.value()["a"].as<JsonObjectConst>(),
+                    !strncmp(kv.key().c_str(), "weather.", 8));
     e.version++;
     changed = true;
   }
@@ -432,19 +449,27 @@ void applyEvent(JsonObjectConst ev) {
     JsonObjectConst plus = kv.value()["+"];
     if (!plus.isNull()) {
       if (plus["s"].is<const char*>()) e.state = (const char*)plus["s"];
-      entityFromAttrs(e, plus["a"].as<JsonObjectConst>());
+      entityFromAttrs(e, plus["a"].as<JsonObjectConst>(),
+                      !strncmp(kv.key().c_str(), "weather.", 8));
     }
     for (JsonVariantConst k : kv.value()["-"]["a"].as<JsonArrayConst>()) {
       const char* key = k | "";
       if (!strcmp(key, "brightness")) e.brightness = -1;
       else if (!strcmp(key, "rgb_color")) e.rgb = -1;
+      else if (!strcmp(key, "color_temp_kelvin")) e.colorTempKelvin = -1;
       else if (!strcmp(key, "current_position") || !strcmp(key, "percentage") ||
                !strcmp(key, "volume_level"))
         e.level = -1;
+      else if (!strncmp(kv.key().c_str(), "weather.", 8) && weatherField(e, key))
+        *weatherField(e, key) = NAN;
       else if (float* f = climateField(e, key)) *f = NAN;
-      else if (mediaField(e, key, JsonVariantConst())) {}
+      else if (String* u = weatherUnitField(e, key)) *u = "";
       else if (!strcmp(key, "hvac_action")) e.hvacAction = "";
       else if (!strcmp(key, "hvac_modes")) e.hvacModes = "";
+      else if (!strcmp(key, "media_title")) e.mediaTitle = "";
+      else if (!strcmp(key, "media_artist")) e.mediaArtist = "";
+      else if (!strcmp(key, "media_position")) e.mediaPosition = NAN;
+      else if (!strcmp(key, "media_duration")) e.mediaDuration = NAN;
       else if (!strcmp(key, "icon")) e.icon = "";
       else if (!strcmp(key, "unit_of_measurement")) e.unit = "";
       else if (!strcmp(key, "device_class")) e.deviceClass = "";
@@ -489,84 +514,6 @@ void failPending(const String& message) {
   s_calls.clear();
 }
 
-// --- Clock from Home Assistant ----------------------------------------------------------
-// A render_template subscription of utcnow(): its first event carries the
-// time, then it is unsubscribed. Half the round trip is added, as SNTP does.
-volatile bool s_timeSync = false;
-volatile time_t s_timeSyncedAt = 0;  // guarded loosely: a status read
-String s_timeError;                  // under s_lock
-constexpr uint32_t TIME_RESYNC_MS = 60UL * 60 * 1000;
-constexpr uint32_t TIME_RETRY_MS = 60UL * 1000;
-constexpr uint32_t TIME_ANSWER_MS = 10000;
-// HA task only:
-uint32_t s_timeId = 0, s_timeSentMs = 0, s_timeNextMs = 0;
-bool s_timeDue = true;
-
-void timeError(const String& e) {
-  Lock g;
-  s_timeError = e;
-}
-
-void timeStop(bool retry) {
-  if (s_timeId) {
-    JsonDocument u(psram());
-    u["id"] = s_nextId++;
-    u["type"] = "unsubscribe_events";
-    u["subscription"] = s_timeId;
-    sendJson(u);
-  }
-  s_timeId = 0;
-  s_timeDue = false;
-  s_timeNextMs = millis() + (retry ? TIME_RETRY_MS : TIME_RESYNC_MS);
-}
-
-void timeTick() {
-  if (!s_timeSync) {
-    if (s_timeId) timeStop(false);
-    s_timeDue = true;  // first thing once it is turned on
-    return;
-  }
-  const uint32_t now = millis();
-  if (s_timeId) {
-    if (now - s_timeSentMs >= TIME_ANSWER_MS) {
-      timeError("no answer from Home Assistant");
-      Serial.println("HA: no answer to the time request");
-      timeStop(true);
-    }
-    return;
-  }
-  if (!s_timeDue && (int32_t)(now - s_timeNextMs) < 0) return;
-  JsonDocument d(psram());
-  s_timeId = s_nextId++;
-  d["id"] = s_timeId;
-  d["type"] = "render_template";
-  d["template"] = "{{ utcnow().timestamp() }}";
-  s_timeSentMs = now;
-  s_timeDue = false;
-  sendJson(d);
-}
-
-void timeReply(JsonVariantConst result) {
-  double ts = NAN;
-  if (result.is<double>()) ts = result.as<double>();
-  else if (result.is<const char*>()) ts = strtod(result.as<const char*>(), nullptr);
-  if (!(ts > 1609459200.0)) {  // 2021-01-01: anything older is not a clock
-    timeError("Home Assistant sent no usable time");
-    timeStop(true);
-    return;
-  }
-  ts += (millis() - s_timeSentMs) / 2000.0;
-  timeval tv;
-  tv.tv_sec = (time_t)ts;
-  tv.tv_usec = (suseconds_t)((ts - (double)tv.tv_sec) * 1e6);
-  const time_t before = time(nullptr);
-  settimeofday(&tv, nullptr);
-  s_timeSyncedAt = tv.tv_sec;
-  timeError("");
-  Serial.printf("HA: clock set from Home Assistant (%+ld s)\n", (long)(tv.tv_sec - before));
-  timeStop(false);
-}
-
 void regFinish(bool ok, const char* err);
 void regReply(bool ok, JsonDocument& doc);
 void regStep();
@@ -594,8 +541,6 @@ void handleText(const uint8_t* payload, size_t len) {
     s_everConnected = true;
     s_subscribedGen = 0;  // subscribe from scratch on every connection
     s_subIds.clear();
-    s_timeId = 0;
-    s_timeDue = true;  // the clock again on every connection
     setLink(HA_CONNECTED);
     Serial.printf("HA: connected, Home Assistant %s\n", (const char*)(doc["ha_version"] | "?"));
   } else if (!strcmp(type, "auth_invalid")) {
@@ -603,26 +548,12 @@ void handleText(const uint8_t* payload, size_t len) {
     Serial.println("HA: authentication failed, waiting for new settings");
     s_ws.disconnect();
   } else if (!strcmp(type, "event")) {
-    if (s_timeId && (doc["id"] | 0u) == s_timeId) {
-      timeReply(doc["event"]["result"]);
-      return;
-    }
     applyEvent(doc["event"].as<JsonObjectConst>());
   } else if (!strcmp(type, "result")) {
     const uint32_t id = doc["id"] | 0;
     const bool ok = doc["success"] | false;
     if (s_reg && s_reg->waitId == id) {
       regReply(ok, doc);
-      return;
-    }
-    if (s_timeId && id == s_timeId) {
-      if (!ok) {  // a template error, or a server that refuses render_template
-        const char* msg = doc["error"]["message"] | "request refused";
-        timeError(String("time request refused: ") + msg);
-        Serial.printf("HA: time request refused: %s\n", msg);
-        s_timeId = 0;  // nothing to unsubscribe
-        timeStop(false);
-      }
       return;
     }
     for (size_t i = 0; i < s_pending.size(); i++) {
@@ -656,7 +587,6 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
                                        s_everConnected ? String() : String("no answer from Home Assistant"));
       s_subscribedGen = 0;
       s_subIds.clear();
-      s_timeId = 0;
       if (s_reg) regFinish(false, "connection to Home Assistant lost");
       // Never replay an uncertain call after a reconnect: report it instead.
       failPending("connection to Home Assistant lost");
@@ -737,8 +667,6 @@ void sendQueuedCalls() {
   }
 }
 
-volatile bool s_paused = false;
-
 void haTask(void*) {
   for (;;) {
     uint32_t credGen;
@@ -781,15 +709,6 @@ void haTask(void*) {
       vTaskDelay(pdMS_TO_TICKS(250));  // until the settings change
       continue;
     }
-    if (s_paused) {
-      if (s_started) {
-        s_ws.disconnect();
-        s_started = false;
-      }
-      setLink(HA_CONNECTING);
-      vTaskDelay(pdMS_TO_TICKS(250));
-      continue;
-    }
     if (!s_started) {
       String host, err;
       uint16_t port;
@@ -822,7 +741,6 @@ void haTask(void*) {
       if (s_subscribedGen != wantedGen) resubscribe();
       sendQueuedCalls();
       regStep();
-      timeTick();
     }
     vTaskDelay(pdMS_TO_TICKS(5));
   }
@@ -843,22 +761,11 @@ const char* haLinkName(HaLink s) {
   return "?";
 }
 
-void haPause(bool pause) { s_paused = pause; }
-
-void haSetTimeSync(bool on) { s_timeSync = on; }
-time_t haTimeSyncedAt() { return s_timeSyncedAt; }
-String haTimeError() {
-  if (!s_lock) return "";
-  Lock g;
-  return s_timeError;
-}
-
 void haBegin() {
   if (s_lock) return;
   s_lock = xSemaphoreCreateMutex();
   loadCredentials();
-  // Core 0 with the WiFi stack; the display pipeline owns core 1. Stack in
-  // PSRAM: this task never touches flash (credentials load above).
+  // Core 0 with the WiFi stack; the display pipeline owns core 1.
   xTaskCreatePinnedToCoreWithCaps(haTask, "deck_ha", 8192, nullptr, 4, nullptr, 0, MALLOC_CAP_SPIRAM);
 }
 
@@ -1038,77 +945,31 @@ bool haTakeFailure(String& entity, String& message) {
 namespace {
 
 const char* const LIST_PATH = "/ha_entities.json";
-const char* const LIST_TMP = "/ha_entities.json.tmp";
 constexpr size_t MAX_BODY = 4 * 1024 * 1024;
 
-// Entities per template page. HA caps template output at 256 KB (#5); a page
-// that still exceeds it is retried at half the size.
-#ifndef HA_LIST_PAGE
-#define HA_LIST_PAGE 500
-#endif
-constexpr size_t LIST_PAGE_MIN = 25;
+// Fetch a bounded sorted page from Home Assistant. Rendering all entities in
+// one request can exceed HA's template response limit on large installations.
+// The pagination cursor is always an entity_id from HA (validated below).
+constexpr size_t HA_LIST_PAGE = 100;
+constexpr size_t HA_LIST_PAGE_MIN = 12;
 
-// Rendered by Home Assistant itself, so the device never parses the full
-// /api/states JSON: one record per entity, fields split by 0x1F, records by
-// 0x1E (neither can appear in a name), sorted, the page after `after`. The
-// separators must reach HA as \u001f escapes, because a raw control
-// character inside a JSON string is invalid (and ArduinoJson would write it raw).
-String listRequest(const String& after, size_t page) {
-  String r = "{\"template\":\"{% for s in (states|selectattr('entity_id','>','";
-  r += after;
-  r += "')|sort(attribute='entity_id'))[:";
-  r += String((unsigned)page);
-  r += "] %}"
-       "{{ s.entity_id }}\\u001f{{ s.name }}\\u001f{{ s.state }}\\u001f"
-       "{{ s.attributes.icon|default('') }}\\u001f"
-       "{{ s.attributes.unit_of_measurement|default('') }}\\u001e"
-       "{% endfor %}\"}";
-  return r;
+String listPageTemplate(const String& after, size_t limit) {
+  String t;
+  t.reserve(350);
+  t = "{% set after = '" + after + "' %}";
+  t += "{% set ns = namespace(n=0) %}";
+  t += "{% for s in states|sort(attribute='entity_id') %}";
+  t += "{% if s.entity_id > after and ns.n < " + String((unsigned)limit) + " %}";
+  t += "{{ s.entity_id }}\\x1f{{ s.name }}\\x1f{{ s.state }}\\x1f";
+  t += "{{ s.attributes.icon|default('') }}\\x1f";
+  t += "{{ s.attributes.unit_of_measurement|default('') }}\\x1e";
+  t += "{% set ns.n = ns.n + 1 %}{% endif %}{% endfor %}";
+  // Replace marker strings with actual control characters. ArduinoJson
+  // serialises them safely as JSON escapes in renderTemplate().
+  t.replace("\\x1f", String((char)0x1f));
+  t.replace("\\x1e", String((char)0x1e));
+  return t;
 }
-
-// The list goes to flash while it is fetched, never whole into RAM:
-// {"updated":epoch,"entities":[...],"count":n}.
-struct ListFile {
-  File f;
-  size_t count = 0;
-  bool ok = false;
-  bool begin(String& err) {
-    count = 0;
-    if (!deckFsReady() || !(f = LittleFS.open(LIST_TMP, "w"))) {
-      err = "cannot write the entity list to flash";
-      return false;
-    }
-    const time_t now = time(nullptr);
-    ok = f.print("{\"updated\":" + String((uint32_t)(now > 1609459200 ? now : 0)) + ",\"entities\":[") > 0;
-    return true;
-  }
-  // objs: comma-separated objects, n of them.
-  void add(const String& objs, size_t n) {
-    if (!n) return;
-    if (count) ok = ok && f.print(',') == 1;
-    ok = ok && f.print(objs) == objs.length();
-    count += n;
-  }
-  void abort() {
-    if (f) f.close();
-    LittleFS.remove(LIST_TMP);
-  }
-  bool finish(String& err) {
-    ok = ok && f.print("],\"count\":" + String((unsigned)count) + "}") > 0;
-    f.close();
-    if (!ok) {
-      LittleFS.remove(LIST_TMP);
-      err = "flash is full, the entity list does not fit";
-      return false;
-    }
-    LittleFS.remove(LIST_PATH);
-    if (!LittleFS.rename(LIST_TMP, LIST_PATH)) {
-      err = "cannot write the entity list to flash";
-      return false;
-    }
-    return true;
-  }
-};
 
 // Whole response body into a PSRAM buffer (caller frees). Parsing straight
 // off the socket reads byte by byte and big answers hit the read timeout.
@@ -1125,7 +986,7 @@ bool readBody(HTTPClient& http, char*& body, size_t& len, String& err) {
     return false;
   }
   len = 0;
-  WiFiClient* in = http.getStreamPtr();  // nullptr once the server has closed
+  WiFiClient* in = http.getStreamPtr();  // nullptr if HA closed early
   uint32_t lastData = millis();
   while (in) {
     if (declared > 0 && len >= (size_t)declared) break;
@@ -1186,11 +1047,11 @@ void appendJsonString(String& o, const char* s, size_t n) {
   o += '"';
 }
 
-// Template answer -> {"id","name","state","icon","unit"},... (no brackets);
-// last = id of the final record.
-void recordsToJson(const char* body, size_t len, String& out, size_t& count, String& last) {
+// Template answer -> [{"id","name","state","icon","unit"}, ...]
+void recordsToJson(const char* body, size_t len, String& out, size_t& count) {
   out = "";
   out.reserve(len + len / 3 + 64);
+  out += '[';
   count = 0;
   const char* p = body;
   const char* end = body + len;
@@ -1212,7 +1073,6 @@ void recordsToJson(const char* body, size_t len, String& out, size_t& count, Str
         if (count) out += ',';
         out += '{';
         any = true;
-        last = String(f, fe - f);
       }
       if (field < 3 || fe > f) {  // icon and unit only when set
         if (field) out += ',';
@@ -1229,6 +1089,7 @@ void recordsToJson(const char* body, size_t len, String& out, size_t& count, Str
       count++;
     }
   }
+  out += ']';
 }
 
 bool openHa(HTTPClient& http, const char* path, String& token, String& err) {
@@ -1413,7 +1274,6 @@ String historyEscape(const String& text) {
 struct HistoryStream {
   WiFiClient* in;
   uint32_t deadline;
-  bool feedWdt = false;  // loop task only: other tasks are not subscribed
   bool timedOut = false;
   int back = -1;
   size_t pos = 0, len = 0;
@@ -1425,8 +1285,7 @@ struct HistoryStream {
       return c;
     }
     while (pos >= len) {
-      if (!in) return -1;  // getStreamPtr() after the server closed
-      if (feedWdt) esp_task_wdt_reset();
+      if (!in) return -1;  // disconnected before response stream was available
       if ((int32_t)(millis() - deadline) >= 0) {
         timedOut = true;
         return -1;
@@ -1585,64 +1444,67 @@ void historyTask(void*) {
   }
 }
 
-// One template page. code = HTTP status, 0 when the request never got one.
-bool templatePage(const String& after, size_t page, String& objs, size_t& n, String& last, int& code,
-                  String& err) {
-  HTTPClient http;
-  String token;
-  code = 0;
-  if (!openHa(http, "/api/template", token, err)) return false;
-  http.addHeader("Content-Type", "application/json");
-  code = http.POST(listRequest(after, page));
-  if (code != 200) {
-    err = code == 401 ? String("token rejected") : String("template answered ") + code;
-    if (code > 0) err += ": " + http.getString().substring(0, 160);
-    http.end();
-    return false;
-  }
-  char* body = nullptr;
-  size_t len = 0;
-  const bool ok = readBody(http, body, len, err);
-  http.end();
-  if (!ok) return false;
-  recordsToJson(body, len, objs, n, last);
-  heap_caps_free(body);
-  return true;
-}
-
-bool fetchViaTemplate(ListFile& lf, String& err) {
-  String after, objs, last;
-  size_t page = HA_LIST_PAGE;
-  for (unsigned pages = 0; pages < 1000; pages++) {
-    size_t n = 0;
-    int code;
-    if (!templatePage(after, page, objs, n, last, code, err)) {
-      if (code == 400 && page / 2 >= LIST_PAGE_MIN) {
-        page /= 2;
-        Serial.printf("HA: template page refused (%s), %u per page\n", err.c_str(), (unsigned)page);
+bool fetchViaTemplate(String& out, size_t& count, String& err) {
+  out = "[";
+  count = 0;
+  String after;
+  size_t pageSize = HA_LIST_PAGE;
+  for (unsigned page = 0; page < 1000; page++) {
+    const String tmpl = listPageTemplate(after, pageSize);
+    char* body = nullptr;
+    size_t len = 0;
+    String pageErr;
+    if (!renderTemplate(tmpl, body, len, pageErr)) {
+      // HA refuses oversized template renders with HTTP 400. Reducing each
+      // page handles installations with exceptionally long entity names.
+      if (pageErr.startsWith("template answered 400") && pageSize / 2 >= HA_LIST_PAGE_MIN) {
+        pageSize /= 2;
         continue;
       }
+      err = pageErr;
       return false;
     }
-    lf.add(objs, n);
+    String json;
+    size_t n = 0;
+    recordsToJson(body, len, json, n);
+    String last;
+    const char* p = body;
+    const char* end = body + len;
+    while (p < end) {
+      const char* first = p;
+      while (p < end && *p != '\x1f' && *p != '\x1e') p++;
+      if (p < end && *p == '\x1f') {
+        while (first < p && (*first == ' ' || *first == '\n' || *first == '\r')) first++;
+        last = "";
+        last.concat(first, (unsigned)(p - first));
+      }
+      while (p < end && *p != '\x1e') p++;
+      if (p < end) p++;
+    }
+    heap_caps_free(body);
+    if (n) {
+      if (count) out += ',';
+      out += json.substring(1, json.length() - 1);
+      count += n;
+    }
     esp_task_wdt_reset();
-    if (n < page) return true;
-    // The id goes back into the template as a quoted string.
+    if (n < pageSize) { out += ']'; return true; }
+    // A stalled cursor could otherwise loop forever on a malformed answer.
     if (last <= after || last.indexOf('\'') >= 0 || last.indexOf('\\') >= 0) {
-      err = "unexpected entity id " + last;
+      err = "invalid entity list cursor";
       return false;
     }
     after = last;
+    vTaskDelay(1);
   }
   err = "the entity list does not end";
   return false;
 }
 
-// Fallback when the template endpoint is not available to this token.
-// Parsed one entity at a time off the socket: a whole big /api/states in one
-// document took over 30 s (ArduinoJson deduplicates strings linearly) and
-// tripped the loop watchdog (#5).
-bool fetchViaStates(ListFile& lf, String& err) {
+// Fallback when the template endpoint is not available to this token. Slow
+// on a big installation (ArduinoJson 7 deduplicates strings linearly, ~10 s
+// for 1400 entities), but correct.
+bool fetchViaStates(String& out, size_t& count, String& err) {
   HTTPClient http;
   String token;
   if (!openHa(http, "/api/states", token, err)) return false;
@@ -1652,62 +1514,83 @@ bool fetchViaStates(ListFile& lf, String& err) {
     http.end();
     return false;
   }
-  HistoryStream s{http.getStreamPtr(), millis() + 60000};
-  s.feedWdt = true;
+  // Stream each entity rather than deserialising the whole /api/states
+  // response. The latter can exhaust PSRAM and trigger the task watchdog.
+  HistoryStream stream{http.getStreamPtr(), millis() + 60000};
   JsonDocument filter(psram()), doc(psram());
   filter["entity_id"] = true;
   filter["state"] = true;
   filter["attributes"]["friendly_name"] = true;
   filter["attributes"]["icon"] = true;
   filter["attributes"]["unit_of_measurement"] = true;
-  String objs;
-  size_t n = 0;
-  bool valid = s.next() == '[';
-  int c = valid ? s.next() : -1;
-  while (valid && c != ']') {
-    s.back = c;
-    if (deserializeJson(doc, s, DeserializationOption::Filter(filter))) {
+  out = "[";
+  count = 0;
+  bool valid = stream.next() == '[';
+  int ch = valid ? stream.next() : -1;
+  while (valid && ch != ']') {
+    stream.back = ch;
+    if (deserializeJson(doc, stream, DeserializationOption::Filter(filter))) {
       valid = false;
       break;
     }
     const char* id = doc["entity_id"] | "";
     const char* name = doc["attributes"]["friendly_name"] | "";
     const char* state = doc["state"] | "";
-    if (n) objs += ',';
-    objs += "{\"id\":";
-    appendJsonString(objs, id, strlen(id));
-    objs += ",\"name\":";
-    appendJsonString(objs, name, strlen(name));
-    objs += ",\"state\":";
-    appendJsonString(objs, state, strlen(state));
+    if (count) out += ',';
+    out += "{\"id\":";
+    appendJsonString(out, id, strlen(id));
+    out += ",\"name\":";
+    appendJsonString(out, name, strlen(name));
+    out += ",\"state\":";
+    appendJsonString(out, state, strlen(state));
     const char* icon = doc["attributes"]["icon"] | "";
     if (*icon) {
-      objs += ",\"icon\":";
-      appendJsonString(objs, icon, strlen(icon));
+      out += ",\"icon\":";
+      appendJsonString(out, icon, strlen(icon));
     }
     const char* unit = doc["attributes"]["unit_of_measurement"] | "";
     if (*unit) {
-      objs += ",\"unit\":";
-      appendJsonString(objs, unit, strlen(unit));
+      out += ",\"unit\":";
+      appendJsonString(out, unit, strlen(unit));
     }
-    objs += '}';
-    if (++n == 64) {
-      lf.add(objs, n);
-      objs = "";
-      n = 0;
+    out += '}';
+    if (++count % 64 == 0) {
+      esp_task_wdt_reset();
       vTaskDelay(1);
     }
-    c = s.next();
-    if (c == ',') c = s.next();
-    else if (c != ']') valid = false;
+    ch = stream.next();
+    if (ch == ',') ch = stream.next();
+    else if (ch != ']') valid = false;
   }
   http.end();
   if (!valid) {
-    err = s.timedOut ? "Home Assistant answered too slowly" : "bad answer from Home Assistant";
+    err = stream.timedOut ? "Home Assistant answered too slowly" : "bad answer from Home Assistant";
     return false;
   }
-  lf.add(objs, n);
+  out += ']';
   return true;  // unsorted; the portal sorts
+}
+
+bool storeList(const String& listJson, size_t count, String& doc) {
+  const time_t now = time(nullptr);
+  doc = "{\"updated\":";
+  doc += String((uint32_t)(now > 1609459200 ? now : 0));
+  doc += ",\"count\":";
+  doc += String((unsigned)count);
+  doc += ",\"entities\":";
+  doc += listJson;
+  doc += '}';
+  if (!deckFsReady()) return false;
+  File f = LittleFS.open("/ha_entities.json.tmp", "w");
+  if (!f) return false;
+  const size_t n = f.print(doc);
+  f.close();
+  if (n != doc.length()) {
+    LittleFS.remove("/ha_entities.json.tmp");
+    return false;
+  }
+  LittleFS.remove(LIST_PATH);
+  return LittleFS.rename("/ha_entities.json.tmp", LIST_PATH);
 }
 
 }  // namespace
@@ -1777,18 +1660,6 @@ uint32_t haHistoryVersion() {
 
 const char* haEntityListPath() { return LIST_PATH; }
 
-String haBaseUrl() {
-  String url, host, err;
-  uint16_t port;
-  if (!s_lock) return "";
-  {
-    Lock g;
-    url = s_url;
-  }
-  if (!url.length() || !parseUrl(url, host, port, err)) return "";
-  return "http://" + host + ":" + String(port);
-}
-
 bool haRenderTemplate(const String& tmpl, String& out, String& err) {
   char* text = nullptr;
   size_t len = 0;
@@ -1798,25 +1669,32 @@ bool haRenderTemplate(const String& tmpl, String& out, String& err) {
   return true;
 }
 
-bool haRefreshEntityList(String& err) {
-  const uint32_t t0 = millis();
-  ListFile lf;
-  if (!lf.begin(err)) return false;
-  String why;
-  if (!fetchViaTemplate(lf, why)) {
-    Serial.printf("HA: template list failed (%s), falling back to /api/states\n", why.c_str());
-    lf.abort();
-    if (!lf.begin(err)) return false;
-    if (!fetchViaStates(lf, err)) {
-      lf.abort();
-      return false;
+bool haFetchEntityList(String& outJson, bool refresh, String& err) {
+  if (!refresh && deckFsReady() && LittleFS.exists(LIST_PATH)) {
+    File f = LittleFS.open(LIST_PATH, "r");
+    if (f) {
+      outJson = f.readString();
+      f.close();
+      if (outJson.length()) return true;
     }
   }
-  const size_t count = lf.count;
-  if (!lf.finish(err)) return false;
-  File f = LittleFS.open(LIST_PATH, "r");
+  if (!refresh) {
+    // Nothing cached yet: answer with an empty list, the portal offers the
+    // update button. Fetching implicitly here would surprise with a long wait.
+    outJson = "{\"updated\":0,\"count\":0,\"entities\":[]}";
+    return true;
+  }
+  const uint32_t t0 = millis();
+  String list;
+  size_t count = 0;
+  String why;
+  if (!fetchViaTemplate(list, count, why)) {
+    Serial.printf("HA: template list failed (%s), falling back to /api/states\n", why.c_str());
+    if (!fetchViaStates(list, count, err)) return false;
+  }
+  if (!storeList(list, count, outJson)) Serial.println("HA: could not cache the entity list");
   Serial.printf("HA: entity list updated, %u entities, %u bytes, %u ms\n", (unsigned)count,
-                f ? (unsigned)f.size() : 0, (unsigned)(millis() - t0));
+                (unsigned)outJson.length(), (unsigned)(millis() - t0));
   return true;
 }
 

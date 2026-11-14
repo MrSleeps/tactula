@@ -3,15 +3,13 @@
 
 namespace deckui {
 
-bool s_present = false;     // an entity or PC says someone is there
+bool s_present = false;     // a Home Assistant presence entity says someone is there
 uint32_t s_activeMs = 0;    // last touch, presence or wake request
 uint32_t s_presenceEval = 0;
 uint32_t s_presentMs = 0;   // last tick with presence, 0 = none since boot
 
 bool presenceNow() {
   const PresenceSettings& p = presenceSettings;
-  if (p.pc && pcAnyOnline()) return true;
-  if (p.printing && printersJobActive()) return true;
   for (const String& id : p.entities) {
     HaEntity e;
     if (id.length() && haGetEntity(id, e) && e.known && (e.state == "on" || e.state == "home")) return true;

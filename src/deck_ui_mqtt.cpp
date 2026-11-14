@@ -57,6 +57,8 @@ void mqttUiSnapshot(MqttSnapshot& out) {
   const int active = sh.active;
   if (active >= 0 && active < (int)out.pages.size()) out.state[MQ_PAGE] = out.pages[active];
   out.state[MQ_NIGHT] = manualNightActive() ? "ON" : "OFF";
+  // Match the 0-100% web slider while storing full 8-bit PWM in NVS.
+  out.state[MQ_NIGHT_BRIGHTNESS] = String((backlightSettings.nightBrightness * 100U + 127U) / 255U);
   const uint32_t touch = touchLastActivity();
   out.state[MQ_TOUCH] = touch && millis() - touch < 60000 ? "ON" : "OFF";
   out.led = ledSettings.enabled && ledPinValid();
@@ -81,6 +83,24 @@ void mqttUiCommand(MqttObject object, const String& payload) {
     setManualNight(payload == "ON");
     updateBacklightControl();
     qpSyncValues();
+  } else if (object == MQ_NIGHT_BRIGHTNESS) {
+    // MQTT number command: accept only a whole percentage from 0 to 100.
+    // Reject partial strings such as "13foo" instead of silently applying 13.
+    if (payload.isEmpty() || payload.length() > 3) return;
+    unsigned int percent = 0;
+    for (size_t i = 0; i < payload.length(); ++i) {
+      const char c = payload[i];
+      if (c < '0' || c > '9') return;
+      percent = percent * 10 + (c - '0');
+    }
+    if (percent > 100) return;
+    const uint8_t level = (uint8_t)((percent * 255U + 50U) / 100U);
+    if (backlightSettings.nightBrightness == level) return;
+    backlightSettings.nightBrightness = level;
+    refreshBacklightControl();
+    updateBacklightControl();
+    qpSyncValues();
+    saveSettings();
   } else if (object == MQ_MESSAGE) {
     deckPresenceWake();
     deckToastShow(messageText(payload).c_str(), 6000);

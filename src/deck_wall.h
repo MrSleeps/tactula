@@ -5,14 +5,12 @@
 #include <Arduino.h>
 #include <lvgl.h>
 #include "deck_sd.h"
-#include "board.h"
 
 namespace deck {
 
 constexpr uint32_t WALL_IDLE_MS = 30000;
 constexpr size_t WALL_RESERVE = 256 * 1024;
-// 200 KB for a 320x480 screen, scaled with the screen area.
-constexpr size_t WALL_MAX_JPEG = (size_t)(200ull * 1024 * BOARD_PANEL_W * BOARD_PANEL_H / (320 * 480));
+constexpr size_t WALL_MAX_JPEG = 200 * 1024;
 struct WallFile {
   uint64_t id;
   size_t size;
@@ -54,9 +52,7 @@ bool wallNext(bool portrait);
 void wallGalleryChanged(bool portrait);
 void wallInvalidateJobs();
 // Poll/start work, then commit only after the UI has stopped gestures.
-// rotate false: no automatic change starts and a finished one is dropped.
-// makeRoom: called before a job starts, to free PSRAM the UI can rebuild.
-bool wallPoll(int w, int h, bool idle, bool canSwitch, bool rotate, void (*makeRoom)() = nullptr);
+bool wallPoll(int w, int h, bool idle, bool canSwitch);
 void wallCommit();
 // The automatic change interval starts again (the photo frame covered the wallpaper).
 void wallRestartTimer();

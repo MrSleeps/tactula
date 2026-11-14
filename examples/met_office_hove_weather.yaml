@@ -1,0 +1,31 @@
+# Add this block to the existing top-level "template:" list in Home Assistant.
+# If no template: section exists, put "template:" on a line above this block.
+# This example needs the Met Office Hove entities named below.
+- weather:
+    - name: "TouchDeck Hove Weather"
+      unique_id: touchdeck_hove_weather
+      condition: "{{ states('weather.met_office_hove') }}"
+      availability: "{{ has_value('weather.met_office_hove') }}"
+      temperature: "{{ state_attr('weather.met_office_hove', 'temperature') }}"
+      temperature_unit: "°C"
+      apparent_temperature: "{{ states('sensor.met_office_hove_feels_like_temperature') | float(none) }}"
+      dew_point: "{{ state_attr('weather.met_office_hove', 'dew_point') }}"
+      humidity: "{{ state_attr('weather.met_office_hove', 'humidity') }}"
+      uv_index: "{{ state_attr('weather.met_office_hove', 'uv_index') }}"
+      pressure: "{{ state_attr('weather.met_office_hove', 'pressure') }}"
+      pressure_unit: "hPa"
+      wind_speed: "{{ state_attr('weather.met_office_hove', 'wind_speed') }}"
+      wind_gust_speed: >-
+        {% if has_value('sensor.met_office_hove_wind_gust') %}
+          {{ (states('sensor.met_office_hove_wind_gust') | float * 1.609344) | round(1) }}
+        {% else %}
+          {{ none }}
+        {% endif %}
+      wind_speed_unit: "km/h"
+      wind_bearing: "{{ state_attr('weather.met_office_hove', 'wind_bearing') }}"
+      visibility: "{{ state_attr('weather.met_office_hove', 'visibility') }}"
+      visibility_unit: "km"
+      precipitation_unit: "mm"
+      attributes:
+        precipitation_probability: "{{ states('sensor.met_office_hove_probability_of_precipitation') | float(none) }}"
+        attribution: "Met Office via Home Assistant"

@@ -5,27 +5,28 @@
 #include "settings.h"
 #include "wifi_manager.h"
 #include "display_ui.h"
-#include "pc_metrics.h"
 #include "led.h"
 #include "haptic.h"
 #include "audio.h"
 #include "config.h"
 #include "web_assets.h"
 #include "deck_ui.h"
-#include "deck_printers.h"
-#include "deck_bambu_ha.h"
 #include "deck_config.h"
 #include "deck_ha.h"
 #include "deck_http.h"
 #include "deck_mqtt.h"
 #include "deck_icons.h"
 #include "deck_wall.h"
-#include "deck_panel.h"
+#include "deck_sd.h"
 #include "deck_daily.h"
+#include "deck_updates.h"
+#if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
+#include "deck_office_bambu.h"
+#include "deck_bambu_ha.h"
+#endif
 #include "deck_sys.h"
 #include "psram_json.h"
 #include "crash_log.h"
-#include "coproc_update.h"
 #include <LittleFS.h>
 #include <WebServer.h>
 #include <ArduinoJson.h>
@@ -104,6 +105,11 @@ static void handleRoot() {
               "no-cache, no-store, must-revalidate", true);
 }
 
+static void handleTactulaMark() {
+  streamAsset(WEB_TACTULA_MARK_SVG, sizeof(WEB_TACTULA_MARK_SVG), "image/svg+xml",
+              "public, max-age=31536000, immutable", true);
+}
+
 static void handlePortalCss() {
   streamAsset(WEB_PORTAL_CSS, sizeof(WEB_PORTAL_CSS), "text/css",
               "public, max-age=31536000, immutable", true);
@@ -130,7 +136,6 @@ static void sendJsonMessage(int status, bool ok, const char* message,
   server.send(status, "application/json", out);
 }
 
-static void printerSettingsJson(JsonObject o);
 
 static long clampedArg(const char* name, long current, long minValue, long maxValue) {
   if (!server.hasArg(name)) return current;
@@ -160,8 +165,6 @@ static void presenceJson(JsonObject out) {
   out["frameEvery"] = presenceSettings.frameEvery;
   out["frameClock"] = presenceSettings.frameClock;
   out["frameAnim"] = presenceSettings.frameAnim;
-  out["pc"] = presenceSettings.pc;
-  out["printing"] = presenceSettings.printing;
   out["nightWake"] = presenceSettings.nightWake;
   out["nightWakeLevel"] = presenceSettings.nightWakeLevel;
   JsonArray ids = out["entities"].to<JsonArray>();
@@ -175,14 +178,6 @@ static void audioSettingsJson(JsonObject o) {
   o["volume"] = audioSettings.volume;
   o["nightMute"] = audioSettings.nightMute;
   o["click"] = audioSettings.click;
-  o["finished"] = audioSettings.finished;
-  o["error"] = audioSettings.error;
-  o["cooled"] = audioSettings.cooled;
-  o["wakeMs"] = audioSettings.wakeMs;
-  o["keepOnMs"] = audioSettings.keepOnMs;
-  o["fileFinished"] = audioSettings.fileFinished;
-  o["fileError"] = audioSettings.fileError;
-  o["fileCooled"] = audioSettings.fileCooled;
 }
 
 // An HA entity id as typed into the portal: domain.object, lowercase letters, digits, '_'.
@@ -203,24 +198,11 @@ static void handleApiConfig() {
   doc["board"] = BOARD_VARIANT;
   doc["ip"] = WiFi.localIP().toString();
   doc["deck"] = true;
-  // Screen and grid facts for the portal's page editor and picture uploads.
-  JsonObject screen = doc["screen"].to<JsonObject>();
-  screen["w"] = deck::screenW(false);
-  screen["h"] = deck::screenH(false);
-  screen["gridMax"] = deck::GRID_MAX;
-  screen["maxTiles"] = deck::MAX_PAGE_TILES;
-  screen["maxJpeg"] = (uint32_t)deck::WALL_MAX_JPEG;
-  JsonObject grid = screen["grid"].to<JsonObject>();
-  grid["landscape"][0] = BOARD_GRID_LANDSCAPE_COLS;
-  grid["landscape"][1] = BOARD_GRID_LANDSCAPE_ROWS;
-  grid["portrait"][0] = BOARD_GRID_PORTRAIT_COLS;
-  grid["portrait"][1] = BOARD_GRID_PORTRAIT_ROWS;
-  JsonObject pick = screen["pick"].to<JsonObject>();
-  pick["landscape"][0] = BOARD_GRID_PICK_LANDSCAPE_COLS;
-  pick["landscape"][1] = BOARD_GRID_PICK_LANDSCAPE_ROWS;
-  pick["portrait"][0] = BOARD_GRID_PICK_PORTRAIT_COLS;
-  pick["portrait"][1] = BOARD_GRID_PICK_PORTRAIT_ROWS;
-  screen["wallPrnPause"] = (bool)BOARD_WALL_PRINTER_PAUSE;
+#if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
+  doc["bambu_available"] = true;
+#else
+  doc["bambu_available"] = false;
+#endif
 
   JsonObject display = doc["display"].to<JsonObject>();
   display["rotation"] = dispSettings.rotation;
@@ -244,7 +226,6 @@ static void handleApiConfig() {
   display["glassOn"] = dispSettings.glassOn;
   display["glassAutoText"] = dispSettings.glassAutoText;
   display["smoothCharts"] = dispSettings.smoothCharts;
-  display["printerFx"] = dispSettings.printerFx;
   display["tileFx"] = dispSettings.tileFx;
   display["fxTouch"] = dispSettings.fxTouch;
   display["fxToggle"] = dispSettings.fxToggle;
@@ -272,14 +253,11 @@ static void handleApiConfig() {
   formatMinuteOfDay(ledSettings.nightEndMinute, timeBuf, sizeof(timeBuf));
   led["nightEnd"] = timeBuf;
   led["followDisplay"] = ledSettings.followDisplay != 0;
-  led["offlineOff"] = ledSettings.offlineOff != 0;
   led["entity"] = deckLedEntity();
-  doc["advanced"]["printers"] = advSettings.printers;
-  printerSettingsJson(doc["printers"].to<JsonObject>());
   mqttConfigJson(doc["mqtt"].to<JsonObject>(), true);
   presenceJson(doc["presence"].to<JsonObject>());
   JsonArray ledPins = led["allowedPins"].to<JsonArray>();
-  for (uint8_t pin = 0; pin <= GPIO_PIN_MAX; pin++) {
+  for (uint8_t pin = 0; pin <= 48; pin++) {
     if (ledPinAllowed(pin)) ledPins.add(pin);
   }
   JsonObject haptic = doc["haptic"].to<JsonObject>();
@@ -292,7 +270,6 @@ static void handleApiConfig() {
   JsonObject clock = doc["clock"].to<JsonObject>();
   clock["use24h"] = netSettings.use24h;
   clock["timezone"] = netSettings.timezoneStr;
-  clock["source"] = timeSource == TIME_SRC_HA ? "ha" : "ntp";
 
   JsonObject network = doc["network"].to<JsonObject>();
   network["ssid"] = wifiSSID;
@@ -304,33 +281,6 @@ static void handleApiConfig() {
   network["gateway"] = netSettings.gateway;
   network["subnet"] = netSettings.subnet;
   network["dns"] = netSettings.dns;
-
-  // "metrics": the default PC's (older portals), "pcs": every known PC.
-  JsonArray metrics = doc["metrics"].to<JsonArray>();
-  JsonArray pcs = doc["pcs"].to<JsonArray>();
-  for (int p = 0; p < MAX_PCS; p++) {
-    const PcSource& src = pcSources[p];
-    if (!src.used) continue;
-    JsonObject pc = pcs.add<JsonObject>();
-    pc["id"] = src.id;
-    pc["name"] = src.name;
-    pc["online"] = src.data.online;
-    pc["paired"] = src.paired;
-    pc["control"] = src.data.online && src.cmdPort != 0;
-    if (src.data.online) pc["ip"] = src.ip.toString();
-    JsonArray list = pc["metrics"].to<JsonArray>();
-    for (uint8_t i = 0; i < src.data.count; i++) {
-      const PcMetric& m = src.data.metrics[i];
-      for (JsonArray a : {list, p == 0 ? metrics : JsonArray()}) {
-        if (a.isNull()) continue;
-        JsonObject metric = a.add<JsonObject>();
-        metric["id"] = m.id;
-        metric["name"] = m.name;
-        metric["value"] = m.value;
-        metric["unit"] = m.unit;
-      }
-    }
-  }
 
   String out;
   serializeJson(doc, out);
@@ -379,7 +329,6 @@ static void handleConfigExport() {
   display["glassOn"] = dispSettings.glassOn;
   display["glassAutoText"] = dispSettings.glassAutoText;
   display["smoothCharts"] = dispSettings.smoothCharts;
-  display["printerFx"] = dispSettings.printerFx;
   display["tileFx"] = dispSettings.tileFx;
   display["fxTouch"] = dispSettings.fxTouch;
   display["fxToggle"] = dispSettings.fxToggle;
@@ -401,22 +350,18 @@ static void handleConfigExport() {
   led["nightStartMinute"] = ledSettings.nightStartMinute;
   led["nightEndMinute"] = ledSettings.nightEndMinute;
   led["followDisplay"] = ledSettings.followDisplay != 0;
-  led["offlineOff"] = ledSettings.offlineOff != 0;
   JsonObject haptic = doc["haptic"].to<JsonObject>();
   haptic["enabled"] = hapticSettings.enabled;
   haptic["pin"] = hapticSettings.pin;
   haptic["strength"] = hapticSettings.strength;
   haptic["pulseMs"] = hapticSettings.pulseMs;
   audioSettingsJson(doc["audio"].to<JsonObject>());
-  doc["advanced"]["printers"] = advSettings.printers;
-  printerSettingsJson(doc["printers"].to<JsonObject>());
   mqttConfigJson(doc["mqtt"].to<JsonObject>(), false);
   presenceJson(doc["presence"].to<JsonObject>());
 
   JsonObject clock = doc["clock"].to<JsonObject>();
   clock["use24h"] = netSettings.use24h;
   clock["timezone"] = netSettings.timezoneStr;
-  clock["source"] = timeSource == TIME_SRC_HA ? "ha" : "ntp";
 
   JsonObject network = doc["network"].to<JsonObject>();
   network["hostname"] = netSettings.hostname;
@@ -443,7 +388,7 @@ static void handleConfigExport() {
   out += "}}";
   server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   server.sendHeader("Content-Disposition",
-                    "attachment; filename=touchdeck-config.json");
+                    "attachment; filename=tactula-config.json");
   server.send(200, "application/json", out);
 }
 
@@ -496,37 +441,10 @@ static bool readBackupString(JsonObjectConst object, const char* key,
   return true;
 }
 
-// Printers page settings, in /api/config and the backup.
-static void printerSettingsJson(JsonObject o) {
-  o["errors"] = printerSettings.errors;
-  o["errorsAll"] = printerSettings.errorsAll;
-  o["errorWake"] = printerSettings.errorWake;
-  o["follow"] = printerSettings.follow;
-  o["coolAlert"] = printerSettings.coolAlert;
-  o["coolTemp"] = printerSettings.coolTemp;
-  o["kwhPrice"] = printerSettings.kwhPrice;
-  o["currency"] = printerSettings.currency;
-}
-
-// Price per kWh: "0.85" or "0,85", 0..100, empty = 0; false when malformed.
-static bool parsePrice(String v, float& out) {
-  v.trim();
-  v.replace(",", ".");
-  if (!v.length()) {
-    out = 0;
-    return true;
-  }
-  char* end = nullptr;
-  const float f = strtof(v.c_str(), &end);
-  if (!end || *end || !isfinite(f) || f < 0 || f > 100) return false;
-  out = f;
-  return true;
-}
-
 static void handleConfigImport() {
   const String& body = server.arg("plain");
   if (body.length() == 0) {
-    sendJsonMessage(400, false, "Choose a TouchDeck backup file.");
+    sendJsonMessage(400, false, "Choose a tactula backup file.");
     return;
   }
   if (body.length() > CONFIG_IMPORT_MAX_BYTES) {
@@ -549,7 +467,7 @@ static void handleConfigImport() {
   String error;
   if (!readBackupString(root, "format", 40, format, error, "format") ||
       strcmp(format, CONFIG_BACKUP_FORMAT) != 0) {
-    sendJsonMessage(400, false, "This is not a TouchDeck configuration backup.");
+    sendJsonMessage(400, false, "This is not a tactula-compatible configuration backup.");
     return;
   }
   long integer = 0;
@@ -620,7 +538,6 @@ static void handleConfigImport() {
   nextDisplay.glassOn = displayDefaults.glassOn;
   nextDisplay.glassAutoText = displayDefaults.glassAutoText;
   nextDisplay.smoothCharts = displayDefaults.smoothCharts;
-  nextDisplay.printerFx = displayDefaults.printerFx;
   nextDisplay.tileFx = displayDefaults.tileFx;
   nextDisplay.fxTouch = displayDefaults.fxTouch;
   nextDisplay.fxToggle = displayDefaults.fxToggle;
@@ -628,7 +545,7 @@ static void handleConfigImport() {
   nextDisplay.fxCard = displayDefaults.fxCard;
   if (!display["glassTint"].isNull()) READ_INT(display, "glassTint", 0, 90, nextDisplay.glassTint, uint8_t);
   if (!display["glassBlur"].isNull()) READ_INT(display, "glassBlur", 0, 24, nextDisplay.glassBlur, uint8_t);
-  if (!display["glassDim"].isNull()) READ_INT(display, "glassDim", 0, 60, nextDisplay.glassDim, uint8_t);
+  if (!display["glassDim"].isNull()) READ_INT(display, "glassDim", 0, 80, nextDisplay.glassDim, uint8_t);
   if (!display["wallEvery"].isNull()) READ_INT(display, "wallEvery", 0, 60, nextDisplay.wallEvery, uint8_t);
   if (!display["wallOrder"].isNull()) READ_INT(display, "wallOrder", 0, 1, nextDisplay.wallOrder, uint8_t);
   if (!display["wallSource"].isNull()) {
@@ -655,7 +572,6 @@ static void handleConfigImport() {
   if (!display["glassOn"].isNull()) READ_INT(display, "glassOn", 20, 100, nextDisplay.glassOn, uint8_t);
   if (!display["glassAutoText"].isNull()) READ_BOOL(display, "glassAutoText", nextDisplay.glassAutoText);
   if (!display["smoothCharts"].isNull()) READ_BOOL(display, "smoothCharts", nextDisplay.smoothCharts);
-  if (!display["printerFx"].isNull()) READ_BOOL(display, "printerFx", nextDisplay.printerFx);
   if (!display["tileFx"].isNull()) READ_INT(display, "tileFx", 0, 5, nextDisplay.tileFx, uint8_t);
   if (!display["fxTouch"].isNull()) READ_INT(display, "fxTouch", 0, 4, nextDisplay.fxTouch, uint8_t);
   if (!display["fxToggle"].isNull()) READ_INT(display, "fxToggle", 0, 4, nextDisplay.fxToggle, uint8_t);
@@ -668,7 +584,7 @@ static void handleConfigImport() {
   READ_INT(backlight, "nightEndMinute", 0, 1439, nextBacklight.nightEndMinute, uint16_t);
 
   READ_BOOL(led, "enabled", nextLed.enabled);
-  READ_INT(led, "pin", 0, GPIO_PIN_MAX, nextLed.pin, uint8_t);
+  READ_INT(led, "pin", 0, 48, nextLed.pin, uint8_t);
   READ_INT(led, "brightness", 0, 255, nextLed.brightness, uint8_t);
   READ_BOOL(led, "nightEnabled", nextLed.nightEnabled);
   READ_INT(led, "nightBrightness", 0, 255, nextLed.nightBrightness, uint8_t);
@@ -682,8 +598,8 @@ static void handleConfigImport() {
     if (!nextBacklight.nightEnabled) nextLed.nightEnabled = 0;
   }
   READ_BOOL(led, "followDisplay", nextLed.followDisplay);
-  READ_BOOL(led, "offlineOff", nextLed.offlineOff);
-  if (nextLed.enabled && !ledPinAllowed(nextLed.pin, nextDisplay.sdCard)) {
+  const bool sdPin = nextLed.pin >= 10 && nextLed.pin <= 13;
+  if (nextLed.enabled && (sdPin ? nextDisplay.sdCard : !ledPinAllowed(nextLed.pin))) {
     sendJsonMessage(400, false, "The backup uses an LED GPIO this board does not allow.");
     return;
   }
@@ -692,11 +608,12 @@ static void handleConfigImport() {
   JsonObjectConst haptic = root["haptic"].as<JsonObjectConst>();
   if (!haptic.isNull()) {
     READ_BOOL(haptic, "enabled", nextHaptic.enabled);
-    READ_INT(haptic, "pin", 0, GPIO_PIN_MAX, nextHaptic.pin, uint8_t);
+    READ_INT(haptic, "pin", 0, 48, nextHaptic.pin, uint8_t);
     READ_INT(haptic, "strength", HAPTIC_MIN_STRENGTH, 100, nextHaptic.strength, uint8_t);
     READ_INT(haptic, "pulseMs", HAPTIC_MIN_MS, HAPTIC_MAX_MS, nextHaptic.pulseMs, uint8_t);
+    const bool sdPin = nextHaptic.pin >= 10 && nextHaptic.pin <= 13;
     if (nextHaptic.enabled &&
-        (!ledPinAllowed(nextHaptic.pin, nextDisplay.sdCard) ||
+        ((sdPin ? nextDisplay.sdCard : !ledPinAllowed(nextHaptic.pin)) ||
          (nextLed.enabled && nextLed.pin == nextHaptic.pin))) {
       sendJsonMessage(400, false, "The backup uses a vibration motor GPIO this board does not allow.");
       return;
@@ -711,16 +628,6 @@ static void handleConfigImport() {
     return;
   }
   strlcpy(nextNetwork.timezoneStr, textValue, sizeof(nextNetwork.timezoneStr));
-  // Backups from before the time source: NTP.
-  uint8_t nextTimeSource = TIME_SRC_NTP;
-  if (!clock["source"].isNull()) {
-    const char* src = clock["source"] | "";
-    if (strcmp(src, "ntp") && strcmp(src, "ha")) {
-      sendJsonMessage(400, false, "clock.source: expected \"ntp\" or \"ha\"");
-      return;
-    }
-    nextTimeSource = !strcmp(src, "ha") ? TIME_SRC_HA : TIME_SRC_NTP;
-  }
 
   READ_BOOL(network, "mdns", nextNetwork.mdnsEnabled);
   READ_BOOL(network, "showIp", nextNetwork.showIPAtStartup);
@@ -755,31 +662,6 @@ static void handleConfigImport() {
   }
 
   READ_BOOL(deckIn, "header", nextHeader);
-  bool nextPrinters = false;  // backups from before the Advanced page: the default
-  JsonObjectConst advanced = root["advanced"].as<JsonObjectConst>();
-  if (!advanced.isNull() && !advanced["printers"].isNull()) READ_BOOL(advanced, "printers", nextPrinters);
-  PrinterSettings nextPrn;  // older backups: the defaults
-  JsonObjectConst prnIn = root["printers"].as<JsonObjectConst>();
-  if (!prnIn.isNull()) {
-    READ_BOOL(prnIn, "errors", nextPrn.errors);
-    READ_BOOL(prnIn, "errorsAll", nextPrn.errorsAll);
-    READ_BOOL(prnIn, "errorWake", nextPrn.errorWake);
-    READ_BOOL(prnIn, "follow", nextPrn.follow);
-    READ_BOOL(prnIn, "coolAlert", nextPrn.coolAlert);
-    READ_INT(prnIn, "coolTemp", PRN_COOL_MIN, PRN_COOL_MAX, nextPrn.coolTemp, uint8_t);
-    JsonVariantConst price = prnIn["kwhPrice"], cur = prnIn["currency"];
-    const float p = price.as<float>();
-    if (!price.isNull() && (!price.is<float>() || !isfinite(p) || p < 0 || p > 100)) {
-      sendJsonMessage(400, false, "printers.kwhPrice must be a number 0..100");
-      return;
-    }
-    if (!cur.isNull() && (!cur.is<const char*>() || strlen(cur.as<const char*>()) >= sizeof(nextPrn.currency))) {
-      sendJsonMessage(400, false, "printers.currency must be text of up to 7 bytes");
-      return;
-    }
-    nextPrn.kwhPrice = price.isNull() ? 0 : p;
-    strlcpy(nextPrn.currency, cur | "", sizeof(nextPrn.currency));
-  }
   AudioSettings nextAudio;  // older backups: speaker off
   JsonObjectConst audio = root["audio"].as<JsonObjectConst>();
   if (!audio.isNull()) {
@@ -787,30 +669,12 @@ static void handleConfigImport() {
     READ_INT(audio, "volume", 0, 100, nextAudio.volume, uint8_t);
     READ_BOOL(audio, "nightMute", nextAudio.nightMute);
     READ_BOOL(audio, "click", nextAudio.click);
-    READ_BOOL(audio, "finished", nextAudio.finished);
-    READ_BOOL(audio, "error", nextAudio.error);
-    READ_BOOL(audio, "cooled", nextAudio.cooled);
-    if (!audio["wakeMs"].isNull()) READ_INT(audio, "wakeMs", 0, AUDIO_WAKE_MAX_MS, nextAudio.wakeMs, uint16_t);
-    if (!audio["keepOnMs"].isNull())
-      READ_INT(audio, "keepOnMs", AUDIO_KEEP_ON_MIN_MS, AUDIO_KEEP_ON_MAX_MS, nextAudio.keepOnMs, uint32_t);
-    const char* const keys[] = {"fileFinished", "fileError", "fileCooled"};
-    char* const targets[] = {nextAudio.fileFinished, nextAudio.fileError, nextAudio.fileCooled};
-    for (int i = 0; i < 3; i++) {
-      const char* v = audio[keys[i]] | "";
-      if (*v && !audioValidName(v)) {
-        sendJsonMessage(400, false, "audio sound files must be .wav names");
-        return;
-      }
-      strlcpy(targets[i], v, AUDIO_FILE_LEN);
     }
-  }
   PresenceSettings nextPresence;  // older backups: never sleeps
   JsonObjectConst presence = root["presence"].as<JsonObjectConst>();
   if (!presence.isNull()) {
     READ_INT(presence, "sleep", 0, 1440, nextPresence.sleepMin, uint16_t);
     READ_INT(presence, "dim", 0, 100, nextPresence.dimPct, uint8_t);
-    READ_BOOL(presence, "pc", nextPresence.pc);
-    if (!presence["printing"].isNull()) READ_BOOL(presence, "printing", nextPresence.printing);
     if (!presence["frame"].isNull()) READ_BOOL(presence, "frame", nextPresence.frame);
     if (!presence["frameClock"].isNull()) READ_BOOL(presence, "frameClock", nextPresence.frameClock);
     if (!presence["frameAnim"].isNull()) READ_BOOL(presence, "frameAnim", nextPresence.frameAnim);
@@ -835,16 +699,19 @@ static void handleConfigImport() {
     }
   }
   MqttSettings nextMqtt;
-  if (root.containsKey("mqtt")) {
+  if (root["mqtt"].is<JsonObjectConst>()) {
     JsonObjectConst mqtt = root["mqtt"].as<JsonObjectConst>();
     const char* host = nullptr;
     const char* user = nullptr;
     const char* prefix = nullptr;
+    const char* deviceName = nullptr;
     if (mqtt.isNull() || !readBackupBool(mqtt, "enabled", nextMqtt.enabled, error, "mqtt.enabled") ||
         !readBackupString(mqtt, "host", 80, host, error, "mqtt.host") ||
         !readBackupInteger(mqtt, "port", 1, 65535, integer, error, "mqtt.port") ||
         !readBackupString(mqtt, "user", 127, user, error, "mqtt.user") ||
-        !readBackupString(mqtt, "prefix", 127, prefix, error, "mqtt.prefix")) {
+        !readBackupString(mqtt, "prefix", 127, prefix, error, "mqtt.prefix") ||
+        (!mqtt["deviceName"].isNull() &&
+         !readBackupString(mqtt, "deviceName", 48, deviceName, error, "mqtt.deviceName"))) {
       sendJsonMessage(400, false, error.length() ? error.c_str() : "Invalid MQTT settings");
       return;
     }
@@ -852,6 +719,7 @@ static void handleConfigImport() {
     nextMqtt.port = (uint16_t)integer;
     nextMqtt.user = user;
     nextMqtt.prefix = prefix;
+    nextMqtt.deviceName = deviceName ? deviceName : String(PRODUCT_NAME);
     if (!mqttNormalize(nextMqtt, error)) {
       sendJsonMessage(400, false, error.c_str());
       return;
@@ -883,13 +751,10 @@ static void handleConfigImport() {
   deck::wallInvalidateJobs();
   dispSettings = nextDisplay;
   netSettings = nextNetwork;
-  timeSource = nextTimeSource;
   backlightSettings = nextBacklight;
   ledSettings = nextLed;
   hapticSettings = nextHaptic;
   brightness = nextBrightness;
-  advSettings.printers = nextPrinters;
-  printerSettings = nextPrn;
   presenceSettings = nextPresence;
   audioSettings = nextAudio;
   saveSettings();
@@ -909,8 +774,6 @@ static void handleSaveLight() {
   PresenceSettings nextPresence;
   nextPresence.sleepMin = (uint16_t)clampedArg("sleepMin", presenceSettings.sleepMin, 0, 1440);
   nextPresence.dimPct = server.arg("sleepMode") == "dim" ? (uint8_t)clampedArg("sleepDim", 10, 1, 100) : 0;
-  nextPresence.pc = server.hasArg("presencePc");
-  nextPresence.printing = server.hasArg("presencePrinting");
   nextPresence.nightWake = server.hasArg("nightWake");
   nextPresence.nightWakeLevel =
     (uint8_t)clampedArg("nightWakeLevel", presenceSettings.nightWakeLevel, 1, 255);
@@ -954,7 +817,7 @@ static void handleSaveLight() {
 static void handleSaveHardware() {
   LedSettings nextLed = ledSettings;
   nextLed.enabled = server.hasArg("ledEnabled") ? 1 : 0;
-  nextLed.pin = (uint8_t)clampedArg("ledPin", nextLed.pin, 0, GPIO_PIN_MAX);
+  nextLed.pin = (uint8_t)clampedArg("ledPin", nextLed.pin, 0, 48);
   nextLed.brightness = (uint8_t)clampedArg("ledBrightness", nextLed.brightness, 0, 255);
   nextLed.nightEnabled = server.hasArg("ledNightEnabled") ? 1 : 0;
   nextLed.nightBrightness =
@@ -962,7 +825,6 @@ static void handleSaveHardware() {
   nextLed.nightStartMinute = minuteOfDayArg("ledNightStart", nextLed.nightStartMinute);
   nextLed.nightEndMinute = minuteOfDayArg("ledNightEnd", nextLed.nightEndMinute);
   nextLed.followDisplay = server.hasArg("ledFollowDisplay") ? 1 : 0;
-  nextLed.offlineOff = server.hasArg("ledOfflineOff") ? 1 : 0;
   if (nextLed.enabled && !ledPinAllowed(nextLed.pin)) {
     sendJsonMessage(400, false,
                     "That LED GPIO is reserved, in use, or unsupported on this board.");
@@ -970,7 +832,7 @@ static void handleSaveHardware() {
   }
   HapticSettings nextHaptic = hapticSettings;
   nextHaptic.enabled = server.hasArg("hapticEnabled");
-  nextHaptic.pin = (uint8_t)clampedArg("hapticPin", nextHaptic.pin, 0, GPIO_PIN_MAX);
+  nextHaptic.pin = (uint8_t)clampedArg("hapticPin", nextHaptic.pin, 0, 48);
   nextHaptic.strength = (uint8_t)clampedArg("hapticStrength", nextHaptic.strength, HAPTIC_MIN_STRENGTH, 100);
   nextHaptic.pulseMs = (uint8_t)clampedArg("hapticMs", nextHaptic.pulseMs, HAPTIC_MIN_MS, HAPTIC_MAX_MS);
   if (nextHaptic.enabled && !ledPinAllowed(nextHaptic.pin)) {
@@ -994,22 +856,6 @@ static void handleSaveHardware() {
   nextAudio.volume = (uint8_t)clampedArg("audioVolume", nextAudio.volume, 0, 100);
   nextAudio.nightMute = server.hasArg("audioNight");
   nextAudio.click = server.hasArg("audioClick");
-  nextAudio.finished = server.hasArg("audioFinished");
-  nextAudio.error = server.hasArg("audioError");
-  nextAudio.cooled = server.hasArg("audioCooled");
-  nextAudio.wakeMs = (uint16_t)clampedArg("audioWakeMs", nextAudio.wakeMs, 0, AUDIO_WAKE_MAX_MS);
-  nextAudio.keepOnMs = (uint32_t)clampedArg("audioKeepOnMs", nextAudio.keepOnMs, AUDIO_KEEP_ON_MIN_MS,
-                                            AUDIO_KEEP_ON_MAX_MS);
-  const char* const fields[] = {"audioFileFinished", "audioFileError", "audioFileCooled"};
-  char* const targets[] = {nextAudio.fileFinished, nextAudio.fileError, nextAudio.fileCooled};
-  for (int i = 0; i < 3; i++) {
-    const String v = server.arg(fields[i]);
-    if (v.length() && !audioValidName(v)) {
-      sendJsonMessage(400, false, "Pick a sound from the list.");
-      return;
-    }
-    strlcpy(targets[i], v.c_str(), AUDIO_FILE_LEN);
-  }
   ledSettings = nextLed;
   hapticSettings = nextHaptic;
   audioSettings = nextAudio;
@@ -1041,6 +887,7 @@ static void handleSaveAdvanced() {
   next.port = (uint16_t)port.toInt();
   next.user = server.arg("mqttUser");
   next.prefix = server.arg("mqttPrefix");
+  next.deviceName = server.arg("mqttDeviceName");
   if (server.hasArg("mqttClearPass")) next.pass = "";
   else if (server.arg("mqttPass").length()) next.pass = server.arg("mqttPass");
   String error;
@@ -1052,14 +899,13 @@ static void handleSaveAdvanced() {
     sendJsonMessage(500, false, "Could not store MQTT settings");
     return;
   }
-  deckSetPrinters(server.hasArg("printers"));
   saveSettings();
   sendJsonMessage(200, true, "Advanced settings applied.");
 }
 
 static void handleLedPreview() {
   const bool enabled = server.hasArg("ledEnabled");
-  const uint8_t pin = (uint8_t)clampedArg("ledPin", ledSettings.pin, 0, GPIO_PIN_MAX);
+  const uint8_t pin = (uint8_t)clampedArg("ledPin", ledSettings.pin, 0, 48);
   const uint8_t level =
     (uint8_t)clampedArg("ledBrightness", ledSettings.brightness, 0, 255);
   if (server.hasArg("stop")) {
@@ -1077,7 +923,7 @@ static void handleLedPreview() {
 }
 
 static void handleHapticTest() {
-  const uint8_t pin = (uint8_t)clampedArg("hapticPin", hapticSettings.pin, 0, GPIO_PIN_MAX);
+  const uint8_t pin = (uint8_t)clampedArg("hapticPin", hapticSettings.pin, 0, 48);
   const uint8_t strength =
     (uint8_t)clampedArg("hapticStrength", hapticSettings.strength, HAPTIC_MIN_STRENGTH, 100);
   const uint8_t ms = (uint8_t)clampedArg("hapticMs", hapticSettings.pulseMs, HAPTIC_MIN_MS, HAPTIC_MAX_MS);
@@ -1115,7 +961,7 @@ static void handleAudioTest() {
     sendJsonMessage(200, true, "Playing.");
     return;
   }
-  static const char* const names[SND_COUNT] = {"finished", "error", "cooled", "click"};
+  static const char* const names[SND_COUNT] = {"click"};
   int s = -1;
   for (int i = 0; i < SND_COUNT; i++)
     if (kind == names[i]) s = i;
@@ -1206,40 +1052,9 @@ static void handleAudioDelete() {
   }
   // Events that used it go back to the built-in sound.
   bool changed = false;
-  for (char* f : {audioSettings.fileFinished, audioSettings.fileError, audioSettings.fileCooled})
-    if (name == f) {
-      f[0] = 0;
-      changed = true;
-    }
   if (changed) saveSettings();
   audioFilesChanged();
   sendJsonMessage(200, true, changed ? "Sound deleted; its events use the built-in sound." : "Sound deleted.");
-}
-
-// Printers page: errors, bed cooled alert, energy price.
-static void handleSavePrinters() {
-  PrinterSettings next = printerSettings;
-  next.errors = server.hasArg("prnErrors");
-  next.errorsAll = server.hasArg("prnErrorsAll");
-  next.errorWake = server.hasArg("prnErrorWake");
-  next.follow = server.hasArg("prnFollow");
-  next.coolAlert = server.hasArg("prnCool");
-  next.coolTemp = (uint8_t)clampedArg("prnCoolTemp", next.coolTemp, PRN_COOL_MIN, PRN_COOL_MAX);
-  if (!parsePrice(server.arg("prnKwhPrice"), next.kwhPrice)) {
-    sendJsonMessage(400, false, "Price per kWh must be a number from 0 to 100");
-    return;
-  }
-  String cur = server.arg("prnCurrency");
-  cur.trim();
-  if (cur.length() >= sizeof(next.currency)) {
-    sendJsonMessage(400, false, "Currency: up to 7 bytes");
-    return;
-  }
-  strlcpy(next.currency, cur.c_str(), sizeof(next.currency));
-  printerSettings = next;
-  saveSettings();
-  deckPrinterSettingsChanged();
-  sendJsonMessage(200, true, "Printer settings saved.");
 }
 
 // The card is mounted only at boot, so a change restarts.
@@ -1249,10 +1064,11 @@ static void handleSaveSd() {
     sendJsonMessage(200, true, "No change.");
     return;
   }
+  const auto sdPin = [](uint8_t pin) { return pin >= 10 && pin <= 13; };
   const char* user = nullptr;
   uint8_t pin = 0;
-  if (on && ledSettings.enabled && boardSdPin(ledSettings.pin)) user = "status LED", pin = ledSettings.pin;
-  else if (on && hapticSettings.enabled && boardSdPin(hapticSettings.pin))
+  if (on && ledSettings.enabled && sdPin(ledSettings.pin)) user = "status LED", pin = ledSettings.pin;
+  else if (on && hapticSettings.enabled && sdPin(hapticSettings.pin))
     user = "vibration motor", pin = hapticSettings.pin;
   if (user) {
     const String msg = String("The ") + user + " uses GPIO " + pin +
@@ -1345,7 +1161,7 @@ static void handleSaveDisplay() {
   dispSettings.glassAutoText = server.hasArg("glassAutoText");
   dispSettings.glassTint = (uint8_t)clampedArg("glassTint", dispSettings.glassTint, 0, 90);
   dispSettings.glassBlur = (uint8_t)clampedArg("glassBlur", dispSettings.glassBlur, 0, 24);
-  dispSettings.glassDim = (uint8_t)clampedArg("glassDim", dispSettings.glassDim, 0, 60);
+  dispSettings.glassDim = (uint8_t)clampedArg("glassDim", dispSettings.glassDim, 0, 80);
   dispSettings.glassOn = (uint8_t)clampedArg("glassOn", dispSettings.glassOn, 20, 100);
   const bool glassChanged = oldAuto != dispSettings.glassAutoText ||
                             oldGlass != (uint32_t)(dispSettings.glassOn << 24 | dispSettings.glassTint << 16 |
@@ -1355,8 +1171,6 @@ static void handleSaveDisplay() {
   dispSettings.powerScaleW = (uint16_t)clampedArg("powerScale", dispSettings.powerScaleW, 1, 65535);
   dispSettings.warnThresholdPct =
     (uint8_t)clampedArg("warnThreshold", dispSettings.warnThresholdPct, 0, 100);
-  dispSettings.smoothCharts = server.hasArg("smoothCharts");
-  dispSettings.printerFx = server.hasArg("printerFx");
   dispSettings.tileFx = (uint8_t)clampedArg("tileFx", dispSettings.tileFx, 0, 5);
   dispSettings.fxTouch = (uint8_t)clampedArg("fxTouch", dispSettings.fxTouch, 0, 4);
   dispSettings.fxToggle = (uint8_t)clampedArg("fxToggle", dispSettings.fxToggle, 0, 4);
@@ -1374,10 +1188,8 @@ static void handleSaveClock() {
   if (server.hasArg("timezone"))
     strlcpy(netSettings.timezoneStr, server.arg("timezone").c_str(),
             sizeof(netSettings.timezoneStr));
-  if (server.hasArg("timeSource"))
-    timeSource = server.arg("timeSource") == "ha" ? TIME_SRC_HA : TIME_SRC_NTP;
   saveSettings();
-  configureClock();
+  configTzTime(netSettings.timezoneStr, "pool.ntp.org", "time.nist.gov");
   refreshBacklightControl();
   sendJsonMessage(200, true, "Time settings applied.");
 }
@@ -1481,17 +1293,6 @@ static const char* screenName(ScreenState s) {
   }
 }
 
-// POST /api/coprocessor/update - flash the WiFi co-processor with the
-// firmware this build expects; progress in /api/status, restarts when done.
-static void handleCoprocUpdate() {
-  const char* why = nullptr;
-  if (!coprocUpdateStart(&why)) {
-    sendJsonMessage(409, false, why);
-    return;
-  }
-  sendJsonMessage(200, true, "Co-processor update started. The deck restarts when it is done.");
-}
-
 static void handleApiStatus() {
   JsonDocument doc;
   doc["product"] = PRODUCT_NAME;
@@ -1499,36 +1300,11 @@ static void handleApiStatus() {
   doc["board"]   = BOARD_VARIANT;
   doc["ip"]      = WiFi.localIP().toString();
   doc["screen"]  = screenName(getScreenState());
-#if defined(BOARD_WIFI_ESP_HOSTED)
-  // The WiFi co-processor's firmware against the one this build expects.
-  if (hostedIsInitialized()) {
-    uint32_t a, b, c, x, y, z;
-    hostedGetSlaveVersion(&a, &b, &c);
-    hostedGetHostVersion(&x, &y, &z);
-    JsonObject co = doc["coprocessor"].to<JsonObject>();
-    co["firmware"] = String(a) + "." + b + "." + c;
-    co["expected"] = String(x) + "." + y + "." + z;
-    co["update"] = coprocUpdateState();
-    co["progress"] = coprocUpdateProgress();
-    co["error"] = coprocUpdateError();
-  }
-#endif
-  const PcSource* pc0 = pcSource("");
-  doc["pc_online"] = pcAnyOnline();
-  doc["pc_status"] = pc0 ? pc0->data.status : PC_STATUS_OK;
-  doc["pcs_online"] = pcOnlineCount();
   doc["ha_link"] = deck::haLinkName(deck::haLink());
   doc["backlight"] = currentBacklightLevel();
   doc["night_active"] = nightBrightnessActive();
   doc["night_wake"] = nightWakeActive();
   doc["time_valid"] = backlightTimeValid();
-  doc["time_source"] = timeSource == TIME_SRC_HA ? "ha" : "ntp";
-  if (timeSource == TIME_SRC_HA) {
-    const time_t synced = deck::haTimeSyncedAt();
-    doc["time_ha_age"] = synced ? (long)(time(nullptr) - synced) : -1;  // s, -1 = not yet
-    const String err = deck::haTimeError();
-    if (err.length()) doc["time_ha_error"] = err;
-  }
   doc["manual_display_off"] = manualDisplayOff();
   deckPresenceJson(doc["presence"].to<JsonObject>());
   mqttStatusJson(doc["mqtt"].to<JsonObject>());
@@ -1537,16 +1313,34 @@ static void handleApiStatus() {
   doc["led_duty"] = ledCurrentDuty();
   doc["led_night"] = ledNightActive();
   doc["led_ha"] = ledHaLevel();  // -1 not linked, -2 on at the local level
+  // Keep legacy fields for existing status clients.
   doc["free_heap"]    = ESP.getFreeHeap();
   doc["max_block"]    = ESP.getMaxAllocHeap();
   doc["internal_free"] = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
   doc["psram_free"]   = ESP.getFreePsram();
+  // A useful allocation must be byte-addressable. Separate internal 8-bit
+  // heap from external PSRAM instead of mixing their free-space figures.
+  // "minimum_free" is the IDF low-water mark since this boot, not a persisted
+  // lifetime reading.
+  JsonObject mem = doc["memory"].to<JsonObject>();
+  constexpr uint32_t INTERNAL_RAM_CAPS = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+  constexpr uint32_t PSRAM_CAPS = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+  JsonObject internal = mem["internal"].to<JsonObject>();
+  internal["total"]        = heap_caps_get_total_size(INTERNAL_RAM_CAPS);
+  internal["free"]         = heap_caps_get_free_size(INTERNAL_RAM_CAPS);
+  internal["largest_block"] = heap_caps_get_largest_free_block(INTERNAL_RAM_CAPS);
+  internal["minimum_free"] = heap_caps_get_minimum_free_size(INTERNAL_RAM_CAPS);
+  JsonObject psram = mem["psram"].to<JsonObject>();
+  psram["total"]         = heap_caps_get_total_size(PSRAM_CAPS);
+  psram["free"]          = heap_caps_get_free_size(PSRAM_CAPS);
+  psram["largest_block"] = heap_caps_get_largest_free_block(PSRAM_CAPS);
+  psram["minimum_free"] = heap_caps_get_minimum_free_size(PSRAM_CAPS);
   doc["reset_reason"] = resetReasonName();
   doc["last_crash"] = lastCrash();
   doc["wifi_disconnects"]     = wifiDisconnectCount();
   doc["wifi_last_disc_reason"] = wifiLastDisconnectReason();
-  doc["metric_count"] = pc0 ? pc0->data.count : 0;
-  doc["timestamp"] = pc0 ? pc0->data.timestamp : "";
+  doc["wifi_bssid"] = WiFi.status() == WL_CONNECTED ? WiFi.BSSIDstr() : String("");
+  doc["wifi_channel"] = WiFi.status() == WL_CONNECTED ? WiFi.channel() : 0;
   doc["hostname"] = netSettings.hostname;
   doc["rssi"] = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
   doc["uptime_seconds"] = millis() / 1000UL;
@@ -1563,11 +1357,6 @@ static void handleApiStatus() {
 //  cannot change while the handler streams it.
 // ---------------------------------------------------------------------------
 static void handleLiveScreenshot() {
-  String name, code;
-  if (pcPairPending(name, code) && code.length()) {  // the code must stay on the glass
-    sendJsonMessage(409, false, "Pairing in progress");
-    return;
-  }
   const uint16_t* fb = deck::panelLatestLvFrame();
   if (!fb) {
     server.send(503, "text/plain", "No frame yet");
@@ -1634,6 +1423,39 @@ static void handleDeckPage() {
   server.send(302, "text/plain", "");
 }
 
+// Internal flash is LittleFS on the 3.4 MB "spiffs" data partition.
+// Never auto-format at boot; a failed mount could contain recoverable data.
+static void handleFlashStorageStatus() {
+  const bool mounted = deck::deckFsReady();
+  JsonDocument doc;
+  doc["mounted"] = mounted;
+  if (mounted) {
+    doc["total"] = LittleFS.totalBytes();
+    doc["used"] = LittleFS.usedBytes();
+  }
+  String out;
+  serializeJson(doc, out);
+  server.sendHeader("Cache-Control", "no-store");
+  server.send(200, "application/json", out);
+}
+
+static void handleFlashStorageInitialize() {
+  if (server.arg("confirmation") != "FORMAT INTERNAL FLASH") {
+    sendJsonMessage(400, false, "Type FORMAT INTERNAL FLASH to confirm.");
+    return;
+  }
+  if (deck::deckFsReady()) {
+    sendJsonMessage(409, false, "Storage is already mounted. Existing files were not touched.");
+    return;
+  }
+  String err;
+  if (!deck::deckFsInitialize(err)) {
+    sendJsonMessage(500, false, err.c_str());
+    return;
+  }
+  sendJsonMessage(200, true, "Internal flash initialized. You can now save pages and tiles.");
+}
+
 // GET /api/deck -> {"source": "...", "deck": <deck.json>}
 static void handleDeckGet() {
   String text;
@@ -1644,6 +1466,10 @@ static void handleDeckGet() {
   out += "device";
   out += "\",\"header\":";
   out += deckHeaderVisible() ? "true" : "false";
+#if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
+  out += ",\"bambu_enabled\":";
+  out += deck::officeBambuConfigured() ? "true" : "false";
+#endif
   out += ",\"deck\":";
   out += text;
   out += "}";
@@ -1662,30 +1488,6 @@ static void handleDeckPost() {
     return;
   }
   sendJsonMessage(200, true, "Deck saved");
-}
-
-// GET /api/printers - printer config and live status, never the secrets.
-static void handlePrintersGet() { server.send(200, "application/json", deckPrintersJson()); }
-
-// GET /api/printers/ha - Bambu printers in Home Assistant's integration.
-static void handlePrintersHa() {
-  String json, err;
-  if (!deck::printersHaFind(json, err)) {
-    sendJsonMessage(502, false, ("Home Assistant: " + err).c_str());
-    return;
-  }
-  server.send(200, "application/json", json);
-}
-
-// POST /api/printers/secret (id, serial, code) - an empty field keeps the stored one.
-static void handlePrinterSecret() {
-  const String id = server.arg("id");
-  if (!id.length() || !deck::printerSecretSet(id, server.arg("serial"), server.arg("code"))) {
-    sendJsonMessage(400, false, "Could not store the printer credentials");
-    return;
-  }
-  deckPrintersReapply();
-  sendJsonMessage(200, true, "Stored");
 }
 
 // GET /api/ha/status - never includes the token.
@@ -1719,12 +1521,9 @@ static void handleHaForget() {
 
 // GET /api/ha/entities[?refresh=1] - picker list, cached on flash.
 static void handleHaEntities() {
-  String err;
-  if (server.arg("refresh") == "1" && !deck::haRefreshEntityList(err)) {
-    sendJsonMessage(502, false, err.c_str());
-    return;
-  }
-  if (deck::deckFsReady() && LittleFS.exists(deck::haEntityListPath())) {
+  String out, err;
+  const bool refresh = server.arg("refresh") == "1";
+  if (!refresh && deck::deckFsReady() && LittleFS.exists(deck::haEntityListPath())) {
     // Straight from flash: loading 160 KB into a String first took seconds.
     File f = LittleFS.open(deck::haEntityListPath(), "r");
     if (f) {
@@ -1734,8 +1533,11 @@ static void handleHaEntities() {
       return;
     }
   }
-  // Nothing fetched yet: the portal offers the update button.
-  server.send(200, "application/json", "{\"updated\":0,\"count\":0,\"entities\":[]}");
+  if (!deck::haFetchEntityList(out, refresh, err)) {
+    sendJsonMessage(502, false, err.c_str());
+    return;
+  }
+  server.send(200, "application/json", out);
 }
 
 // WebServer hands a non-form POST body to a route's upload callback too, where
@@ -1809,6 +1611,29 @@ static void handleIconsFinish() {
   iconError = "";
   if (err.length()) {
     sendJsonMessage(400, false, err.c_str());
+    return;
+  }
+  handleIconsStatus();
+}
+
+// Remove the MDI font without deleting any tile configuration. Release LVGL
+// glyph/font references before deleting the LittleFS file; rebuild the pages
+// with the normal built-in icon fallbacks afterwards.
+static void handleIconsRemove() {
+  if (!deck::deckFsReady()) {
+    sendJsonMessage(503, false, "Internal flash storage unavailable");
+    return;
+  }
+  const String path = deck::iconsPath();
+  if (!LittleFS.exists(path)) {
+    handleIconsStatus();
+    return;
+  }
+  deckReleaseIcons();
+  if (!LittleFS.remove(path)) {
+    String error;
+    deck::iconsLoad(path.c_str(), error);
+    sendJsonMessage(500, false, "Could not remove the MDI font");
     return;
   }
   handleIconsStatus();
@@ -1912,6 +1737,177 @@ static void handleBrandRemove() {
   handleBrandStatus();
 }
 
+
+// --- Bedroom PNG icons on microSD --------------------------------------------
+// Fixed directory, strict filenames, bounded streaming; never accept paths.
+static const char* const BEDROOM_ICON_DIR = "/touchdeck/icons/bedroom";
+static const char* const BEDROOM_ICON_TEMP = "/touchdeck/icons/bedroom/.upload";
+static constexpr size_t BEDROOM_ICON_MAX = 512 * 1024;
+static File bedroomIconUpload;
+static String bedroomIconError;
+static size_t bedroomIconBytes = 0;
+static uint8_t bedroomIconHeader[24] = {};
+static size_t bedroomIconHeaderLen = 0;
+static bool bedroomIconComplete = false;
+static unsigned bedroomIconParts = 0;
+
+static bool bedroomIconName(const String& name) {
+  if (name.length() < 8 || name.length() > 64 || !name.endsWith(".png")) return false;
+  const int suffix = name.lastIndexOf('_');
+  if (suffix < 1 || (name.substring(suffix) != "_on.png" && name.substring(suffix) != "_off.png")) return false;
+  for (int i = 0; i < suffix; ++i) {
+    const char c = name[i];
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) return false;
+  }
+  return true;
+}
+
+static String bedroomIconPath(const String& name) {
+  return String(BEDROOM_ICON_DIR) + "/" + name;
+}
+static void bedroomIconCleanup() {
+  if (bedroomIconUpload) bedroomIconUpload.close();
+  if (deck::wallOnSd()) deck::wallFs().remove(BEDROOM_ICON_TEMP);
+  bedroomIconBytes = bedroomIconHeaderLen = bedroomIconParts = 0;
+  bedroomIconComplete = false;
+  bedroomIconError = "";
+}
+static bool bedroomIconValidPng() {
+  static const uint8_t signature[] = {137,80,78,71,13,10,26,10};
+  if (bedroomIconHeaderLen < 24 || memcmp(bedroomIconHeader, signature, 8) != 0) return false;
+  // First chunk must be a 13-byte IHDR; width/height are big endian.
+  if (bedroomIconHeader[8] != 0 || bedroomIconHeader[9] != 0 ||
+      bedroomIconHeader[10] != 0 || bedroomIconHeader[11] != 13 ||
+      memcmp(bedroomIconHeader + 12, "IHDR", 4) != 0) return false;
+  const uint32_t width = ((uint32_t)bedroomIconHeader[16] << 24) |
+      ((uint32_t)bedroomIconHeader[17] << 16) |
+      ((uint32_t)bedroomIconHeader[18] << 8) | bedroomIconHeader[19];
+  const uint32_t height = ((uint32_t)bedroomIconHeader[20] << 24) |
+      ((uint32_t)bedroomIconHeader[21] << 16) |
+      ((uint32_t)bedroomIconHeader[22] << 8) | bedroomIconHeader[23];
+  return width >= 1 && height >= 1 && width <= 512 && height <= 512;
+}
+
+static void handleBedroomIconList() {
+  JsonDocument doc;
+  doc["mounted"] = deck::wallOnSd();
+  JsonArray files = doc["files"].to<JsonArray>();
+  if (deck::wallOnSd()) {
+    File dir = deck::wallFs().open(BEDROOM_ICON_DIR);
+    if (dir && dir.isDirectory()) {
+      for (File file = dir.openNextFile(); file; file = dir.openNextFile()) {
+        String name = file.name();
+        const int slash = name.lastIndexOf('/');
+        if (slash >= 0) name = name.substring(slash + 1);
+        if (!file.isDirectory() && bedroomIconName(name)) {
+          JsonObject item = files.add<JsonObject>();
+          item["name"] = name;
+          item["size"] = file.size();
+        }
+        file.close();
+      }
+      dir.close();
+    }
+  }
+  String out;
+  serializeJson(doc, out);
+  server.sendHeader("Cache-Control", "no-store");
+  server.send(200, "application/json", out);
+}
+static void handleBedroomIconFile() {
+  const String name = server.arg("n");
+  if (!deck::wallOnSd() || !bedroomIconName(name)) {
+    sendJsonMessage(404, false, "icon not found");
+    return;
+  }
+  File file = deck::wallFs().open(bedroomIconPath(name), "r");
+  if (!file || file.isDirectory()) {
+    sendJsonMessage(404, false, "icon not found");
+    return;
+  }
+  server.sendHeader("Cache-Control", "no-store");
+  server.sendHeader("X-Content-Type-Options", "nosniff");
+  server.streamFile(file, "image/png");
+  file.close();
+}
+static void handleBedroomIconUpload() {
+  if (!multipartRequest()) return;
+  HTTPUpload& up = server.upload();
+  if (up.status == UPLOAD_FILE_START) {
+    bedroomIconCleanup();
+    bedroomIconParts++;
+    if (!deck::wallOnSd()) bedroomIconError = "enable and mount the microSD card first";
+    else if (!bedroomIconName(server.arg("n"))) bedroomIconError = "use lowercase name_on.png or name_off.png";
+    else if (up.name != "icon") bedroomIconError = "expected a PNG file named icon";
+    else {
+      deck::wallFs().mkdir("/touchdeck");
+      deck::wallFs().mkdir("/touchdeck/icons");
+      if (!deck::wallFs().exists(BEDROOM_ICON_DIR) && !deck::wallFs().mkdir(BEDROOM_ICON_DIR))
+        bedroomIconError = "cannot create bedroom icons folder";
+      if (!bedroomIconError.length()) {
+        bedroomIconUpload = deck::wallFs().open(BEDROOM_ICON_TEMP, "w");
+        if (!bedroomIconUpload) bedroomIconError = "cannot create temporary icon file";
+      }
+    }
+  } else if (up.status == UPLOAD_FILE_WRITE) {
+    esp_task_wdt_reset();
+    if (bedroomIconError.length()) return;
+    if (up.currentSize > BEDROOM_ICON_MAX - bedroomIconBytes) {
+      bedroomIconError = "PNG too large (512 KB maximum)";
+      return;
+    }
+    for (size_t i = 0; i < up.currentSize && bedroomIconHeaderLen < sizeof(bedroomIconHeader); ++i)
+      bedroomIconHeader[bedroomIconHeaderLen++] = up.buf[i];
+    if (!bedroomIconUpload || bedroomIconUpload.write(up.buf, up.currentSize) != up.currentSize)
+      bedroomIconError = "could not write icon to microSD card";
+    else bedroomIconBytes += up.currentSize;
+  } else if (up.status == UPLOAD_FILE_END || up.status == UPLOAD_FILE_ABORTED) {
+    if (bedroomIconUpload) bedroomIconUpload.close();
+    if (up.status == UPLOAD_FILE_ABORTED) bedroomIconError = "upload aborted";
+    bedroomIconComplete = up.status == UPLOAD_FILE_END &&
+        bedroomIconBytes == up.totalSize && bedroomIconBytes > 32 &&
+        bedroomIconValidPng() && !bedroomIconError.length();
+    if (!bedroomIconComplete && !bedroomIconError.length()) bedroomIconError = "invalid or incomplete PNG (max 512x512)";
+  }
+}
+static void handleBedroomIconFinish() {
+  String err = bedroomIconError;
+  const String name = server.arg("n");
+  if (!err.length() && (!multipartRequest() || bedroomIconParts != 1 || !bedroomIconComplete))
+    err = "expected one complete PNG upload";
+  if (!err.length() && !bedroomIconName(name)) err = "invalid icon filename";
+  if (!err.length()) {
+    // Preserve the old icon if committing the replacement fails.
+    const String dest = bedroomIconPath(name);
+    const String backup = dest + ".bak";
+    deck::wallFs().remove(backup);
+    const bool existed = deck::wallFs().exists(dest);
+    if (existed && !deck::wallFs().rename(dest, backup)) err = "could not back up existing icon";
+    if (!err.length() && !deck::wallFs().rename(BEDROOM_ICON_TEMP, dest)) {
+      if (existed) deck::wallFs().rename(backup, dest);
+      err = "could not save icon";
+    }
+    if (!err.length()) deck::wallFs().remove(backup);
+  }
+  bedroomIconCleanup();
+  if (err.length()) {
+    sendJsonMessage(400, false, err.c_str());
+  } else {
+    deckBedroomIconsChanged();
+    sendJsonMessage(200, true, "Icon uploaded; display refreshing.");
+  }
+}
+static void handleBedroomIconDelete() {
+  const String name = server.arg("n");
+  if (!deck::wallOnSd()) sendJsonMessage(409, false, "microSD card is not mounted");
+  else if (!bedroomIconName(name)) sendJsonMessage(400, false, "invalid filename");
+  else if (!deck::wallFs().remove(bedroomIconPath(name))) sendJsonMessage(404, false, "icon not found");
+  else {
+    deckBedroomIconsChanged();
+    sendJsonMessage(200, true, "Icon deleted; display refreshing.");
+  }
+}
+
 // --- Glass wallpaper galleries -----------------------------------------------
 static const char* wallUploadPath() { return deck::wallTemp(false); }
 static File wallUpload;
@@ -1920,7 +1916,7 @@ static size_t wallBytes;
 static unsigned wallParts;
 static bool wallComplete;
 
-static const char* wallFile(bool portrait) { return deck::wallPath(deck::screenW(portrait), deck::screenH(portrait)); }
+static const char* wallFile(bool portrait) { return deck::wallPath(portrait ? 320 : 480, portrait ? 480 : 320); }
 
 static bool wallOrientation(bool& portrait) {
   const String o = server.arg("o");
@@ -2083,7 +2079,7 @@ static void handleWallFinish() {
   if (!wallOrientation(p)) { wallUploadCleanup(); return; }
   if (!complete && !err.length()) err = "expected one JPEG file";
   if (!err.length() && !deck::wallValidateJpeg(wallUploadPath(), p))
-    err = String("expected a baseline ") + deck::screenW(p) + "x" + deck::screenH(p) + " JPEG";
+    err = p ? "expected a baseline 320x480 JPEG" : "expected a baseline 480x320 JPEG";
   if (!err.length() && wallRoom(p) < deck::WALL_RESERVE) err = "flash full";
   // Daily archive upload (PC download): keeps the URL-based name so the deck dedupes it.
   if (server.arg("gallery") == "d") {
@@ -2212,7 +2208,7 @@ static void handleWallsShow() {
 }
 
 static void handleDailyRun() {
-  if (!deck::dailyStart()) sendJsonMessage(409, false, "already fetching, offline, a printer is on, or waiting for clock sync");
+  if (!deck::dailyStart()) sendJsonMessage(409, false, "already fetching, offline, or waiting for clock sync");
   else sendJsonMessage(200, true, "Fetching daily pictures.");
 }
 
@@ -2231,14 +2227,6 @@ static void handleWallsNext() {
     return;
   }
   sendJsonMessage(200, true, "Wallpaper queued.");
-}
-
-// GET /api/deck/perf[?min=ms] - bench hook: counters since the last read, then
-// a new window that keeps the loop passes slower than min (default 25 ms).
-static void handlePerf() {
-  String out;
-  deckPerfJson(out, (uint32_t)constrain(server.hasArg("min") ? server.arg("min").toInt() : 25, 1, 1000) * 1000);
-  server.send(200, "application/json", out);
 }
 
 static void handleFrameGet() {
@@ -2328,71 +2316,6 @@ static void handleHttpTestGet() {
   serializeJson(doc, out, len + 1);
   streamAsset(out, len, "application/json", "no-store");
   heap_caps_free(out);
-}
-
-// Pairing, called by the companion: POST /api/pc/pair?id=<pc_id> shows a code
-// on the device; POST /api/pc/pair/confirm?id=&code= answers {"key"} once.
-// POST /api/pc/pair?id=<pc_id>[&mode=tap]. Tap mode answers a token for
-// /api/pc/pair/confirm; without it the device shows a code (older companions).
-static void handlePcPair() {
-  String token, err;
-  const bool tap = server.arg("mode") == "tap";
-  if (!pcPairStart(server.arg("id"), tap, token, err)) {
-    sendJsonMessage(409, false, err.c_str());
-    return;
-  }
-  if (!tap) {
-    sendJsonMessage(200, true, "Enter the code shown on the device");
-    return;
-  }
-  JsonDocument doc;
-  doc["success"] = true;
-  doc["message"] = "Tap Allow on the device";
-  doc["token"] = token;
-  String out;
-  serializeJson(doc, out);
-  server.send(200, "application/json", out);
-}
-
-// 202 while a tap pairing waits for Allow; the companion polls.
-static void handlePcPairConfirm() {
-  String key, err;
-  bool waiting;
-  if (!pcPairConfirm(server.arg("id"), server.arg("code"), server.arg("token"), key, waiting, err)) {
-    sendJsonMessage(waiting ? 202 : 403, false, err.c_str());
-    return;
-  }
-  JsonDocument doc;
-  doc["success"] = true;
-  doc["key"] = key;
-  String out;
-  serializeJson(doc, out);
-  server.send(200, "application/json", out);
-  deckToast("PC paired");
-}
-
-static void handlePcPairCancel() {
-  pcPairCancel();
-  sendJsonMessage(200, true, "Pairing cancelled");
-}
-
-// GET /api/pc/status?id=<pc_id> -> {"known", "paired"}: the companion checks the
-// device still holds its key (it is gone after a flash erase).
-static void handlePcStatus() {
-  bool paired = false;
-  const bool known = pcPairedState(server.arg("id"), paired);
-  JsonDocument doc;
-  doc["known"] = known;
-  doc["paired"] = known && paired;
-  String out;
-  serializeJson(doc, out);
-  server.send(200, "application/json", out);
-}
-
-// POST /api/pc/forget?id=<pc_id> - drop a PC from the known list.
-static void handlePcForget() {
-  const bool ok = pcForget(server.arg("id"));
-  sendJsonMessage(ok ? 200 : 404, ok, ok ? "PC removed" : "No such PC");
 }
 
 // POST /api/deck/tap?tile=<id>[&hold=1] - bench hook, a tap or hold on a tile
@@ -2492,6 +2415,10 @@ static void handleOtaUpload() {
   HTTPUpload& upload = server.upload();
 
   if (upload.status == UPLOAD_FILE_START) {
+    if (firmwareUpdate::snapshot().downloading) {
+      otaFail("A verified firmware download is already in progress");
+      return;
+    }
     otaError = "";
     otaInProgress = true;
     otaFirstChunk = true;
@@ -2593,6 +2520,115 @@ static void handleNotFound() {
 // ---------------------------------------------------------------------------
 //  Init & handle
 // ---------------------------------------------------------------------------
+
+#if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
+// The printer's LAN access code stays in NVS, never exposed by GET.
+static void handleOfficePrinterStatus() {
+  server.sendHeader("Cache-Control", "no-store");
+  server.send(200, "application/json", deck::officeBambuJson());
+}
+
+static void handleOfficePrinterSave() {
+  String error;
+  const bool enabled = server.arg("enabled") == "1";
+  if (!deck::officeBambuSave(enabled, server.arg("source"), server.arg("address"),
+                             server.arg("serial"), server.arg("code"), server.arg("display_name"), error)) {
+    server.send(400, "application/json", String("{\"error\":\"") + error + "\"}");
+    return;
+  }
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
+static void handleOfficePrinterLight() {
+  if (!server.hasArg("on")) {
+    server.send(400, "application/json", "{\"error\":\"missing on\"}");
+    return;
+  }
+  const bool on = server.arg("on") == "1";
+  const bool ok = deck::officeBambuLight(on);
+  server.send(ok ? 200 : 409, "application/json",
+              ok ? "{\"ok\":true}" : "{\"error\":\"printer offline\"}");
+}
+
+static void handleOfficePrinterDiscover() {
+  String result, err;
+  if (!deck::printersHaFind(result, err)) {
+    server.send(503, "application/json", "{\"error\":\"Home Assistant printer discovery unavailable\"}");
+    return;
+  }
+  server.send(200, "application/json", result);
+}
+
+#endif  // TOUCHDECK_FEATURE_BAMBU
+
+
+static void handleUpdateStatus() {
+  const auto st = firmwareUpdate::snapshot();
+  JsonDocument doc;
+  doc["current"] = FW_VERSION;
+  doc["board"] = BOARD_VARIANT;
+#if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
+  doc["edition"] = "bambu";
+#else
+  doc["edition"] = "standard";
+#endif
+  doc["checksEnabled"] = st.checksEnabled;
+  doc["showBadge"] = st.showBadge;
+  doc["checking"] = st.checking;
+  doc["autoDownload"] = st.autoDownload;
+  doc["downloading"] = st.downloading;
+  doc["staged"] = st.staged;
+  doc["downloadedBytes"] = st.downloadedBytes;
+  doc["totalBytes"] = st.totalBytes;
+  doc["available"] = st.available && st.checksEnabled;
+  doc["latest"] = st.available ? st.version : "";
+  doc["error"] = st.error;
+  doc["automaticInstallation"] = false; // gated pending signed release metadata + portal auth
+  server.sendHeader("Cache-Control", "no-store");
+  String output;
+  serializeJson(doc, output);
+  server.send(200, "application/json", output);
+}
+
+static void handleUpdateCheck() {
+  firmwareUpdate::requestCheck();
+  server.send(202, "application/json", "{\"ok\":true,\"message\":\"Update check requested\"}");
+}
+
+static void handleUpdateDownload() {
+  const auto st = firmwareUpdate::snapshot();
+  if (!st.available || st.downloading || st.staged || otaInProgress) {
+    server.send(409, "application/json", "{\"error\":\"Update not ready for download\"}");
+    return;
+  }
+  firmwareUpdate::requestDownload();
+  server.send(202, "application/json", "{\"ok\":true,\"message\":\"Verified download requested\"}");
+}
+
+// The unauthenticated LAN portal may ask the person to confirm on the device,
+// but cannot activate an OTA partition or initiate a reboot.
+static void handleUpdateConfirmOnDevice() {
+  if (otaInProgress || !firmwareUpdate::requestTouchConfirmation()) {
+    server.send(409, "application/json",
+                "{\"error\":\"No verified firmware is staged for confirmation\"}");
+    return;
+  }
+  server.send(202, "application/json",
+              "{\"ok\":true,\"message\":\"Confirm installation on the touchscreen\"}");
+}
+
+static void handleUpdatePreferences() {
+  if (!server.hasArg("checksEnabled") || !server.hasArg("showBadge") || !server.hasArg("autoDownload")) {
+    server.send(400, "application/json", "{\"error\":\"Missing preferences\"}");
+    return;
+  }
+  const bool enabled = server.arg("checksEnabled") == "1";
+  const bool badge = server.arg("showBadge") == "1";
+  const bool autoDownload = server.arg("autoDownload") == "1";
+  firmwareUpdate::setPreferences(enabled, badge, autoDownload);
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
 void initWebServer() {
   server.on("/generate_204", HTTP_GET, handleCaptiveDetect);
   server.on("/gen_204", HTTP_GET, handleCaptiveDetect);
@@ -2612,7 +2648,6 @@ void initWebServer() {
   server.on("/save/light", HTTP_POST, handleSaveLight);
   server.on("/save/hardware", HTTP_POST, handleSaveHardware);
   server.on("/save/advanced", HTTP_POST, handleSaveAdvanced);
-  server.on("/save/printers", HTTP_POST, handleSavePrinters);
   server.on("/led/preview", HTTP_POST, handleLedPreview);
   server.on("/haptic/test", HTTP_POST, handleHapticTest);
   server.on("/api/audio", HTTP_GET, handleAudioGet);
@@ -2622,23 +2657,26 @@ void initWebServer() {
   server.on("/api/audio/delete", HTTP_POST, handleAudioDelete);
   server.on("/save/clock", HTTP_POST, handleSaveClock);
   server.on("/save/network", HTTP_POST, handleSaveNetwork);
+#if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
+  server.on("/api/office/bambu", HTTP_GET, handleOfficePrinterStatus);
+  server.on("/api/office/bambu", HTTP_POST, handleOfficePrinterSave);
+  server.on("/api/office/bambu/light", HTTP_POST, handleOfficePrinterLight);
+  server.on("/api/office/bambu/discover", HTTP_GET, handleOfficePrinterDiscover);
+#endif
+  server.on("/api/firmware/updates", HTTP_GET, handleUpdateStatus);
+  server.on("/api/firmware/updates/check", HTTP_POST, handleUpdateCheck);
+  server.on("/api/firmware/updates/download", HTTP_POST, handleUpdateDownload);
+  server.on("/api/firmware/updates/confirm-on-device", HTTP_POST, handleUpdateConfirmOnDevice);
+  server.on("/api/firmware/updates/preferences", HTTP_POST, handleUpdatePreferences);
   server.on("/api/config", HTTP_GET, handleApiConfig);
   server.on("/api/config/export", HTTP_GET, handleConfigExport);
   server.on("/api/config/import", HTTP_POST, handleConfigImport);
   server.on("/api/factory-reset", HTTP_POST, handleFactoryReset);  server.on("/api/status", HTTP_GET, handleApiStatus);
-  server.on("/api/coprocessor/update", HTTP_POST, handleCoprocUpdate);
-  // /screen.bmp is what the StatNode Companion's preview fetches.
-  server.on("/screen.bmp", HTTP_GET, handleLiveScreenshot);
   server.on("/screen_live.bmp", HTTP_GET, handleLiveScreenshot);
   server.on("/api/deck/swipe", HTTP_POST, handleDeckSwipe);
   server.on("/api/deck/panel", HTTP_POST, handleDeckPanel);
   server.on("/api/deck/card", HTTP_POST, handleDeckCard);
   server.on("/api/deck/tap", HTTP_POST, handleDeckTap);
-  server.on("/api/pc/forget", HTTP_POST, handlePcForget);
-  server.on("/api/pc/status", HTTP_GET, handlePcStatus);
-  server.on("/api/pc/pair", HTTP_POST, handlePcPair);
-  server.on("/api/pc/pair/confirm", HTTP_POST, handlePcPairConfirm);
-  server.on("/api/pc/pair/cancel", HTTP_POST, handlePcPairCancel);
   server.on("/api/deck/http-test", HTTP_POST, handleHttpTestPost);
   server.on("/api/deck/http-test", HTTP_GET, handleHttpTestGet);
   server.on("/api/deck/confirm", HTTP_POST, handleDeckConfirm);
@@ -2646,11 +2684,17 @@ void initWebServer() {
   server.on("/api/deck/edit", HTTP_POST, handleDeckEdit);
   server.on("/api/deck/screen", HTTP_POST, handleDeckScreen);
   server.on("/deck", HTTP_GET, handleDeckPage);
+  server.on("/tactula-mark.svg", HTTP_GET, handleTactulaMark);
   server.on("/deck.js", HTTP_GET, handleDeckJs);
   server.on("/api/deck/icons", HTTP_GET, handleIconsStatus);
+  server.on("/api/deck/icons/remove", HTTP_POST, handleIconsRemove);
   server.on("/api/deck/brand", HTTP_GET, handleBrandStatus);
   server.on("/api/deck/brand", HTTP_POST, handleBrandFinish, handleBrandUpload);
   server.on("/api/deck/brand/remove", HTTP_POST, handleBrandRemove);
+  server.on("/api/bedroom/icons", HTTP_GET, handleBedroomIconList);
+  server.on("/api/bedroom/icons/file", HTTP_GET, handleBedroomIconFile);
+  server.on("/api/bedroom/icons/upload", HTTP_POST, handleBedroomIconFinish, handleBedroomIconUpload);
+  server.on("/api/bedroom/icons/delete", HTTP_POST, handleBedroomIconDelete);
   server.on("/cbi.otf", HTTP_GET, []() { handleBrandFile(true); });
   server.on("/cbi.names", HTTP_GET, []() { handleBrandFile(false); });
   server.on("/api/deck/wallpaper", HTTP_GET, handleWallStatus);
@@ -2664,18 +2708,16 @@ void initWebServer() {
   server.on("/api/deck/daily/run", HTTP_POST, handleDailyRun);
   server.on("/api/deck/wallpaper/remove", HTTP_POST, handleWallRemove);
   server.on("/api/deck/bench", HTTP_POST, handleDeckBench);
-  server.on("/api/deck/perf", HTTP_GET, handlePerf);
   server.on("/api/deck/frame", HTTP_GET, handleFrameGet);
   server.on("/api/deck/frame", HTTP_POST, handleFramePost);
   server.on("/api/deck/prefs", HTTP_POST, handleDeckPrefs);
   server.on("/api/deck/icons", HTTP_POST, handleIconsFinish, handleIconsUpload);
   server.on("/mdi.ttf", HTTP_GET, handleIconsFont);
+  server.on("/api/storage", HTTP_GET, handleFlashStorageStatus);
+  server.on("/api/storage/initialize", HTTP_POST, handleFlashStorageInitialize);
   server.on("/api/deck", HTTP_GET, handleDeckGet);
   server.on("/api/deck", HTTP_POST, handleDeckPost);
   server.on("/api/ha/status", HTTP_GET, handleHaStatus);
-  server.on("/api/printers", HTTP_GET, handlePrintersGet);
-  server.on("/api/printers/ha", HTTP_GET, handlePrintersHa);
-  server.on("/api/printers/secret", HTTP_POST, handlePrinterSecret);
   server.on("/api/ha/config", HTTP_POST, handleHaConfig);
   server.on("/api/ha/forget", HTTP_POST, handleHaForget);
   server.on("/api/ha/entities", HTTP_GET, handleHaEntities);
@@ -2714,3 +2756,6 @@ void handleWebServer() {
     ESP.restart();
   }
 }
+
+// Prevent simultaneous automatic and manually uploaded OTA writes.
+bool webOtaBusy() { return otaInProgress || restartAt != 0; }

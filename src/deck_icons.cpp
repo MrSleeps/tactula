@@ -456,6 +456,8 @@ uint8_t* packNames(const uint8_t* d, Entry* index, size_t count) {
 
 }  // namespace
 
+void iconsRegisterSdFs() { if (wallOnSd()) registerBrandFs(); }
+
 const char* iconsPath() { return "/mdi.ttf"; }
 
 bool iconsLoad(const char* path, String& err) {

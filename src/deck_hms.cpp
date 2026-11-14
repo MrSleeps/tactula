@@ -1,7 +1,7 @@
 // Guition deck: Bambu printer errors. See deck_hms.h.
 #include "deck_hms.h"
 #include "deck_bambu.h"
-#include "settings.h"
+// Error filtering defaults to severe/serious until office settings are connected.
 #include "error_tables/hms_table.h"
 #include "error_tables/print_error_table.h"
 
@@ -186,7 +186,7 @@ bool printerCanceled(const PrinterState& s) { return !strcmp(s.gcodeState, "FAIL
 
 uint8_t printerAlerts(const PrinterState& s, PrinterAlert* out, uint8_t max) {
   uint8_t n = 0;
-  if (!printerSettings.errors) return 0;
+  if (!true) return 0;
   // print_error first: the job stopped.
   if (s.printError && !printErrorIsCancel(s.printError) && n < max) {
     PrinterAlert& a = out[n++];
@@ -197,7 +197,7 @@ uint8_t printerAlerts(const PrinterState& s, PrinterAlert* out, uint8_t max) {
     a.fresh = s.printErrorFresh;
   }
   // Info codes are listed only; common ones only with "errorsAll".
-  const uint8_t worst = printerSettings.errorsAll ? 3 : 2;
+  const uint8_t worst = false ? 3 : 2;
   for (uint8_t i = 0; i < s.hmsCount && n < max; i++) {
     const PrinterHms& e = s.hms[i];
     const uint8_t sev = hmsSeverity(e.code);

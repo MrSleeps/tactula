@@ -1,12 +1,10 @@
 // Deck UI: tiles bound to Home Assistant, HTTP sensors and the PC; tile actions.
 #include "deck_ui_int.h"
-#include "deck_viz.h"
 
 namespace deckui {
 
 // --- Tile events ------------------------------------------------------------------------
 
-const char* pcCmdLabel(const String& cmd);
 
 uint32_t tileTextRt(const TileRt& r) { return r.hasAuto ? r.autoText : tileText(*r.def); }
 
@@ -212,6 +210,7 @@ void setTileOn(TileRt& r, bool on, const HaEntity* e) {
     if (!e && r.def->entity.length() && haGetEntity(r.def->entity, own)) e = &own;
     r.iconCp = showIcon(r.icon, *r.def, e, on, r.iconPx, r.iconCp);
   }
+  updatePngIcon(r, on);
   tileIconColor(r, e);
   fxTileOn(r, was);
 }
@@ -515,26 +514,46 @@ void setSliderFill(TileRt& r, float frac) {
 // Pull the latest HA state into one tile's widgets.
 void applyHaToTile(TileRt& r, bool force) {
   const TileDef& d = *r.def;
-  if (d.http.enabled || !d.entity.length()) return;
+  if (d.http.enabled || (!d.entity.length() && !d.statusEntity.length())) return;
+  const String& visualEntity = d.statusEntity.length() ? d.statusEntity : d.entity;
   HaEntity e;
-  if (!haGetEntity(d.entity, e)) return;
-  if (!force && e.version == r.haVersion) return;
-  if (d.type == TILE_MEDIA) {
+  if (!haGetEntity(visualEntity, e)) return;
+  if (d.type == TILE_HA_MEDIA) {
+    if (!force && e.version == r.haVersion) return;
     r.haVersion = e.version;
-    applyMedia(r);
+    applyHaMedia(r, &e);
+    markPageStale(r.page);
     return;
   }
+  if (d.type == TILE_CLIMATE) {
+    if (!force && e.version == r.haVersion) return;
+    r.haVersion = e.version;
+    applyInlineClimate(r, &e);
+    markPageStale(r.page);
+    return;
+  }
+  if (!force && e.version == r.haVersion) return;
   if (e.version != r.haVersion)
     if (Wish* w = findWish(d.entity)) rememberLevel(*w, e);
   r.haVersion = e.version;
   const String domain = entityDomain(d.entity);
   const bool avail = e.known && e.state != "unavailable" && e.state != "unknown";
   const bool control = d.type == TILE_TOGGLE || d.type == TILE_SLIDER || d.tap.kind == ACT_TOGGLE;
-  const bool on = control ? wishOn(d.entity, e) : avail && haStateOn(domain, e.state);
-  if (control) r.on = on;
-  if (d.type == TILE_TOGGLE) setTileOn(r, on, &e);
-  if (r.icon) r.iconCp = showIcon(r.icon, d, &e, on, r.iconPx, r.iconCp);
-  if (d.lightIcon && d.type != TILE_TOGGLE) tileIconColor(r, &e);
+  const bool visualState = avail && e.state == d.activeState;
+  const bool on = control ? wishOn(d.entity, e) :
+      (d.statusEntity.length() || d.type == TILE_ACTION) ? visualState : avail && haStateOn(domain, e.state);
+  if (control || d.type == TILE_ACTION || d.statusEntity.length()) r.on = on;
+  if (d.type == TILE_TOGGLE || d.statusEntity.length() || d.type == TILE_ACTION)
+    setTileOn(r, on, &e);
+  if (r.icon) {
+    if (d.type == TILE_SENSOR && d.style == METRIC_WEATHER) {
+      TileDef visual = d;
+      if (!visual.icon.length()) visual.icon = String("mdi:") + weatherIcon(e.state);
+      r.iconCp = showIcon(r.icon, visual, &e, on, r.iconPx, r.iconCp);
+    } else r.iconCp = showIcon(r.icon, d, &e, on, r.iconPx, r.iconCp);
+  }
+  updatePngIcon(r, on);
+  if (d.lightColorMode && d.type != TILE_TOGGLE) tileIconColor(r, &e);
   lv_obj_set_style_opa(r.obj, avail ? LV_OPA_COVER : LV_OPA_50, 0);
   if (!d.label.length() && !d.noName && e.name.length() && strcmp(lv_label_get_text(r.name), e.name.c_str())) {
     lv_label_set_text(r.name, e.name.c_str());
@@ -542,10 +561,44 @@ void applyHaToTile(TileRt& r, bool force) {
   }
   if (d.type == TILE_SENSOR) {
     float value = 0;
-    const bool numeric = e.known && haNumericState(e.state, value);
+    const bool climateHeadline = d.style == METRIC_HEADLINE && domain == "climate";
+    const bool numeric = climateHeadline
+        ? avail && isfinite(e.current)
+        : e.known && haNumericState(e.state, value);
+    if (climateHeadline && numeric) value = e.current;
     sensorThreshold(r, numeric, value);
   }
-  if (d.type == TILE_SENSOR && d.style == METRIC_CHART) {
+  if (d.type == TILE_SENSOR && d.style == METRIC_WEATHER) {
+    lv_label_set_text(r.sub, weatherTempText(e, false).c_str());
+    lv_label_set_text(r.unit, e.weatherTempUnit.c_str());
+    lv_label_set_text(r.detail, weatherCondition(e.state).c_str());
+    // A value change from 5.8 to -12.3 (or a unit change) must re-measure
+    // the complete reading. fitTile normally runs only when the tile size
+    // changes, so re-fit the weather-specific bands on live updates too.
+    if (r.fitW > 0 && r.fitH > 0) {
+      const int cw = lv_obj_get_width(r.obj) -
+                     lv_obj_get_style_pad_left(r.obj, LV_PART_MAIN) -
+                     lv_obj_get_style_pad_right(r.obj, LV_PART_MAIN);
+      const int ch = lv_obj_get_height(r.obj) -
+                     lv_obj_get_style_pad_top(r.obj, LV_PART_MAIN) -
+                     lv_obj_get_style_pad_bottom(r.obj, LV_PART_MAIN);
+      fitWeather(r, cw, ch);
+    }
+  } else if (d.type == TILE_SENSOR && d.style == METRIC_HEADLINE) {
+    float value = 0;
+    const bool climateReading = domain == "climate";
+    const bool numeric = climateReading ? avail && isfinite(e.current) :
+                         e.known && haNumericState(e.state, value);
+    if (climateReading && numeric) value = e.current;
+    char text[32];
+    if (numeric) formatReading(value, text, sizeof(text));
+    lv_label_set_text(r.sub, d.sub.length() ? d.sub.c_str() :
+                          climateReading ? climateCurrentText(e, false).c_str() :
+                          numeric ? text : prettyState(domain, e).c_str());
+    lv_label_set_text(r.unit, numeric && !d.sub.length() ?
+                           (climateReading ? climateCurrentUnit(e).c_str() : e.unit.c_str()) : "");
+    fitValue(r);
+  } else if (d.type == TILE_SENSOR && d.style == METRIC_CHART) {
     float value;
     const bool numeric = e.known && haNumericState(e.state, value);
     char text[32];
@@ -645,7 +698,17 @@ void haSync() {
   const uint32_t v = haStoreVersion();
   if (v != s_haSeen) {
     s_haSeen = v;
-    for (TileRt& r : s_tiles) applyHaToTile(r, false);
+    // A sunrise/sunset changes sun.sun without changing the weather
+    // entity's own version. Force just the weather tiles to redraw so the
+    // sun/cloud icon becomes a moon/cloud icon (and vice versa).
+    static uint32_t sunSeen = 0;
+    HaEntity sun;
+    const uint32_t sunVersion = haGetEntity("sun.sun", sun) ? sun.version : 0;
+    const bool sunChanged = sunVersion != sunSeen;
+    sunSeen = sunVersion;
+    for (TileRt& r : s_tiles)
+      applyHaToTile(r, sunChanged && r.def->type == TILE_SENSOR &&
+                       r.def->style == METRIC_WEATHER);
     refreshModal();
     ledFromHa(false);
   }
@@ -662,111 +725,49 @@ void haSync() {
   }
 }
 
-// Finished PC commands: a short toast either way.
-void pcCmdSync() {
-  PcCmdResult o;
-  while (pcTakeCmdResult(o)) {
-    if (o.ok && o.cmd.startsWith("volume_set:")) continue;  // the slider is the feedback
-    const String t = o.pcName + ": " + pcCmdLabel(o.cmd) + (o.ok ? "" : String(" - ") + (o.msg.length() ? o.msg : "failed"));
-    deckToastShow(t.c_str(), o.ok ? 1200 : 2500);
-  }
-}
-
 uint32_t s_httpSeen = 0;
-uint32_t s_prnSeen = 0;  // printersVersion() last applied
-bool s_prnRebuild = false;
 String s_keepPage;  // buildPages: show this page again (set by rebuildPages)
 
-// "when" tiles. A PC counts as off only after this long offline, on top of
-// PC_STALE_TIMEOUT_MS, so a companion restart does not reshuffle the page.
-constexpr uint32_t WHEN_PC_GRACE_MS = 45000;
-struct WhenPc {
-  String id;  // "" = the first known PC
-  bool on = false;
-  uint32_t offSince = 0;
-};
-std::vector<WhenPc> s_whenPcs;
-std::vector<std::pair<String, String>> s_whenStates;  // entity, last state HA reported
+// Entity-state visibility conditions are independent of external companion apps.
+std::vector<std::pair<String, String>> s_whenStates;
 
-const String& tilePcId(const TileDef& d) { return d.tap.kind == ACT_PC ? d.tap.pc : d.pc; }
-
-bool pcIsOnline(const String& id) {
-  const PcSource* src = pcSource(id);
-  return src && src->data.online;
+bool whenWanted(const WhenDef& w) {
+  if (w.kind != WHEN_ENTITY) return true;
+  for (const auto& state : s_whenStates)
+    if (state.first == w.entity)
+      return state.second.length() && (state.second == w.state) != w.negate;
+  return false;
 }
 
-// pcId: the PC a pc-on / pc-off condition follows ("" = the first known one).
-bool whenWanted(const WhenDef& w, const String& pcId) {
-  if (w.kind == WHEN_PC_ON || w.kind == WHEN_PC_OFF) {
-    bool on = false;
-    for (const WhenPc& p : s_whenPcs)
-      if (p.id == pcId) on = p.on;
-    return on == (w.kind == WHEN_PC_ON);
-  }
-  if (w.kind == WHEN_SOUND_ON || w.kind == WHEN_SOUND_OFF) return vizSoundOn() == (w.kind == WHEN_SOUND_ON);
-  if (w.kind == WHEN_PRINTER) return printerWhenWanted(w);
-  if (w.kind == WHEN_ENTITY) {
-    for (const auto& s : s_whenStates)
-      if (s.first == w.entity) return s.second.length() && (s.second == w.state) != w.negate;
-    return false;
-  }
-  return true;
+bool whenWanted(const TileDef& t) { return whenWanted(t.when); }
+bool whenWanted(const PageDef& p) { return whenWanted(p.when); }
+
+void whenWatch(const WhenDef& w, std::vector<std::pair<String, String>>& states) {
+  if (w.kind != WHEN_ENTITY) return;
+  for (const auto& state : states)
+    if (state.first == w.entity) return;
+  String last;
+  for (const auto& state : s_whenStates)
+    if (state.first == w.entity) last = state.second;
+  HaEntity e;
+  if (!last.length() && haGetEntity(w.entity, e) && e.known) last = e.state;
+  states.push_back({w.entity, last});
 }
 
-bool whenWanted(const TileDef& t) { return whenWanted(t.when, tilePcId(t)); }
-bool whenWanted(const PageDef& p) { return whenWanted(p.when, String()); }
-
-void whenWatch(const WhenDef& w, const String& pcId, std::vector<WhenPc>& pcs,
-               std::vector<std::pair<String, String>>& states) {
-  if (w.kind == WHEN_ENTITY) {
-    for (const auto& s : states)
-      if (s.first == w.entity) return;
-    String last;
-    for (const auto& s : s_whenStates)
-      if (s.first == w.entity) last = s.second;
-    HaEntity e;
-    if (!last.length() && haGetEntity(w.entity, e) && e.known) last = e.state;
-    states.push_back({w.entity, last});
-  } else if (w.kind == WHEN_PC_ON || w.kind == WHEN_PC_OFF) {
-    for (const WhenPc& p : pcs)
-      if (p.id == pcId) return;
-    WhenPc n;
-    n.id = pcId;
-    n.on = pcIsOnline(pcId);
-    for (const WhenPc& p : s_whenPcs)
-      if (p.id == pcId) n = p;
-    pcs.push_back(n);
-  }
-}
-
-// The PCs and entities the "when" tiles and pages watch, keeping what is already known.
 void whenCollect() {
-  std::vector<WhenPc> pcs;
   std::vector<std::pair<String, String>> states;
-  for (const PageDef& pd : s_cfg.pages) {
-    whenWatch(pd.when, String(), pcs, states);
-    for (const TileDef& t : pd.tiles) whenWatch(t.when, tilePcId(t), pcs, states);
+  for (const PageDef& page : s_cfg.pages) {
+    whenWatch(page.when, states);
+    for (const TileDef& tile : page.tiles) whenWatch(tile.when, states);
   }
-  s_whenPcs.swap(pcs);
   s_whenStates.swap(states);
 }
 
 void whenTrack() {
-  const uint32_t now = millis();
-  for (WhenPc& p : s_whenPcs) {
-    if (pcIsOnline(p.id)) {
-      p.on = true;
-      p.offSince = 0;
-    } else if (p.on) {
-      if (!p.offSince) p.offSince = now | 1;
-      else if (now - p.offSince >= WHEN_PC_GRACE_MS) p.on = false;
-    }
-  }
-  // While HA is away the last known states stand.
   if (haLink() != HA_CONNECTED) return;
-  for (auto& s : s_whenStates) {
+  for (auto& state : s_whenStates) {
     HaEntity e;
-    if (haGetEntity(s.first, e) && e.known) s.second = e.state;
+    if (haGetEntity(state.first, e) && e.known) state.second = e.state;
   }
 }
 
@@ -893,15 +894,20 @@ void httpSync() {
   }
 }
 
-// Every HA entity the deck follows: tiles, printer plugs, conditions, LED, presence.
+// Every HA entity the deck follows: tiles, conditions, LED, presence.
 std::vector<String> entityIds() {
   std::vector<String> ids;
-  for (const TileRt& r : s_tiles)
+  bool hasWeatherTile = false;
+  for (const TileRt& r : s_tiles) {
+    if (r.def->type == TILE_SENSOR && r.def->style == METRIC_WEATHER)
+      hasWeatherTile = true;
     if (r.def->entity.length()) ids.push_back(r.def->entity);
-  for (const PrinterDef& d : s_cfg.printers)
-    if (advSettings.printers && d.plug.length()) ids.push_back(d.plug);
-  for (const PrinterDef& d : s_cfg.printers)
-    if (advSettings.printers && d.energy.length()) ids.push_back(d.energy);
+    if (r.def->statusEntity.length() && r.def->statusEntity != r.def->entity)
+      ids.push_back(r.def->statusEntity);
+  }
+  // One extra HA state subscription only when there is a Weather tile.
+  // HA provides the sunrise/sunset boundary through this native entity.
+  if (hasWeatherTile) ids.push_back("sun.sun");
   for (const auto& s : s_whenStates) ids.push_back(s.first);
   if (s_cfg.ledEntity.length()) ids.push_back(s_cfg.ledEntity);
   for (const String& id : presenceSettings.entities)
@@ -910,8 +916,6 @@ std::vector<String> entityIds() {
 }
 
 void collectEntities() {
-  printersApply(s_cfg);
-  s_prnSeen = 0;
   httpSetSensors(s_cfg);
   s_httpSeen = 0;
   for (TileRt& r : s_tiles) applyHttpToTile(r);
@@ -974,16 +978,30 @@ void runAction(TileRt& r, const TileAction& a) {
     case ACT_HTTP:
       if (!httpSend(a, tileLabel(*r.def))) deckToastShow("Busy, try again", 1500);
       break;
-    case ACT_PC: {
-      String err;
-      if (!pcSendCommand(a.pc, a.cmd.c_str(), err)) deckToastShow(err.c_str(), 2200);
-      break;
-    }
-    case ACT_CALL_SERVICE:
-      if (!haUp) deckToastShow("Home Assistant is offline", 1800);
-      else if (!haCallService(a.domain, a.service, entity, a.data))
+    case ACT_CALL_SERVICE: {
+      if (!haUp) {
+        deckToastShow("Home Assistant is offline", 1800);
+        break;
+      }
+      // The tile entity can be a state sensor (e.g. Netflix's
+      // binary_sensor), not the service target. If the action supplies an
+      // entity_id in service_data, let Home Assistant use that instead of
+      // incorrectly targeting the sensor.
+      String target = entity;
+      if (a.data.length()) {
+        JsonDocument actionData;
+        if (!deserializeJson(actionData, a.data) &&
+            (actionData["entity_id"].is<const char*>() ||
+             actionData["entity_id"].is<JsonArrayConst>() ||
+             actionData["entity_id"].is<JsonObjectConst>() ||
+             actionData["target"]["entity_id"].is<const char*>())) {
+          target = "";
+        }
+      }
+      if (!haCallService(a.domain, a.service, target, a.data))
         deckToastShow("Home Assistant is busy, try again", 1800);
       break;
+    }
     default: {
       String svc;
       if (entity.length() && defaultActionService(domain, svc)) {
@@ -995,19 +1013,6 @@ void runAction(TileRt& r, const TileAction& a) {
       break;
     }
   }
-}
-
-const char* pcCmdLabel(const String& cmd) {
-  static const char* const kLabels[][2] = {
-      {"media_play_pause", "Play / pause"}, {"media_next", "Next track"}, {"media_prev", "Previous track"},
-      {"media_stop", "Stop"},               {"volume_up", "Volume up"},   {"volume_down", "Volume down"},
-      {"volume_mute", "Mute"},              {"lock", "Lock"},             {"sleep", "Sleep"},
-      {"restart", "Restart"},               {"shutdown", "Shut down"}};
-  for (const auto& l : kLabels)
-    if (cmd == l[0]) return l[1];
-  if (cmd.startsWith("hotkey:")) return "Hotkey";
-  if (cmd.startsWith("volume_set:")) return "Volume";
-  return "Run";
 }
 
 // Tile setting "confirm": "off" asks before an action that turns the tile off.
@@ -1033,7 +1038,6 @@ const char* actionVerb(const TileRt& r, const TileAction& a) {
     return r.on ? "Turn off" : "Turn on";
   }
   if (a.kind == ACT_HTTP) return "Send";
-  if (a.kind == ACT_PC) return pcCmdLabel(a.cmd);
   if (a.kind == ACT_CALL_SERVICE) {
     if (a.service == "turn_off") return "Turn off";
     if (a.service == "turn_on") return "Turn on";
@@ -1043,10 +1047,6 @@ const char* actionVerb(const TileRt& r, const TileAction& a) {
 }
 
 void requestAction(TileRt& r, bool hold) {
-  if (r.def->type == TILE_PRINTER) {
-    if (!hold) printerTap(r);
-    return;
-  }
   const TileAction& a = hold ? r.def->hold : r.def->tap;
   if (r.def->http.enabled && a.kind == ACT_NONE) return;
   if (needsConfirm(r, a)) openConfirm((int)(&r - &s_tiles[0]), hold);
@@ -1067,77 +1067,6 @@ void tileEvent(lv_event_t* e) {
   else if (code == LV_EVENT_LONG_PRESSED) requestAction(r, true);
 }
 
-// PC volume slider: the level the finger asks for goes out at most every
-// LEVEL_GAP_MS (each command spends a companion nonce); the tile shows it
-// until PC_VOL_HOLD_MS after the last move, then follows the PC again.
-constexpr uint32_t PC_VOL_HOLD_MS = 1500;
-struct PcVolume {
-  String pc;
-  int want = -1, sent = -1;
-  uint32_t sentMs = 0, holdUntil = 0;
-  bool reapply = false;
-};
-PcVolume s_pcVol;
-
-bool pcVolHeld() { return (int32_t)(millis() - s_pcVol.holdUntil) < 0; }
-
-// Now playing tile: ask for a level, and the level still asked for (-1 = none).
-void pcVolumeAsk(const String& pc, int pct) {
-  if (s_pcVol.pc != pc) s_pcVol.sent = -1;
-  s_pcVol.pc = pc;
-  s_pcVol.want = pct;
-  s_pcVol.holdUntil = millis() + PC_VOL_HOLD_MS;
-  s_pcVol.reapply = true;
-}
-
-int pcVolWanted(const String& pc) { return pcVolHeld() && s_pcVol.pc == pc ? s_pcVol.want : -1; }
-
-void pcVolumeTick() {
-  const uint32_t now = millis();
-  if (s_pcVol.want >= 0 && s_pcVol.want != s_pcVol.sent && now - s_pcVol.sentMs >= LEVEL_GAP_MS) {
-    String err;
-    s_pcVol.sentMs = now;
-    if (pcSendCommand(s_pcVol.pc, ("volume_set:" + String(s_pcVol.want)).c_str(), err)) s_pcVol.sent = s_pcVol.want;
-    else if (!pcVolHeld()) {
-      s_pcVol.want = -1;
-      deckToastShow(err.c_str(), 2200);
-    }
-  }
-  if (s_pcVol.reapply && !pcVolHeld()) {
-    s_pcVol.reapply = false;
-    s_pcVol.want = s_pcVol.sent = -1;
-    for (TileRt& r : s_tiles)
-      if (r.def->pcVolume && !r.sliding) applyPcStateToTile(r);
-      else if (r.def->type == TILE_MEDIA && !r.mediaHa) applyMedia(r);
-  }
-}
-
-void pcVolumeDrag(TileRt& r, lv_event_code_t code, const lv_point_t& p) {
-  if (code == LV_EVENT_PRESSING) {
-    if (!r.sliding) {
-      if (!pcIsOnline(tilePcId(*r.def)) || modalShown() || abs(p.x - r.slX0) < 8) return;
-      r.sliding = true;
-      r.slX0 = p.x;
-      r.slFrac0 = r.slValue = r.frac;
-    }
-    const int w = lv_obj_get_width(r.obj);
-    const float f = constrain(r.slFrac0 + (p.x - r.slX0) / (float)(w > 0 ? w : 1), 0.0f, 1.0f);
-    if (fabsf(f - r.slValue) < 0.005f) return;
-    r.slValue = f;
-    setSliderFill(r, f);
-    if (s_pcVol.pc != tilePcId(*r.def)) s_pcVol.sent = -1;
-    s_pcVol.pc = tilePcId(*r.def);
-    s_pcVol.want = (int)lroundf(f * 100);
-    if (!r.def->sub.length()) lv_label_set_text(r.sub, (String(s_pcVol.want) + "%").c_str());
-  } else if (code != LV_EVENT_RELEASED && code != LV_EVENT_PRESS_LOST) {
-    return;
-  }
-  if (!r.sliding) return;
-  s_pcVol.holdUntil = millis() + PC_VOL_HOLD_MS;
-  s_pcVol.reapply = true;
-  markPageStale(r.page);
-}
-
 // Slider tile: a sideways drag moves the level from where it was (no jump to
 // the finger). The shared wish coalesces calls and flushes the final value.
 void sliderEvent(lv_event_t* e) {
@@ -1154,10 +1083,6 @@ void sliderEvent(lv_event_t* e) {
   if (code == LV_EVENT_PRESSED) {
     r.sliding = false;
     r.slX0 = p.x;
-    return;
-  }
-  if (r.def->pcVolume) {
-    pcVolumeDrag(r, code, p);
     return;
   }
   const bool canSlide = r.def->entity.length() && haLink() == HA_CONNECTED && !modalShown();

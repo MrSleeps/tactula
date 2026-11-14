@@ -2,12 +2,13 @@
   "use strict";
   const $ = (id) => document.getElementById(id),
     qa = (s, r = document) => Array.from(r.querySelectorAll(s));
+  let printerAvailable = false;
+  let printerConfigLoaded = false;
   let config = null,
     dirty = false,
     previewBusy = false,
     toastTimer = 0,
     populating = false,
-    selectedMetricId = 0,
     dragPayload = null;
   function esc(v) {
     return String(v == null ? "" : v).replace(
@@ -46,11 +47,11 @@
 
   function applyTheme() {
     const mode = document.documentElement.dataset.mode || "dark",
-      accent = document.documentElement.dataset.accent || "green";
+      accent = document.documentElement.dataset.accent || "purple";
     qa("[data-mode-choice]").forEach((b) => b.classList.toggle("on", b.dataset.modeChoice === mode));
     qa("[data-accent-choice]").forEach((b) => b.classList.toggle("on", b.dataset.accentChoice === accent));
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.content = mode === "dark" ? "#161512" : "#f4f0e7";
+    if (meta) meta.content = mode === "dark" ? "#0c1019" : "#f5f6fb";
   }
   qa("[data-mode-choice]").forEach((b) =>
     b.addEventListener("click", () => {
@@ -74,7 +75,10 @@
   }
   function updateSaveBar() {
     const f = activeForm();
-    $("saveBar").classList.toggle("hidden", !f);
+    const onHaPage = document.querySelector(".page.active")?.dataset.page === "homeassistant";
+    $("saveBar").classList.toggle("hidden", !f || onHaPage);
+    const mqttHint = $("mqttUnsavedHint");
+    if (mqttHint) mqttHint.textContent = dirty && onHaPage ? "Unsaved MQTT changes" : "Settings saved";
     if (!f) return;
     $("saveBtnText").textContent = f.dataset.saveLabel || "Save settings";
     $("saveMeta").classList.toggle("clean", !dirty);
@@ -94,10 +98,16 @@
     if (name !== "hardware") stopLedPreview();
     if (name === "light" || name === "hardware") loadEntityLists();
     if (name === "hardware") loadAudio();
+    if (name === "printer") {
+      if (!printerAvailable) return false;
+      refreshPrinter();
+    }
+    if (name === "maintenance") { loadBedroomIcons(); loadFlashStorage(); }
     qa(".page").forEach((p) => p.classList.toggle("active", p.dataset.page === name));
+    if (name === "overview") refreshOverviewBambuConnection();
     qa(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.nav === name));
     const button = document.querySelector('.nav-item[data-nav="' + name + '"]');
-    $("crumb").textContent = button ? button.textContent.replace(/\s+/g, " ").trim() : "TouchDeck";
+    $("crumb").textContent = button ? button.textContent.replace(/\s+/g, " ").trim() : "tactula";
     document.documentElement.classList.remove("nav-open");
     $("navToggle").setAttribute("aria-expanded", "false");
     updateSaveBar();
@@ -151,8 +161,6 @@
     $("brightnessVal").textContent = pct("brightness");
     $("nightBrightnessVal").textContent = pct("nightBrightness");
     $("nightWakeLevelVal").textContent = pct("nightWakeLevel");
-    $("warnThresholdVal").textContent =
-      $("warnThreshold").value === "0" ? "Off" : $("warnThreshold").value + "%";
     $("ledBrightnessVal").textContent = pct("ledBrightness");
     $("ledNightBrightnessVal").textContent = pct("ledNightBrightness");
     $("glassTintVal").textContent = $("glassTint").value + "%";
@@ -168,7 +176,6 @@
     "brightness",
     "nightBrightness",
     "nightWakeLevel",
-    "warnThreshold",
     "ledBrightness",
     "ledNightBrightness",
     "glassTint",
@@ -284,7 +291,7 @@
   ["ledBrightness", "ledPin"].forEach((id) => $(id).addEventListener("input", queueLedPreview));
 
   // Speaker (Hardware page): sound pickers, Test buttons, WAV files.
-  const AUDIO_PICKS = ["audioFileFinished", "audioFileError", "audioFileCooled"];
+  const AUDIO_PICKS = [];
   let audioFiles = [];
   function updateAudioFields() {
     $("audioFields").classList.toggle("hidden", !$("audioEnabled").checked);
@@ -365,10 +372,10 @@
     if (!t) return;
     if (t.dataset.audioTest) {
       const k = t.dataset.audioTest,
-        pick = { finished: "audioFileFinished", error: "audioFileError", cooled: "audioFileCooled" }[k];
+        pick = null;
       audioTest(k, pick ? $(pick).value : "");
     } else if (t.dataset.audioPlay) {
-      audioTest("finished", t.dataset.audioPlay);
+      audioTest("click", t.dataset.audioPlay);
     } else {
       const name = t.dataset.audioDel;
       if (!confirm("Delete " + name + "?")) return;
@@ -411,29 +418,6 @@
     }
   });
 
-  function renderChips(target, metrics) {
-    const el = $(target);
-    if (!metrics || !metrics.length) {
-      el.innerHTML = '<span class="chip-empty">Waiting for the PC companion.</span>';
-      return;
-    }
-    el.innerHTML = metrics
-      .map(
-        (m) =>
-          '<span class="chip"><b>' +
-          esc(m.name) +
-          "</b><small>" +
-          esc(m.value == null ? "" : m.value) +
-          " " +
-          esc(m.unit) +
-          "</small></span>",
-      )
-      .join("");
-  }
-  function metricById(id) {
-    return (config.metrics || []).find((m) => Number(m.id) === Number(id));
-  }
-
   function fillConfig(c) {
     config = c;
     populating = true;
@@ -449,12 +433,7 @@
     setVal("tileFx", c.display.tileFx || 0);
     FX_IDS.forEach((id) => setVal(id, c.display[id] || 0));
     setVal("brightness", c.display.brightness);
-    setVal("tempScale", c.display.tempScale);
-    setVal("powerScale", c.display.powerScale);
-    setVal("warnThreshold", c.display.warnThreshold);
     setVal("wallEvery", c.display.wallEvery ?? 5);
-    const prnPause = !c.screen || c.screen.wallPrnPause !== false;
-    document.querySelectorAll(".wall-prn-pause").forEach((el) => (el.hidden = !prnPause));
     setVal("wallOrder", c.display.wallOrder ?? 0);
     setVal("wallSource", c.display.wallSource ?? (c.display.wallDaily ? 1 : 0));
     setCheck("sdCard", c.display.sdCard ?? false);
@@ -473,8 +452,6 @@
     setCheck("glassAutoText", c.display.glassAutoText === true);
     updateGlassFields();
     updateFxFields();
-    setCheck("smoothCharts", c.display.smoothCharts !== false);
-    setCheck("printerFx", c.display.printerFx !== false);
     {
       const nd = $("navDeck");
       if (nd) nd.classList.toggle("hidden", !c.deck);
@@ -500,7 +477,6 @@
     setVal("ledNightStart", l.nightStart || "22:00");
     setVal("ledNightEnd", l.nightEnd || "07:00");
     setCheck("ledFollowDisplay", l.followDisplay);
-    setCheck("ledOfflineOff", l.offlineOff);
     $("ledAllowedPins").textContent = (l.allowedPins || []).join(", ") || "none";
     const hp = c.haptic || {};
     setCheck("hapticEnabled", hp.enabled);
@@ -512,14 +488,9 @@
     const au = c.audio || {};
     setCheck("audioEnabled", au.enabled);
     setVal("audioVolume", au.volume == null ? 70 : au.volume);
-    setVal("audioWakeMs", au.wakeMs == null ? "" : au.wakeMs);
-    setVal("audioKeepOnMs", au.keepOnMs == null ? "" : au.keepOnMs);
     setCheck("audioNight", au.nightMute !== false);
     setCheck("audioClick", au.click);
-    setCheck("audioFinished", au.finished !== false);
-    setCheck("audioError", au.error !== false);
-    setCheck("audioCooled", au.cooled !== false);
-    fillAudioPicks([au.fileFinished, au.fileError, au.fileCooled]);
+
     updateAudioFields();
     $("audioState").textContent = au.enabled ? "on" : "disabled";
     setVal("ledEntity", l.entity || "");
@@ -534,14 +505,11 @@
     setCheck("frameAnim", p.frameAnim !== false);
     setVal("sleepDim", p.dim || 10);
     for (let i = 0; i < 4; i++) setVal("presence" + i, (p.entities || [])[i] || "");
-    setCheck("presencePc", p.pc);
-    setCheck("presencePrinting", p.printing);
     setCheck("nightWake", p.nightWake);
     setVal("nightWakeLevel", p.nightWakeLevel == null ? 128 : p.nightWakeLevel);
     updateSleepFields();
     updateNightWakeFields();
     const adv = c.advanced || {};
-    setCheck("printersEnabled", adv.printers);
     const mqtt = c.mqtt || {};
     setCheck("mqttEnabled", mqtt.enabled);
     setVal("mqttHost", mqtt.host || "");
@@ -551,29 +519,14 @@
     $("mqttPass").placeholder = mqtt.has_pass ? "unchanged" : "";
     setCheck("mqttClearPass", false);
     setVal("mqttPrefix", mqtt.prefix || "homeassistant");
-    window.snPrn = !!adv.printers;
-    {
-      const np = $("navPrinters");
-      if (np) np.classList.toggle("hidden", !(c.deck && adv.printers));
-      const pr = c.printers || {};
-      setCheck("prnErrors", pr.errors !== false);
-      setCheck("prnErrorsAll", !!pr.errorsAll);
-      setCheck("prnErrorWake", pr.errorWake !== false);
-      setCheck("prnFollow", !!pr.follow);
-      setCheck("prnCool", pr.coolAlert !== false);
-      setVal("prnCoolTemp", pr.coolTemp || 35);
-      setVal("prnKwhPrice", pr.kwhPrice ? String(pr.kwhPrice) : "");
-      setVal("prnCurrency", pr.currency || "");
-    }
-    if (window.dkPrnSync) window.dkPrnSync();
+    setVal("mqttDeviceName", mqtt.deviceName || "tactula");
     setVal("timeFormat", c.clock.use24h ? "24" : "12");
-    setVal("timeSource", c.clock.source === "ha" ? "ha" : "ntp");
     setVal("timezone", c.clock.timezone || "");
     const tz = qa("#timezonePreset option").find((o) => o.value === (c.clock.timezone || ""));
     setVal("timezonePreset", tz ? tz.value : "");
     setVal("wifiSsid", c.network.ssid || "");
     setVal("wifiPass", "");
-    setVal("hostname", c.network.hostname || "touchdeck");
+    setVal("hostname", c.network.hostname || "tactula");
     setCheck("mdns", c.network.mdns);
     setCheck("showIp", c.network.showIp);
     setVal("ipMode", c.network.dhcp ? "dhcp" : "static");
@@ -582,7 +535,6 @@
     setVal("subnet", c.network.subnet || "");
     setVal("dns", c.network.dns || "");
     $("staticFields").classList.toggle("hidden", c.network.dhcp);
-    renderChips("overviewMetrics", c.metrics);
     updateRangeLabels();
     populating = false;
     dirty = false;
@@ -601,6 +553,8 @@
     try {
       const c = await getJson("/api/config?t=" + Date.now());
       fillConfig(c);
+      printerAvailable = c.bambu_available === true;
+      $("navPrinter").classList.toggle("hidden", !printerAvailable);
       return true;
     } catch (e) {
       showToast(e.message, true);
@@ -636,36 +590,101 @@
       $("saveBtn").disabled = false;
     }
   }
+  $("mqttSaveInline").addEventListener("click", async () => {
+    const button = $("mqttSaveInline");
+    button.disabled = true;
+    try {
+      await saveActive(); // same validated /save/advanced endpoint, no second handler
+    } finally {
+      button.disabled = false;
+    }
+  });
   $("saveBtn").addEventListener("click", saveActive);
   $("revertBtn").addEventListener("click", loadConfig);
 
-  function pcStatusText(code) {
-    return (
-      { 1: "OK", 2: "Sensor API error", 3: "LHM offline", 4: "LHM starting" }[code] || "Waiting for telemetry"
-    );
+  function connectionState(id, value, state, detailId, detail) {
+    const node = $(id);
+    node.textContent = value;
+    node.dataset.state = state;
+    if (detailId) $(detailId).textContent = detail || "";
   }
+
+  // Poll the existing printer API only on Overview, every 15 seconds rather
+  // than with the 2-second general status poll: Bambu status includes AMS
+  // details and is substantially heavier than the normal /api/status reply.
+  let overviewBambuPolling = false;
+  let overviewBambuLan = false;
+  async function refreshOverviewBambuConnection() {
+    if (!printerAvailable || overviewBambuPolling ||
+        document.hidden ||
+        document.querySelector(".page.active")?.dataset.page !== "overview") return;
+    overviewBambuPolling = true;
+    try {
+      const p = await getJson("/api/office/bambu?t=" + Date.now());
+      overviewBambuLan = p.enabled === true && p.source === "lan";
+      $("factBambuRow").classList.toggle("hidden", !overviewBambuLan);
+      if (!overviewBambuLan) return; // HA-backed printer isn't a LAN connection
+      const name = p.display_name || "Bambu printer";
+      $("factBambuLabel").textContent = name + " (LAN)";
+      const state = p.status || "unknown";
+      const label = state === "online" ? "Connected" :
+        state === "connecting" ? "Connecting" :
+        state === "failed" ? "Connection failed" :
+        state === "off" ? "Offline" : "Unavailable";
+      connectionState("factBambu", label,
+        state === "online" ? "connected" :
+        state === "connecting" ? "pending" : "error",
+        "factBambuDetail", p.error || "");
+    } catch (error) {
+      // Do not claim the printer is disconnected merely because the web
+      // request failed; only show an error if it was a known LAN printer.
+      if (overviewBambuLan) connectionState("factBambu", "Status unavailable",
+        "error", "factBambuDetail", "Unable to retrieve printer status");
+    } finally {
+      overviewBambuPolling = false;
+    }
+  }
+  setInterval(refreshOverviewBambuConnection, 15000);
+
   async function pollStatus() {
     try {
       const s = await getJson("/api/status?t=" + Date.now());
       $("srLed").classList.remove("offline");
       $("srTitle").textContent = s.ap_mode ? "setup access point" : "device online";
       $("srIp").textContent = s.ip || "--";
-      $("srHost").textContent = (s.hostname || "touchdeck") + ".local";
-      $("srPc").textContent = s.pc_online ? "online" : "offline";
-      $("srMetrics").textContent = s.metric_count;
-      $("pcStateTag").textContent = s.pc_online ? "online" : "offline";
-      $("factPcStatus").textContent = pcStatusText(s.pc_status);
-      $("factTimestamp").textContent = s.timestamp || "--";
-      $("factMetricCount").textContent = s.metric_count;
-      $("factHa").textContent = s.ha_link || "--";
+      $("srHost").textContent = (s.hostname || "tactula") + ".local";
+      const ha = String(s.ha_link || "unknown");
+      connectionState("factHa", ha,
+        ha === "connected" ? "connected" :
+        ["connecting", "authenticating", "waiting for WiFi"].includes(ha) ? "pending" :
+        ha === "not set up" ? "neutral" : "error");
       const mqtt = s.mqtt || {};
-      $("mqttStatus").textContent = (mqtt.state || "off") + (mqtt.error ? " - " + mqtt.error : "");
-      $("diagHeap").textContent = fmtBytes(s.free_heap);
-      $("diagBlock").textContent = fmtBytes(s.max_block);
+      const mqttState = mqtt.state || "off";
+      connectionState("factMqtt", mqttState === "off" ? "Disabled" :
+        mqttState === "connected" ? "Connected" :
+        mqttState === "connecting" ? "Connecting" :
+        mqttState === "error" ? "Connection failed" : mqttState,
+        mqttState === "connected" ? "connected" :
+        mqttState === "connecting" ? "pending" :
+        mqttState === "off" ? "neutral" : "error",
+        "factMqttDetail", mqttState === "off" ? "MQTT discovery is disabled" :
+          mqtt.error || mqtt.broker || "");
+      $("mqttStatus").textContent = mqttState + (mqtt.error ? " - " + mqtt.error : "");
+      const mem = s.memory || {}, internal = mem.internal || {}, psram = mem.psram || {};
+      // A missing status field is unknown, not 0 KB (e.g. older firmware).
+      const ramBytes = (value) => typeof value === "number" && Number.isFinite(value)
+        ? fmtBytes(value) : "--";
+      $("diagInternalTotal").textContent = ramBytes(internal.total);
+      $("diagInternalFree").textContent = ramBytes(internal.free);
+      $("diagInternalBlock").textContent = ramBytes(internal.largest_block);
+      $("diagInternalMin").textContent = ramBytes(internal.minimum_free);
+      $("diagPsramTotal").textContent = ramBytes(psram.total);
+      $("diagPsramFree").textContent = ramBytes(psram.free);
+      $("diagPsramBlock").textContent = ramBytes(psram.largest_block);
+      $("diagPsramMin").textContent = ramBytes(psram.minimum_free);
       $("diagRssi").textContent = s.rssi + " dBm";
       $("diagUptime").textContent = fmtUptime(s.uptime_seconds);
       $("maintIp").textContent = s.ip || "--";
-      showCoproc(s.coprocessor);
       const pct = Math.round((Number(s.backlight || 0) * 100) / 255);
       $("backlightState").textContent = s.manual_display_off
         ? "screen off"
@@ -676,17 +695,6 @@
             : !s.time_valid && $("nightEnabled").checked
               ? "day / time pending"
               : "day " + pct + "%";
-      if ($("timeSourceState")) {
-        const age = Number(s.time_ha_age);
-        $("timeSourceState").textContent =
-          s.time_source !== "ha"
-            ? ""
-            : s.time_ha_error
-              ? "Home Assistant time: " + s.time_ha_error
-              : age >= 0
-                ? "Last set from Home Assistant " + (age < 90 ? "just now" : Math.round(age / 60) + " min ago")
-                : "Waiting for Home Assistant";
-      }
       const pr = s.presence || {};
       $("sleepState").textContent = !pr.sleep_min
         ? "off"
@@ -706,6 +714,10 @@
     } catch (e) {
       $("srLed").classList.add("offline");
       $("srTitle").textContent = "device unavailable";
+      connectionState("factHa", "Unavailable", "error");
+      connectionState("factMqtt", "Unavailable", "error", "factMqttDetail", "");
+      if (overviewBambuLan) connectionState("factBambu", "Unavailable", "error",
+        "factBambuDetail", "");
     }
   }
 
@@ -733,6 +745,86 @@
     if ($("previewAuto").checked && document.querySelector(".page.active")?.dataset.page === "overview")
       refreshPreview();
   }, 5000);
+
+
+  // Firmware release checks are independent of the manual OTA upload.
+  async function refreshFirmwareUpdateStatus() {
+    try {
+      const data = await getJson("/api/firmware/updates?t=" + Date.now());
+      $("fwChecksEnabled").checked = !!data.checksEnabled;
+      $("fwShowBadge").checked = !!data.showBadge;
+      $("fwAutoDownload").checked = !!data.autoDownload;
+      const fwAction = $("fwDownloadNow");
+      fwAction.dataset.action = data.staged ? "confirm" : "download";
+      fwAction.textContent = data.staged ? "Install firmware" : "Download verified OTA";
+      fwAction.disabled = data.downloading || (!data.staged && !data.available);
+      $("fwDownloadStatus").textContent = data.downloading
+        ? "Downloading and verifying: " + fmtBytes(data.downloadedBytes) + " / " + fmtBytes(data.totalBytes)
+        : data.staged
+          ? "Verified image staged. Select Install firmware to open the confirmation on the touchscreen."
+          : data.available ? "Download is ready; installation still requires a touchscreen confirmation." : "";
+      $("fwUpdateStatus").textContent = data.checking
+        ? "Checking the firmware release feed..."
+        : data.available
+          ? "Update available: " + data.latest + " (installed: " + data.current + ")"
+          : data.error
+            ? "Update check: " + data.error
+            : "Installed: " + data.current + " · No newer compatible release found.";
+    } catch (error) {
+      $("fwUpdateStatus").textContent = "Unable to read firmware update status.";
+    }
+  }
+  async function saveFirmwareUpdatePreferences() {
+    const body = new URLSearchParams({
+      checksEnabled: $("fwChecksEnabled").checked ? "1" : "0",
+      showBadge: $("fwShowBadge").checked ? "1" : "0",
+      autoDownload: $("fwAutoDownload").checked ? "1" : "0"
+    });
+    try {
+      await getJson("/api/firmware/updates/preferences", {
+        method: "POST", body
+      });
+      await refreshFirmwareUpdateStatus();
+    } catch (error) {
+      showToast("Failed to save firmware update preferences", true);
+    }
+  }
+  $("fwChecksEnabled").addEventListener("change", saveFirmwareUpdatePreferences);
+  $("fwShowBadge").addEventListener("change", saveFirmwareUpdatePreferences);
+  $("fwAutoDownload").addEventListener("change", saveFirmwareUpdatePreferences);
+  $("fwDownloadNow").addEventListener("click", async () => {
+    const button = $("fwDownloadNow");
+    const install = button.dataset.action === "confirm";
+    try {
+      await getJson(install
+        ? "/api/firmware/updates/confirm-on-device"
+        : "/api/firmware/updates/download", { method: "POST" });
+      $("fwDownloadStatus").textContent = install
+        ? "Installation requested. Confirm Install and restart on the physical touchscreen."
+        : "Downloading verified firmware...";
+      button.disabled = true;
+      // The request itself cannot reboot or install from the web UI.
+      // A refresh restores the button if confirmation is postponed.
+      if (install) await refreshFirmwareUpdateStatus();
+    } catch (error) {
+      showToast((install ? "Unable to request touchscreen confirmation: " :
+        "Unable to begin firmware download: ") + error.message, true);
+      await refreshFirmwareUpdateStatus();
+    }
+  });
+  $("fwCheckNow").addEventListener("click", async () => {
+    try {
+      await getJson("/api/firmware/updates/check", { method: "POST" });
+      $("fwUpdateStatus").textContent = "Update check requested...";
+    } catch (error) {
+      showToast("Cannot start update check", true);
+    }
+  });
+  refreshFirmwareUpdateStatus();
+  setInterval(() => {
+    if (document.querySelector(".page.active")?.dataset.page === "maintenance")
+      refreshFirmwareUpdateStatus();
+  }, 15000);
 
   function uploadFirmware(file) {
     if (!file || !file.name.toLowerCase().endsWith(".bin")) {
@@ -792,7 +884,7 @@
   function exportConfiguration() {
     const a = document.createElement("a");
     a.href = "/api/config/export?t=" + Date.now();
-    a.download = "touchdeck-config-" + new Date().toISOString().slice(0, 10) + ".json";
+    a.download = "tactula-config-" + new Date().toISOString().slice(0, 10) + ".json";
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -814,7 +906,7 @@
         throw new Error("The selected file is not valid JSON");
       }
       if (!parsed || parsed.format !== "touchdeck-config")
-        throw new Error("This is not a TouchDeck configuration backup");
+        throw new Error("This is not a tactula-compatible configuration backup");
       if (!confirm("Restore this configuration and restart the device? WiFi credentials will be preserved."))
         return;
       $("backupImport").disabled = true;
@@ -836,6 +928,122 @@
   $("backupImport").addEventListener("click", () => $("backupFile").click());
   $("backupFile").addEventListener("change", () => importConfiguration($("backupFile").files[0]));
 
+  // Bedroom PNG icons: upload to microSD, list, preview, and remove.
+  const bedroomIconValid = (name) =>
+    /^[a-z0-9_]+_(on|off)\.png$/.test(name) && name.length <= 64;
+  async function loadBedroomIcons() {
+    const status = $("bedroomIconsStatus"), list = $("bedroomIconsList");
+    try {
+      const data = await getJson("/api/bedroom/icons");
+      list.replaceChildren();
+      const mounted = !!data.mounted;
+      $("bedroomIconsBrowse").disabled = !mounted;
+      status.textContent = mounted
+        ? "microSD connected • " + (data.files || []).length + " icon(s) saved"
+        : "microSD not mounted. Enable it above, save and restart before uploading.";
+      for (const entry of data.files || []) {
+        const name = String(entry.name || "");
+        if (!bedroomIconValid(name)) continue;
+        const card = document.createElement("div");
+        card.style.cssText = "width:128px;padding:10px;border:1px solid var(--border,#444);border-radius:12px;text-align:center";
+        const img = document.createElement("img");
+        img.src = "/api/bedroom/icons/file?n=" + encodeURIComponent(name) + "&v=" + Date.now();
+        img.alt = name;
+        img.style.cssText = "width:78px;height:78px;object-fit:contain;display:block;margin:auto auto 8px";
+        const label = document.createElement("div");
+        label.textContent = name;
+        label.style.cssText = "overflow-wrap:anywhere;font-size:12px;margin-bottom:6px";
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "btn btn-danger";
+        remove.textContent = "Delete";
+        remove.addEventListener("click", async () => {
+          if (!confirm("Delete " + name + " from the microSD card?")) return;
+          remove.disabled = true;
+          try {
+            const body = new URLSearchParams({ n: name });
+            await getJson("/api/bedroom/icons/delete", { method: "POST", body });
+            showToast("Deleted " + name, false);
+            await loadBedroomIcons();
+          } catch (e) { showToast(e.message, true); remove.disabled = false; }
+        });
+        card.append(img, label, remove);
+        list.append(card);
+      }
+    } catch (e) {
+      status.textContent = "Could not read icons: " + e.message;
+      $("bedroomIconsBrowse").disabled = true;
+    }
+  }
+  $("bedroomIconsBrowse").addEventListener("click", () => $("bedroomIconsFiles").click());
+  $("bedroomIconsRefresh").addEventListener("click", loadBedroomIcons);
+  $("bedroomIconsFiles").addEventListener("change", async () => {
+    const files = Array.from($("bedroomIconsFiles").files || []);
+    if (!files.length) return;
+    const invalid = files.find((file) => !bedroomIconValid(file.name) ||
+      file.size < 33 || file.size > 512 * 1024 || file.type && file.type !== "image/png");
+    if (invalid) {
+      showToast("Invalid PNG: " + invalid.name + " (use lowercase name_on/off.png, max 512 KB)", true);
+      $("bedroomIconsFiles").value = "";
+      return;
+    }
+    $("bedroomIconsBrowse").disabled = true;
+    let uploaded = 0;
+    for (const file of files) {
+      try {
+        $("bedroomIconsStatus").textContent = "Uploading " + file.name + " (" + (uploaded + 1) + "/" + files.length + ")...";
+        const fd = new FormData();
+        fd.append("icon", file, file.name);
+        await getJson("/api/bedroom/icons/upload?n=" + encodeURIComponent(file.name), {
+          method: "POST", body: fd
+        });
+        uploaded++;
+      } catch (e) {
+        showToast(file.name + ": " + e.message, true);
+        break;
+      }
+    }
+    $("bedroomIconsFiles").value = "";
+    await loadBedroomIcons();
+    if (uploaded === files.length) showToast(uploaded + " icon(s) saved to microSD", false);
+  });
+  // Internal flash LittleFS: never auto-format a failed mount, because the
+  // partition may contain recoverable user files from an older installation.
+  async function loadFlashStorage() {
+    try {
+      const data = await getJson("/api/storage?t=" + Date.now());
+      $("flashStorageRecovery").classList.toggle("hidden", !!data.mounted);
+      $("flashStorageStatus").textContent = data.mounted
+        ? "Mounted · " + fmtBytes(data.used) + " used of " + fmtBytes(data.total)
+        : "Not mounted. Pages and tiles cannot be saved until storage is repaired or initialized.";
+    } catch (e) {
+      $("flashStorageStatus").textContent = "Unable to check storage: " + e.message;
+      $("flashStorageRecovery").classList.add("hidden");
+    }
+  }
+  $("flashInitializeConfirm").addEventListener("input", () => {
+    $("flashInitialize").disabled =
+      $("flashInitializeConfirm").value.trim() !== "FORMAT INTERNAL FLASH";
+  });
+  $("flashInitialize").addEventListener("click", async () => {
+    if ($("flashInitializeConfirm").value.trim() !== "FORMAT INTERNAL FLASH") return;
+    if (!confirm("PERMANENTLY ERASE the internal flash filesystem? Existing deck.json, icons and pictures will be lost. This cannot be undone.")) return;
+    const button = $("flashInitialize");
+    button.disabled = true;
+    try {
+      const response = await getJson("/api/storage/initialize", {
+        method: "POST",
+        body: new URLSearchParams({confirmation: "FORMAT INTERNAL FLASH"}),
+      });
+      $("flashInitializeConfirm").value = "";
+      showToast(response.message || "Internal flash initialized", false);
+      await loadFlashStorage();
+    } catch (e) {
+      showToast(e.message, true);
+      button.disabled = false;
+    }
+  });
+  // Load on demand when the Maintenance section is opened.
   function updateFactoryReset() {
     const ready = $("factoryConfirm").value.trim() === "RESET";
     $("factoryReset").disabled = !ready;
@@ -872,36 +1080,6 @@
     } catch (e) {
       showToast(e.message, true);
       $("sdFormat").disabled = false;
-    }
-  });
-  /* WiFi co-processor (boards with ESP-Hosted only). */
-  function showCoproc(c) {
-    $("coprocBox").classList.toggle("hidden", !c);
-    if (!c) return;
-    $("coprocFw").textContent = c.firmware;
-    $("coprocWant").textContent = c.expected;
-    const running = c.update === "running";
-    $("coprocState").textContent = running
-      ? "Updating... " + c.progress + " %"
-      : c.update === "error"
-        ? "Update failed: " + c.error
-        : c.update === "done"
-          ? "Updated, restarting..."
-          : c.firmware === c.expected
-            ? "Up to date."
-            : "Does not match this build: update it.";
-    $("coprocUpdate").classList.toggle("hidden", running || c.firmware === c.expected);
-  }
-  $("coprocUpdate").addEventListener("click", async () => {
-    if (!confirm("Update the WiFi co-processor firmware? Keep the deck powered until it restarts.")) return;
-    try {
-      $("coprocUpdate").disabled = true;
-      const data = await getJson("/api/coprocessor/update", { method: "POST" });
-      showToast(data.message || "Update started", false);
-    } catch (e) {
-      showToast(e.message, true);
-    } finally {
-      $("coprocUpdate").disabled = false;
     }
   });
   $("factoryReset").addEventListener("click", async () => {
@@ -1192,10 +1370,8 @@
     const img = await createImageBitmap(file);
     try {
       const c = document.createElement("canvas");
-      /* The device's screen (older firmware: the 3.5" deck). */
-      const s = (config && config.screen) || { w: 480, h: 320 };
-      c.width = o === "l" ? s.w : s.h;
-      c.height = o === "l" ? s.h : s.w;
+      c.width = o === "l" ? 480 : 320;
+      c.height = o === "l" ? 320 : 480;
       const scale = Math.max(c.width / img.width, c.height / img.height),
         w = img.width * scale,
         h = img.height * scale;
@@ -1326,6 +1502,158 @@
     if (dailyRunning || ++dailyTick % 5 === 0) dailyStatus();
   }, 2000);
 
+  /* Bambu-capable firmware only: printer is a normal portal page, not /printer.
+     The backend still owns credentials and endpoints; no access code comes back
+     from its status API. Never update form fields during polling after initial load. */
+  // Printer data is untrusted, even when it comes from the device itself.
+  // Build the AMS view with text nodes, not HTML interpolation: corrupted or
+  // exceptionally long filament names must never flood/reshape the portal.
+  let printerPolling = false;
+  // Temperatures are numeric fields; keep this formatter separate from
+  // the text-only, bounded AMS filament-name renderer.
+  const printerTemp = (value, target) => {
+    const n = Number(value);
+    const t = Number(target);
+    return value != null && Number.isFinite(n)
+      ? n.toFixed(1) + "°C" +
+        (target != null && Number.isFinite(t) ? " / " + t.toFixed(0) + "°C" : "")
+      : "—";
+  };
+  const printerText = (value, max = 40) => {
+    if (typeof value !== "string" && typeof value !== "number") return "";
+    const text = String(value).trim();
+    if (!text || text.length > max ||
+        /[{}[\]\\\\]/.test(text)) return "";
+    return text;
+  };
+  function renderPrinterAms(units) {
+    const target = $("prAms");
+    target.replaceChildren();
+    if (!Array.isArray(units) || !units.length) {
+      target.textContent = "No AMS data yet";
+      return;
+    }
+    for (const unit of units.slice(0, 6)) {
+      if (!unit || typeof unit !== "object") continue;
+      const card = document.createElement("div");
+      card.className = "pr-ams-unit";
+      const title = document.createElement("strong");
+      const humidity = Number(unit.humidity);
+      title.textContent = "AMS " + (printerText(unit.unit, 3) || "—") +
+        " · humidity " + (Number.isFinite(humidity) && humidity >= 0 && humidity <= 100
+            ? humidity + "%" : "—");
+      card.appendChild(title);
+      for (const tray of (Array.isArray(unit.slots) ? unit.slots.slice(0, 4) : [])) {
+        if (!tray || typeof tray !== "object") continue;
+        const line = document.createElement("div");
+        line.className = "pr-ams-slot";
+        const dot = document.createElement("span");
+        dot.className = "pr-ams-dot";
+        dot.style.background = /^#[0-9a-fA-F]{6}$/.test(tray.colour || "")
+          ? tray.colour : "#444963";
+        const label = document.createElement("span");
+        const material = tray.present ? printerText(tray.type, 32) || "Loaded" : "Empty";
+        label.textContent = "Slot " + (printerText(tray.slot, 2) || "?") + ": " + material;
+        line.append(dot, label);
+        card.appendChild(line);
+      }
+      target.appendChild(card);
+    }
+  }
+
+  async function refreshPrinter() {
+    if (!printerAvailable || printerPolling) return;
+    printerPolling = true;
+    try {
+      const data = await getJson("/api/office/bambu");
+      $("prState").textContent = data.status || "unknown";
+      $("prFault").textContent = data.error || "";
+      $("prJob").textContent = data.job || data.state || "No job";
+      $("prProgress").value = Math.min(100, Math.max(0, Number(data.progress) || 0));
+      $("prPct").textContent = (data.progress ?? 0) + "%";
+      $("prTime").textContent = data.remaining_minutes != null
+        ? Math.floor(data.remaining_minutes / 60) + "h " + (data.remaining_minutes % 60) + "m" : "—";
+      $("prLayer").textContent = (data.layer ?? "—") + " / " + (data.total_layers ?? "—");
+      $("prNozzle").textContent = printerTemp(data.nozzle, data.nozzle_target);
+      $("prBed").textContent = printerTemp(data.bed, data.bed_target);
+      $("prChamber").textContent = printerTemp(data.chamber);
+      $("prLightOn").disabled = $("prLightOff").disabled = data.status !== "online";
+      renderPrinterAms(data.ams);
+      if (!printerConfigLoaded) {
+        printerConfigLoaded = true;
+        $("prEnabled").checked = Boolean(data.enabled);
+        $("prSource").value = data.source || "lan";
+        $("prAddress").value = data.address || "";
+        $("prDisplayName").value = data.display_name || "";
+        $("prHasCode").textContent = data.access_code_set ? "(saved)" : "(not set)";
+        // Serial number is write-only in the backend; never invent its contents.
+        $("prSerial").placeholder = data.serial_set
+          ? "Saved — re-enter to change" : "Printer serial number";
+      }
+    } catch (e) {
+      $("prState").textContent = "Unavailable";
+      $("prFault").textContent = e.message;
+    } finally {
+      printerPolling = false;
+    }
+  }
+  $("prConfig").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = $("prSave");
+    const body = new URLSearchParams();
+    body.set("enabled", $("prEnabled").checked ? "1" : "0");
+    for (const [key, id] of [["source", "prSource"], ["address", "prAddress"],
+                            ["display_name", "prDisplayName"],
+                            ["serial", "prSerial"], ["code", "prCode"]]) {
+      body.set(key, $(id).value);
+    }
+    button.disabled = true;
+    try {
+      await getJson("/api/office/bambu", {method:"POST", body});
+      $("prCode").value = "";
+      $("prMessage").textContent = "Printer settings saved";
+      await refreshPrinter();
+      refreshOverviewBambuConnection();
+    } catch (e) {
+      $("prMessage").textContent = "Not saved: " + e.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+  $("prDiscover").addEventListener("click", async () => {
+    try {
+      const data = await getJson("/api/office/bambu/discover");
+      const found = data.printers || [];
+      $("prMessage").textContent = found.map(p => p.name + ": " + p.serial)
+        .join(" · ") || "No Bambu printers found in Home Assistant";
+      if (found.length === 1) {
+        $("prSerial").value = found[0].serial;
+        $("prSource").value = "ha";
+        if (!$("prDisplayName").value.trim() && found[0].name)
+          $("prDisplayName").value = found[0].name;
+      }
+    } catch (e) {
+      $("prMessage").textContent = e.message;
+    }
+  });
+  for (const [id, on] of [["prLightOn","1"], ["prLightOff","0"]]) {
+    $(id).addEventListener("click", async () => {
+      try {
+        await getJson("/api/office/bambu/light", {
+          method: "POST", body: new URLSearchParams({on}),
+        });
+        await refreshPrinter();
+      } catch (e) {
+        $("prMessage").textContent = e.message;
+      }
+    });
+  }
+  setInterval(() => {
+    if (printerAvailable && !document.hidden &&
+        document.querySelector(".page.active")?.dataset.page === "printer")
+      refreshPrinter();
+  }, 4000);
+
   let initial = "overview";
   try {
     initial = localStorage.getItem("sn_page") || "overview";
@@ -1342,8 +1670,11 @@
       initHelpTips();
     });
   }).observe(document.body, { childList: true, subtree: true });
-  showPage(initial);
-  loadConfig();
+  (async () => {
+    await loadConfig();
+    if (initial === "printer" && !printerAvailable) initial = "overview";
+    await showPage(initial);
+  })();
   pollStatus();
   refreshPreview();
   setInterval(pollStatus, 2000);

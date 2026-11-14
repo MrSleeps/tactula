@@ -20,6 +20,13 @@
 .dk-tile.sel{border-color:var(--accent)}
 .dk-more{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px 12px;padding-top:10px;border-top:1px solid var(--line)}
 .dk-more .field{margin:0}.dk-sec,.dk-grp.flat>.field::before{font:600 11px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}.dk-sec{grid-column:1/-1}.dk-grp.flat{display:contents}.dk-grp.flat>.field::before{content:"\\a0";display:block;margin-bottom:8px}.dk-grp.flat>.field:first-child::before{content:var(--t)}.dk-grp.wide{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px 12px;min-width:0}.dk-more .field-label{display:flex;align-items:center;min-height:17px;margin-bottom:6px}.dk-more .field-label .tip-btn{width:15px;height:15px;margin-left:6px;font-size:10px}.dk-warn{margin-left:8px;color:var(--warn);font-weight:600;text-transform:none;letter-spacing:0}.dk-more .field-hint.tip{margin:0 0 6px}.dk-oib i{font:18px dkmdi, dkcbi;font-style:normal;line-height:1;margin-right:6px;vertical-align:-3px}.dk-more .wide{grid-column:1/-1}.dk-more select,.dk-more input,.dk-more textarea{max-width:none;padding:7px 10px;font-size:13px}
+.dk-more .dk-hide-name{display:flex;align-items:flex-start;gap:9px;padding:0;margin:0;border:0;min-width:0}
+.dk-more .dk-hide-name .check-box{width:16px;height:16px;border-radius:4px;margin-top:1px}
+.dk-more .dk-hide-name .check-text{display:block;min-width:0}
+.dk-more .dk-hide-name .check-text strong{display:block;font:10px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--faint)}
+.dk-more .dk-hide-name .ct-hint{font:12px/1.55 var(--sans);color:var(--dim);margin-top:6px}
+.dk-more .dk-hide-name input[type="checkbox"]{position:absolute;width:0;height:0;padding:0;opacity:0}
+.dk-more .dk-hide-name input:focus-visible + .check-box{outline:2px solid var(--accent);outline-offset:3px}
 .dk-sw{gap:6px;flex-wrap:wrap}.dk-sw input[type=color]{width:40px;height:30px;padding:2px;border:1px solid var(--line-2);border-radius:8px;background:var(--card);cursor:pointer}
 .dk-swb{width:24px;height:24px;padding:0;border:2px solid transparent;border-radius:50%;cursor:pointer}.dk-swb.on{border-color:var(--ink)}
 .dk-more textarea{width:100%;min-height:58px;font:12px var(--mono);background:var(--card);color:var(--ink);border:1px solid var(--line-2);border-radius:var(--r-md);resize:vertical}
@@ -29,8 +36,11 @@
 .dk-gt.sel{outline:2px solid var(--accent);outline-offset:1px}.dk-gt.row{flex-direction:row;align-items:center;justify-content:flex-start;gap:6px;padding:2px 8px}.dk-gt.ic b{display:none}.dk-gt.drag{z-index:5;opacity:.85;cursor:grabbing;box-shadow:0 8px 20px rgba(0,0,0,.35)}
 .dk-gt i{font:20px dkmdi, dkcbi;font-style:normal;line-height:1}.dk-chip{display:grid;place-items:center;flex:none;width:26px;height:26px;border-radius:50%}.dk-chip i{font-size:17px}.dk-chip.pl i{font-size:23px}.dk-gt.row .dk-chip{width:20px;height:20px}.dk-gt.row .dk-chip i{font-size:14px}.dk-gt i.tx{font:600 11px var(--mono)}
 .dk-gt b{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dk-gt-nav{justify-content:center;align-items:center}
+.dk-gt-nav .dk-chip{display:grid;place-items:center;width:100%;height:100%;background:transparent!important}
+.dk-gt-nav .dk-chip i{font-size:27px}
 .dk-rs{position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;touch-action:none;background:linear-gradient(135deg,transparent 55%,var(--mute) 55%);opacity:.7}
-.dk-ghost{z-index:4;border:2px solid var(--ok);border-radius:8px;background:rgba(92,201,167,.15);pointer-events:none}.dk-ghost.bad{border-color:var(--err);background:rgba(229,83,75,.15)}
+.dk-ghost{z-index:4;border:2px solid var(--accent);border-radius:8px;background:var(--accent-soft);pointer-events:none}.dk-ghost.bad{border-color:var(--err);background:rgba(229,83,75,.15)}
 .dk-tray{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}.dk-tray .dk-gt{width:120px;height:60px}
 .dk-save{position:sticky;bottom:0;display:flex;align-items:center;gap:12px;margin:18px -24px -22px;padding:12px 24px;background:var(--card);border-top:1px solid var(--line);border-radius:0 0 var(--r-lg) var(--r-lg)}
 .dk-save .dk-msg{margin-right:auto;font:12px var(--mono);color:var(--dim)}
@@ -44,16 +54,18 @@
 .dk-ent b{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dk-ent small{font:11px var(--mono);color:var(--dim)}.dk-ent .st{font:12px var(--mono);color:var(--mute);align-self:center}
 .dk-empty{padding:22px;text-align:center;color:var(--dim);font-size:13px}
 .dk-ic{cursor:pointer;border:0;padding:0}.dk-ic.mdi{font:22px dkmdi, dkcbi;line-height:1}
-.dk-igrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:6px;overflow-y:auto;padding:10px}
+.dk-igrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:6px;overflow-y:auto;padding:10px;align-content:start;flex:1;min-height:0}
 .dk-ibtn{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 4px;border:1px solid transparent;border-radius:var(--r-md);background:none;color:var(--ink);cursor:pointer;min-width:0}
 .dk-ibtn:hover{background:var(--card-2)}.dk-ibtn.on{border-color:var(--accent);background:var(--accent-soft)}
 .dk-ibtn i{font:28px dkmdi, dkcbi;font-style:normal;line-height:1}.dk-ibtn small{font:10px var(--mono);color:var(--dim);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dk-tile.sel{cursor:default}.dk-tiles>.dk-tile:not(.sel){cursor:pointer}
-@media(min-width:1600px){.content-inner:has(>#deckSection.active){max-width:1560px}
-#deckSection.page.active{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:18px}#deckSection>.page-header,#deckSection>#dkPagesCard{grid-column:1/-1}#dkPage>:not(.dk-split):not(.dk-pset){max-width:872px}
-.dk-pset{display:grid;grid-template-columns:minmax(0,760px) minmax(0,1fr);gap:0 24px;align-items:start}
-.dk-split{display:grid;grid-template-columns:minmax(0,760px) minmax(0,1fr);gap:24px;align-items:start;margin-top:12px}
-.dk-left{position:sticky;top:calc(var(--topbar-h) + 12px)}.dk-left .dk-grid{margin-top:0;max-width:760px}}
+/* Two-pane page editor on large desktops; all existing controls remain in the DOM. */
+@media(min-width:1500px){
+  .content-inner:has(> #deckSection.active){max-width:1560px}
+  #dkPage .dk-split{display:grid;grid-template-columns:minmax(0, min(48%, 700px)) minmax(0, 1fr);column-gap:24px;align-items:start}
+  #dkPage .dk-left{position:sticky;top:calc(var(--topbar-h, 56px) + 12px);min-width:0}
+  #dkPage .dk-right{min-width:0}
+  #dkPage .dk-left .dk-grid{max-width:700px;margin-top:0}
+}
 @media(max-width:560px){.dk-tile{grid-template-columns:36px minmax(0,1fr)}.dk-tact{grid-column:1/-1}.dk-save{margin:18px -16px -18px;padding:12px 16px}}
 `;
   const st = document.createElement("style");
@@ -61,40 +73,30 @@
   document.head.appendChild(st);
   const sec = document.getElementById("deckSection");
   if (!sec) return;
-  sec.innerHTML = `<div class="page-header"><h1 class="page-h1">Deck</h1><p class="page-lede">Home Assistant connection and the pages and tiles of the touch deck. Changes apply on Save without a restart.</p></div>
-<div class="card"><div class="card-head"><h2 class="card-title">Home Assistant</h2><span class="tag" id="dkHaVer">-</span></div>
-<div class="grid-2"><div class="field"><label class="field-label" for="dkHaUrl">Address</label><input type="text" id="dkHaUrl" placeholder="http://192.168.0.7:8123" autocomplete="off"></div>
-<div class="field"><label class="field-label" for="dkHaToken">Long-lived access token</label><input type="password" id="dkHaToken" autocomplete="off" placeholder="paste the token"><p class="field-hint">HA profile, Security tab, Long-lived access tokens. Stored only on the device, never shown again.</p></div></div>
-<div class="dk-row"><button type="button" class="btn btn-accent" id="dkHaSave">Save and connect</button><button type="button" class="btn" id="dkHaForget">Forget</button></div>
-<div class="dk-status"><span class="dk-dot" id="dkHaDot"></span><span id="dkHaState">checking...</span></div></div>
+  sec.innerHTML = `<div class="page-header"><h1 class="page-h1">Deck</h1><p class="page-lede">Build and edit your touchscreen pages and tiles. Configure the Home Assistant connection under Home Assistant in the sidebar.</p></div>
 <div class="card"><div class="card-head"><h2 class="card-title">Icons</h2><span class="tag" id="dkIcTag">-</span></div>
-<p class="field-hint">Material Design Icons, the set Home Assistant uses (mdi:...). The font file (about 1.3 MB) is stored on the device; "Install" downloads it in this browser and sends it to the device. Without it the deck shows a few built-in symbols.</p>
-<div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkIcNet">Install MDI 7.4.47</button><button type="button" class="btn" id="dkIcFile">Upload .ttf file</button><input type="file" id="dkIcInput" accept=".ttf" hidden></div>
+<p class="field-hint">Material Design Icons, the set Home Assistant uses (mdi:...). The font file (about 1.3 MB) is stored on the device; Installation or updates download the target font in your browser and send it to the device. Removing it leaves saved tile selections intact but icons from that pack will no longer render.</p>
+<div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkIcNet">Install MDI 7.4.47</button><button type="button" class="btn" id="dkIcRemove" disabled>Remove MDI</button><button type="button" class="btn" id="dkIcFile">Upload .ttf file</button><input type="file" id="dkIcInput" accept=".ttf" hidden></div>
 <div class="dk-status"><span class="dk-dot" id="dkIcDot"></span><span id="dkIcState">checking...</span></div>
-<h3 class="card-title" style="margin-top:18px">Brand icons</h3>
-<p class="field-hint">Custom Brand Icons (phu:) by elax46, installed from <a href="https://github.com/elax46/custom-brand-icons" target="_blank" rel="noopener">their GitHub</a>, not bundled. Needs a mounted microSD card. Enable it in <a href="#" data-page="maintenance">Maintenance &gt; microSD card</a>. You can also upload a .js subset from the upstream Icon Finder.</p>
-<div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkBrNet" disabled>Install latest from GitHub</button><button type="button" class="btn" id="dkBrFile" disabled>Upload .js files</button><button type="button" class="btn" id="dkBrRemove" disabled>Remove</button><input type="file" id="dkBrInput" accept=".js" multiple hidden></div>
+<div class="card-head" style="margin-top:18px;margin-bottom:10px"><h3 class="card-title">Brand icons</h3><span class="tag" id="dkBrTag">-</span></div>
+<p class="field-hint">Custom Brand Icons (phu:) by elax46, installed from <a href="https://github.com/elax46/custom-brand-icons" target="_blank" rel="noopener">their GitHub</a>, not bundled. Needs a mounted microSD card. Enable it in <a href="#" data-page="maintenance">Maintenance &gt; microSD card</a>. Install latest now downloads all icon chunks automatically. Upload .js files accepts a release index with all its cbi-N.js chunks, individual chunks, or older single-file Icon Finder subsets.</p>
+<div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkBrNet" disabled>Install latest from GitHub</button><button type="button" class="btn" id="dkBrFile" disabled>Upload .js files</button><button type="button" class="btn" id="dkBrBrowse" disabled>Browse &amp; search</button><button type="button" class="btn" id="dkBrExport" disabled>Download names</button><button type="button" class="btn" id="dkBrRemove" disabled>Remove</button><input type="file" id="dkBrInput" accept=".js" multiple hidden></div>
 <div class="dk-status"><span class="dk-dot" id="dkBrDot"></span><span id="dkBrState">checking...</span></div></div>
-<div class="card" id="dkPrnCard"><div class="card-head"><h2 class="card-title">Printers</h2><span class="tag" id="dkPrnTag">Bambu Lab</span></div>
-<p class="field-hint">Source Printer LAN talks to the printer directly: it must be in LAN mode or have LAN access on, and its serial and access code are stored only on the device. Source Home Assistant reads a printer already added to the Bambu Lab integration (ha-bambulab) - nothing else to enter. With a plug (an HA switch), the printer's pages show only while the plug is on. Printers and pages apply on "Save to device" below; Save serial and code applies at once.</p>
-<div id="dkPrnBody">
-<div id="dkPrn"></div><div class="dk-row"><button type="button" class="btn" id="dkPrnAdd">+ Add printer</button></div></div>
-<div class="dk-save"><span class="dk-msg" id="dkPrnMsg">No changes</span><button type="button" class="btn btn-accent" id="dkPrnSave">Save to device</button></div></div>
-<div class="card" id="dkPagesCard"><div class="card-head"><h2 class="card-title">Pages and tiles</h2></div>
+<div class="card"><div class="card-head"><h2 class="card-title">Pages and tiles</h2></div>
 <label class="check-row standalone" style="margin-bottom:14px"><input type="checkbox" id="dkHeader"><span class="check-box"></span><span class="check-text"><strong>Show the top bar</strong><span class="ct-hint">Page name, WiFi and clock above the tiles. Also switchable in the quick panel on the device.</span></span></label>
 <div class="dk-tabs" id="dkTabs"></div><div id="dkPage"></div>
 <div class="dk-save"><span class="dk-msg" id="dkMsg">No changes</span><button type="button" class="btn btn-accent" id="dkSave">Save to device</button></div></div>`;
   document.body.insertAdjacentHTML(
     "beforeend",
     `<div class="dk-modal" id="dkPicker"><div class="dk-sheet"><div class="dk-head">
-<div class="dk-row"><input type="text" id="dkQ" placeholder="Search, or type a full entity id" autocomplete="off" style="flex:1"><button type="button" class="btn" id="dkPickClose">Close</button></div>
+<div class="dk-row"><input type="text" id="dkQ" placeholder="Search by name or entity id" autocomplete="off" style="flex:1"><button type="button" class="btn" id="dkPickClose">Close</button></div>
 <div class="dk-chips" id="dkDomains"></div>
 <div class="dk-status"><span id="dkListInfo">-</span><button type="button" class="btn" id="dkListUpdate" style="margin-left:auto;padding:5px 10px">Update from HA</button></div></div>
 <div class="dk-list" id="dkEnts"></div></div></div>
 <div class="dk-modal" id="dkIcPick"><div class="dk-sheet"><div class="dk-head">
 <div class="dk-row"><input type="text" id="dkIcQ" placeholder="Search icons, e.g. lamp, fan, thermometer" autocomplete="off" style="flex:1"><button type="button" class="btn" id="dkIcAuto">Automatic</button><button type="button" class="btn" id="dkIcNone">None</button><button type="button" class="btn" id="dkIcClose">Close</button></div>
 <div class="dk-status"><span id="dkIcInfo">-</span></div></div>
-<div class="dk-igrid" id="dkIcGrid"></div></div></div>`,
+<div class="dk-igrid" id="dkIcGrid"></div><div class="dk-row" style="justify-content:center;padding:8px 12px 14px"><button type="button" class="btn" id="dkIcMore" hidden>Show more</button></div></div></div>`,
   );
 
   const $ = (id) => document.getElementById(id);
@@ -134,277 +136,38 @@
     ["binary_sensor", "Binary sensors"],
   ];
   const COL = {
-    light: "#F6C56B",
-    switch: "#5CC9A7",
-    fan: "#5CC9A7",
-    input_boolean: "#5CC9A7",
-    scene: "#B3A6FF",
-    script: "#B3A6FF",
-    lock: "#9DB8FF",
-    cover: "#9DB8FF",
+    light: "#B8ADFF",
+    switch: "#927DFF",
+    fan: "#927DFF",
+    input_boolean: "#927DFF",
+    scene: "#7664E4",
+    script: "#7664E4",
+    lock: "#85C4FF",
+    cover: "#85C4FF",
   };
   let deck = null,
     cur = 0,
     ents = null,
     entMap = {},
-    entsErr = "",
-    domBefore = null,
-    entsBusy = false,
     dirty = false,
     pickFor = -1,
-    pickAuto = false,
     dom = "",
-    pcm = [],
     ori = null,
     sel = -1,
     more = -1;
-  const PAL = ["#3987E5", "#00A35C", "#D55181", "#C98500", "#199E70", "#D95926", "#9085E9", "#E66767"];
-  /* The device's landscape screen and grid limits (older firmware: the 3.5" deck). */
-  let scr = { w: 480, h: 320, gridMax: 6, grid: { landscape: [4, 3], portrait: [3, 4] } };
-  async function loadPc() {
-    try {
-      const c = await api("/api/config");
-      if (c.screen) scr = c.screen;
-      pcm = (c.metrics || []).slice().sort((a, b) => a.id - b.id);
-      pcs = c.pcs || [];
-      if (!ori && c.display) ori = c.display.rotation % 2 ? "landscape" : "portrait";
-    } catch (e) {
-      pcm = [];
-      pcs = [];
-    }
-  }
-  /* Known PCs (first = default); a metric tile's PC and its metric list. */
-  let pcs = [];
-  const pcOf = (t) => pcs.find((x) => x.id === (t.pc || "")) || (!t.pc && pcs[0]) || null;
-  const mlist = (t) => {
-    const p = pcOf(t);
-    return p ? (p.metrics || []).slice().sort((a, b) => a.id - b.id) : pcm;
-  };
-  function pcSel(t, i) {
-    if (pcs.length < 2 && !t.pc) return "";
-    const cur = pcOf(t);
-    return (
-      '<select data-pc="' +
-      i +
-      '">' +
-      pcs
-        .map(
-          (x) =>
-            '<option value="' +
-            esc(x.id) +
-            '"' +
-            (cur === x ? " selected" : "") +
-            ">" +
-            esc(x.name) +
-            (x.online ? "" : " (offline)") +
-            "</option>",
-        )
-        .join("") +
-      (cur ? "" : "<option selected>Unknown PC</option>") +
-      "</select>"
-    );
-  }
-  function pcList() {
-    if (!pcs.length) return "";
-    return (
-      '<p class="field-hint">PCs: ' +
-      pcs
-        .map(
-          (x, j) =>
-            esc(x.name) +
-            (j ? "" : " (default)") +
-            " - " +
-            (x.online ? "online" : "offline") +
-            ' <a href="#" data-fpc="' +
-            esc(x.id) +
-            '">forget</a>',
-        )
-        .join(", ") +
-      "</p>"
-    );
-  }
-  function metricRow(t, i) {
-    const ml = mlist(t),
-      m = ml.find((x) => x.id === t.metric);
-    const col = t.color || PAL[((t.metric || 1) - 1) % 8],
-      cp = iconCp(t.icon);
-    const opts =
-      ml
-        .map(
-          (x) =>
-            '<option value="' +
-            x.id +
-            '"' +
-            (x.id === t.metric ? " selected" : "") +
-            ">" +
-            esc(x.name) +
-            " (" +
-            esc(Math.round(x.value * 10) / 10) +
-            " " +
-            esc(x.unit) +
-            ")</option>",
-        )
-        .join("") +
-      (m
-        ? ""
-        : '<option value="' + t.metric + '" selected>#' + t.metric + " (not in the last packet)</option>");
-    return (
-      '<div class="dk-tile' +
-      (i === sel ? " sel" : "") +
-      '"><button type="button" class="dk-ic' +
-      (cp ? " mdi" : "") +
-      '" data-ic="' +
-      i +
-      '" title="' +
-      esc(cp ? t.icon : "Choose an icon") +
-      '" style="background:' +
-      col +
-      '">' +
-      (cp ? String.fromCodePoint(cp) : "PC") +
-      '</button><div class="dk-tmain"><input type="text" data-l="' +
-      i +
-      '" value="' +
-      esc(t.label || "") +
-      '" placeholder="' +
-      esc(m ? m.name : "Metric") +
-      '"><div class="dk-tsub">' +
-      (pcs.length > 1 && pcOf(t) ? esc(pcOf(t).name) + " " : "PC ") +
-      "metric #" +
-      t.metric +
-      (m ? " - " + esc(Math.round(m.value * 10) / 10) + " " + esc(m.unit) : "") +
-      "</div></div>" +
-      '<div class="dk-tact">' +
-      pcSel(t, i) +
-      '<select data-m="' +
-      i +
-      '">' +
-      opts +
-      '</select><select data-st="' +
-      i +
-      '">' +
-      [
-        ["number", "Number"],
-        ["chart", "Chart"],
-        ["bar", "Bar"],
-      ]
-        .map(
-          (o) =>
-            '<option value="' +
-            o[0] +
-            '"' +
-            ((t.style || "number") === o[0] ? " selected" : "") +
-            ">" +
-            o[1] +
-            "</option>",
-        )
-        .join("") +
-      "</select>" +
-      sizeSel(t, i) +
-      '<button type="button" class="btn' +
-      (i === more ? " on" : "") +
-      '" data-mo="' +
-      i +
-      '" title="More options">&#8943;</button><button type="button" class="btn" data-u="' +
-      i +
-      '" title="Move up">&#8593;</button><button type="button" class="btn" data-x="' +
-      i +
-      '" title="Remove">&#215;</button></div>' +
-      (i === more ? '<div class="dk-more">' + colorField(t, i) + whenField(t, i) + "</div>" : "") +
-      "</div>"
-    );
-  }
-  /* PC volume slider: the companion sets the master volume; a tap mutes. */
-  const isPcVol = (t) => t.type === "slider" && t.control === "pc-volume";
-  function pcVolRow(t, i) {
-    const cp = tileCp(t);
-    return (
-      '<div class="dk-tile' +
-      (i === sel ? " sel" : "") +
-      '"><button type="button" class="dk-ic' +
-      (cp ? " mdi" : "") +
-      '" data-ic="' +
-      i +
-      '" title="' +
-      esc(t.icon || "Choose an icon") +
-      '" style="background:' +
-      (t.color || "#7DB5FF") +
-      '">' +
-      (cp ? String.fromCodePoint(cp) : "PC") +
-      '</button><div class="dk-tmain"><input type="text" data-l="' +
-      i +
-      '" value="' +
-      esc(t.label || "") +
-      '" placeholder="PC volume"><div class="dk-tsub">' +
-      (pcs.length > 1 && pcOf(t) ? esc(pcOf(t).name) + " v" : "V") +
-      "olume: drag sideways to set it, tap mutes</div></div>" +
-      '<div class="dk-tact">' +
-      (pcs.length > 1
-        ? '<select data-vpc="' +
-          i +
-          '">' +
-          pcs.map((x) => opt(x.id, x.name, pcOf(t) === x)).join("") +
-          "</select>"
-        : "") +
-      sizeSel(t, i) +
-      '<button type="button" class="btn' +
-      (i === more ? " on" : "") +
-      '" data-mo="' +
-      i +
-      '" title="More options">&#8943;</button><button type="button" class="btn" data-u="' +
-      i +
-      '" title="Move up">&#8593;</button><button type="button" class="btn" data-x="' +
-      i +
-      '" title="Remove">&#215;</button></div>' +
-      (i === more ? '<div class="dk-more">' + colorField(t, i) + whenField(t, i) + "</div>" : "") +
-      "</div>"
-    );
-  }
-  /* "when" on a printer: key = tile index or "p" for the page. */
-  const whenKind = (w) => (!w ? "" : typeof w === "string" ? w : w.printer !== undefined ? "printer" : "entity");
-  const prnWhenHtml = (w, key) =>
-    '<div class="field">' +
-    lbl("Printer") +
-    '<select data-wpr="' +
-    key +
-    '">' +
-    (deck.printers || []).map((x) => opt(x.id, x.name || x.id, x.id === w.printer)).join("") +
-    "</select></div>" +
-    '<div class="field">' +
-    lbl("While it") +
-    '<div class="dk-row"><select data-wpst="' +
-    key +
-    '" style="width:auto">' +
-    opt("on", "is on", w.state !== "printing") +
-    opt("printing", "prints", w.state === "printing") +
-    "</select>" +
-    (w.state === "printing"
-      ? '<span class="dk-tsub" style="margin:0 6px">+</span><input type="number" min="0" max="1440" data-wpi="' +
-        key +
-        '" value="' +
-        (w.idle | 0) +
-        '" style="width:80px"><span class="dk-tsub" style="margin:0 0 0 6px">min after</span>'
-      : "") +
-    "</div></div>";
-  const prnWhenNew = (id) => ({ printer: id || ((deck.printers || [])[0] || {}).id || "", state: "printing", idle: 30 });
   /* A page can follow a condition too; "auto" slides to it when it appears. */
   function pageWhenField(p) {
     const w = p.when,
-      k = whenKind(w);
+      k = !w ? "" : typeof w === "string" ? w : "entity";
     let h =
       '<div class="grid-2"><div class="field"><label class="field-label">Page shown</label><select id="dkPWh">' +
       [
         ["", "Always"],
-        ["pc-on", "Only while the PC is on"],
-        ["pc-off", "Only while the PC is off"],
-        ["sound-on", "Only while the PC plays sound"],
-        ["sound-off", "Only while the PC is silent"],
         ["entity", "Only while an entity is in a state"],
-        ["printer", "Only while a printer is on or printing"],
       ]
         .map((o) => opt(o[0], o[1], k === o[0]))
         .join("") +
       "</select></div>";
-    if (k === "printer") h += prnWhenHtml(w, "p");
     if (k === "entity") {
       const st = String(w.state || ""),
         n = st[0] === "!";
@@ -423,27 +186,19 @@
       h +=
         '<label class="check-row standalone"><input type="checkbox" id="dkPAuto"' +
         (p.auto ? " checked" : "") +
-        '><span class="check-box"></span><span class="check-text"><strong>Switch to it when it appears</strong><span class="ct-hint">The deck slides to this page when the condition starts to hold (the PC counts as on with its first packet), and back to the page shown before when it stops. A page that goes away while shown always hands over to another page first.</span></span></label>';
+        '><span class="check-box"></span><span class="check-text"><strong>Switch to it when it appears</strong><span class="ct-hint">The deck slides to this page when the condition starts to hold, and back to the page shown before when it stops. A page that goes away while shown always hands over to another page first.</span></span></label>';
     return h;
   }
   /* Tile colours: a picker, presets, Auto = the key left out of deck.json. */
+  // Brand colours first; extra swatches stay available for customised tiles,
+  // including true light colour, warning and other user-selectable colours.
   const SW = [
-    "#F6C56B",
-    "#FFB35C",
-    "#FF8A7A",
-    "#E66767",
-    "#D55181",
-    "#B3A6FF",
-    "#9085E9",
-    "#7DB5FF",
-    "#3987E5",
-    "#5CC9A7",
-    "#00A35C",
-    "#C98500",
+    "#927DFF", "#B8ADFF", "#7664E4", "#6754D5",
+    "#48A5FF", "#85C4FF", "#347CF2", "#2A2F55",
+    "#FF8A7A", "#E66767", "#F0B56B", "#55D3A5",
   ];
-  const TXT = ["#FFFFFF", "#E6E8EC", "#1D2129"];
-  const autoCol = (t) =>
-    t.type === "metric" ? PAL[((t.metric || 1) - 1) % 8] : COL[domainOf(t.entity)] || "#7DB5FF";
+  const TXT = ["#FFFFFF", "#EDF0F8", "#242940"];
+  const autoCol = (t) => COL[domainOf(t.entity)] || "#48A5FF";
   /* WCAG contrast against a dark tile (Midnight, Glass) and a light one (Daylight). */
   const lum = (h) => {
     const v = [1, 3, 5]
@@ -459,7 +214,7 @@
   function readHint(c) {
     if (!c) return "";
     const w = [];
-    if (contrast(c, "#1A1D23") < 3) w.push("Midnight and Glass");
+    if (contrast(c, "#171E2C") < 3) w.push("Midnight and Glass");
     if (contrast(c, "#FFFFFF") < 3) w.push("Daylight");
     return w.length ? "Hard to read on " + w.join(" and ") : "";
   }
@@ -524,7 +279,7 @@
     if (wide) return '<div class="dk-grp wide">' + secH(title) + inner + "</div>";
     return '<div class="dk-grp flat" style="--t:&quot;' + title + '&quot;">' + inner + "</div>";
   }
-  const canOn = (t) => !["metric", "sensor", "clock", "media", "viz"].includes(t.type);
+  const canOn = (t) => !["metric", "sensor", "clock", "media", "climate"].includes(t.type);
   /* Colours, then the on state; icon colours sit with them, the icon's style in iconFields. */
   function colorField(t, i) {
     const tx = TXT.concat(SW),
@@ -532,15 +287,8 @@
     if (t.type === "clock")
       return grp(
         "Colours",
-        colRow(t, i, "color", "Time colour", "#E6E8EC", theme, { sw: tx, warn: readHint(t.color) }) +
-          colRow(t, i, "textColor", "Date colour", "#E6E8EC", theme, { sw: tx, warn: readHint(t.textColor) }) +
-          lookOff(t, i),
-        true,
-      );
-    if (t.type === "viz")
-      return grp(
-        "Colours",
-        colRow(t, i, "color", "Colour", "#7DB5FF", "Bars or trace colour.", { sw: tx, warn: readHint(t.color) }) +
+        colRow(t, i, "color", "Time colour", "#EDF0F8", theme, { sw: tx, warn: readHint(t.color) }) +
+          colRow(t, i, "textColor", "Date colour", "#EDF0F8", theme, { sw: tx, warn: readHint(t.textColor) }) +
           lookOff(t, i),
         true,
       );
@@ -577,16 +325,16 @@
         "iconColor",
         tg ? "Off icon colour" : "Icon colour",
         t.color || autoCol(t),
-        "The icon" + (tg ? " while the tile is off" : "") + ". Auto follows Accent colour." + (tg ? "" : LIGHT_HINT(t)),
-        { extra: tg ? "" : lightBtn(t, i) },
+        "The icon" + (tg ? " while the tile is off" : "") + ". Auto follows Accent colour.",
       );
+    h += lightColorField(t, i);
     h +=
       colRow(
         t,
         i,
         "textColor",
         tg ? "Off text colour" : "Text colour",
-        "#E6E8EC",
+        "#EDF0F8",
         (m ? "The value. " : "") + theme,
         { sw: tx, warn: readHint(t.textColor) },
       ) + lookOff(t, i);
@@ -623,7 +371,7 @@
   }
   const themeBg = () => {
     const th = (document.getElementById("theme") || {}).value;
-    return th === "1" ? "#FFFFFF" : th === "2" ? "#0B0E13" : "#1A1D23";
+    return th === "1" ? "#FFFFFF" : th === "2" ? "#101622" : "#171E2C";
   };
   function lookOff(t, i) {
     return (
@@ -636,7 +384,7 @@
         "The tile background" +
           (canOn(t) ? " while it is off" : "") +
           "; in Glass the tint of its glass. Auto uses the theme.",
-        { sw: ["#1A1D23", "#0B0E13", "#FFFFFF"].concat(SW) },
+        { sw: ["#171E2C", "#101622", "#FFFFFF"].concat(SW) },
       ) +
       opRow(
         t,
@@ -664,10 +412,8 @@
         i,
         "onIconColor",
         "On icon colour",
-        t.iconStyle === "plain" ? t.onTextColor || "#221602" : t.iconColor || t.color || autoCol(t),
-        "The icon while the tile is on. Auto keeps Off icon colour in a circle; without a circle the icon takes On text colour." +
-          LIGHT_HINT(t),
-        { extra: lightBtn(t, i) },
+        t.iconStyle === "plain" ? t.onTextColor || "#FFFFFF" : t.iconColor || t.color || autoCol(t),
+        "The icon while the tile is on. Auto keeps Off icon colour in a circle; without a circle the icon takes On text colour.",
       );
     return (
       h +
@@ -676,9 +422,9 @@
         i,
         "onTextColor",
         "On text colour",
-        "#221602",
+        "#FFFFFF",
         "Text while the tile is on. Auto picks dark text, or light text in Glass when the fill is faint or dark.",
-        { sw: TXT.concat(["#221602"], SW), warn: readHint(t.onTextColor) },
+        { sw: TXT.concat(["#FFFFFF"], SW), warn: readHint(t.onTextColor) },
       ) +
       opRow(
         t,
@@ -691,18 +437,32 @@
       )
     );
   }
-  /* "Light": a light's icon takes its own colour from Home Assistant while on. */
-  const LIGHT_HINT = (t) =>
-    domainOf(t.entity) === "light"
-      ? " Light: while the light is on, the icon shows its colour from Home Assistant, dimmer at low brightness; a light without a colour only dims."
-      : "";
-  const lightBtn = (t, i) =>
-    domainOf(t.entity) === "light"
-      ? '<button type="button" class="btn' + (t.lightIcon ? " on" : "") + '" data-li="' + i + '">Light</button>'
-      : "";
+  /* A light's live colour can replace its icon colour, on background, or both. */
+  const lightColorMode = (t) => t.lightColor || (t.lightIcon ? "icon" : "fixed");
+  function lightColorField(t, i) {
+    if (domainOf(t.entity) !== "light" || !["toggle", "slider", "action"].includes(t.type)) return "";
+    const mode = lightColorMode(t);
+    return '<div class="field wide">' +
+      lbl("Follow light colour", "When on, use the light's Home Assistant colour or colour temperature. " +
+        "Background uses a readable tint; Both keeps the icon visible against that tint. " +
+        "Off-state colours stay fixed, and Home Assistant changes update automatically.") +
+      '<select data-lc="' + i + '">' +
+      opt("fixed", "Fixed colours", mode === "fixed") +
+      opt("icon", "Icon only", mode === "icon") +
+      opt("background", "Background only", mode === "background") +
+      opt("both", "Icon and background", mode === "both") +
+      "</select></div>";
+  }
+  let bedroomIcons = [];
   /* Icon: style and the on icon (buttons, switches, sliders, sensors). */
   function iconFields(t, i) {
-    let h =
+    let h = t.type === "nav" ?
+      '<div class="field wide">' +
+      lbl("Navigation icon", "Choose any installed Material Design Icon (mdi:) or Custom Brand Icon (phu:). The icon is centred on the touchscreen tile. Choosing an icon clears any selected PNG image.") +
+      '<div class="dk-row"><button type="button" class="btn" data-nav-icon="' + i +
+      '">Choose MDI / Brand icon</button>' +
+      '<span class="dk-tsub" style="margin:0;overflow-wrap:anywhere">' +
+      esc(t.icon || "Automatic arrow icon") + '</span></div></div>' :
       '<div class="field">' +
       lbl("Icon style", "Without a circle the icon fills its place.") +
       '<select data-is="' +
@@ -711,7 +471,7 @@
       opt("", "In a circle", t.iconStyle !== "plain") +
       opt("plain", "No circle", t.iconStyle === "plain") +
       "</select></div>";
-    if (t.type === "toggle") {
+    if (t.type === "toggle" || t.type === "action" || t.statusEntity) {
       const cp = iconCp(t.onIcon);
       h +=
         '<div class="field">' +
@@ -724,505 +484,73 @@
         (t.onIcon ? '<button type="button" class="btn" data-oia="' + i + '">Same</button>' : "") +
         "</div></div>";
     }
+    if (["action", "toggle", "slider", "sensor", "nav"].includes(t.type)) {
+      const files = typeof bedroomIcons !== "undefined" ? bedroomIcons : [];
+      for (const [field, label, suffix] of [
+        ["offImage", "Inactive image", "_off.png"],
+        ...(t.type === "nav" ? [] : [["onImage", "Active image", "_on.png"]]),
+      ]) {
+        const saved = t[field] || "";
+        const fallback = (t.id || "") + suffix;
+        const options = files.filter((n) => n.endsWith(suffix));
+        if (saved && !options.includes(saved)) options.unshift(saved);
+        h += '<div class="field">' +
+          lbl(t.type === "nav" ? "Navigation image (optional)" : label,
+              t.type === "nav" ?
+              "Choose a PNG uploaded under Maintenance → Bedroom custom icons (ending _off.png). This takes priority over the MDI/brand icon. Select Use icon to show the chosen icon instead." :
+              "PNG on the microSD card. Upload images under Maintenance → Bedroom custom icons. None uses the tile ID filename automatically, falling back to its MDI icon.") +
+          '<select data-img="' + i + '" data-imgkey="' + field + '">' +
+          opt("", t.type === "nav" ? "Use selected MDI / Brand icon" : "Automatic (" + fallback + ")", !saved) +
+          options.map((n) => opt(n, n, n === saved)).join("") +
+          '</select></div>';
+      }
+      h += '<p class="field-hint wide">To use a different PNG, upload it under Maintenance → Bedroom custom icons, then reopen this editor.</p>';
+    }
     return grp("Icon", h);
   }
   /* Tiles with an icon chip: icon style and icon colours apply. */
-  const iconTile = (t) => ["action", "toggle", "slider", "sensor"].includes(t.type) && !isPcVol(t);
+  const iconTile = (t) => ["action", "toggle", "slider", "sensor", "nav"].includes(t.type);
   /* The clock tile: no entity or actions, just its size and colours. */
-  /* Bambu printers: deck.printers is saved with the deck; serial and code go
-   straight to the device and are never read back. */
-  const PSHOW = [
-    ["hero", "Progress"],
-    ["nozzle", "Nozzle"],
-    ["bed", "Bed"],
-    ["chamber", "Chamber"],
-    ["filament", "Filament"],
-    ["layer", "Layer"],
-    ["light", "Light"],
-    ["ams", "AMS unit"],
-    ["slots", "All slots"],
-    ["summary", "Summary"],
+  // Saved Bambu cards are first-class editable tiles. The renderer uses
+  // `sub` to select its widget; unlike generic HA actions it has no entity.
+  const BAMBU_VIEWS = [
+    ["hero", "Print status and progress"],
+    ["nozzle_left", "Left nozzle temperature"],
+    ["nozzle_right", "Right nozzle temperature"],
+    ["bed", "Bed temperature"],
+    ["chamber", "Chamber temperature"],
+    ["temperatures", "Nozzle / bed temperatures"],
+    ["filament", "Active filament"],
+    ["layer", "Current layer"],
+    ["light", "Chamber light control"],
+    ["ams", "AMS status"],
+    ["slots", "AMS coloured slots"],
   ];
-  let prnStat = {};
-  let haPrn = null; /* printers in HA's Bambu Lab integration, null = not asked yet */
-  let haPrnErr = "";
-  /* Default device names are "<model>_<serial>": show the model, plus the serial's end when two match. */
-  function haPrnLabel(p, list) {
-    if (!p.model || p.name !== p.model + "_" + p.serial) return p.name;
-    return list.filter((q) => q.model === p.model).length > 1 ? p.model + " " + p.serial.slice(-4) : p.model;
-  }
-  async function loadHaPrinters() {
-    haPrn = [];
-    haPrnErr = "Looking in Home Assistant...";
-    renderPrinters();
-    try {
-      haPrn = (await api("/api/printers/ha")).printers || [];
-      haPrnErr = haPrn.length ? "" : "No Bambu Lab printers in Home Assistant";
-    } catch (e) {
-      haPrnErr = e.message;
-    }
-    renderPrinters();
-  }
-  const prnName = (id) => {
-    const d = (deck.printers || []).find((x) => x.id === id);
-    return d ? d.name || d.id : id;
-  };
-  function prnTileName(t) {
-    const s = PSHOW.find((x) => x[0] === (t.show || "hero"));
-    return (
-      prnName(t.printer) + " " + (s ? s[1] : "") + (t.show === "nozzle" && t.nozzle === "left" ? " L" : "")
-    );
-  }
-  function printerRow(t, i) {
-    const ps = deck.printers || [];
-    return (
-      '<div class="dk-tile' +
-      (i === sel ? " sel" : "") +
-      '"><div class="dk-ic" style="background:#F5B83D">3D</div><div class="dk-tmain"><b>Printer</b><div class="dk-row" style="margin-top:4px"><select data-pt="' +
-      i +
-      '">' +
-      ps.map((d) => opt(d.id, d.name || d.id, d.id === t.printer)).join("") +
-      '</select><select data-psh="' +
-      i +
-      '">' +
-      PSHOW.map(([v, l]) => opt(v, l, (t.show || "hero") === v)).join("") +
-      "</select>" +
-      (t.show === "nozzle"
-        ? '<select data-pnz="' +
-          i +
-          '">' +
-          opt("right", "Right / only", t.nozzle !== "left") +
-          opt("left", "Left", t.nozzle === "left") +
-          "</select>"
-        : "") +
-      (t.show === "ams"
-        ? '<select data-pau="' +
-          i +
-          '">' +
-          [1, 2, 3, 4, 5, 6].map((n) => opt(n, "Unit " + n, (t.unit || 1) === n)).join("") +
-          "</select>"
-        : "") +
-      "</div></div>" +
-      '<div class="dk-tact">' +
-      sizeSel(t, i) +
-      '<button type="button" class="btn' +
-      (i === more ? " on" : "") +
-      '" data-mo="' +
-      i +
-      '" title="More options">&#8943;</button><button type="button" class="btn" data-u="' +
-      i +
-      '" title="Move up">&#8593;</button><button type="button" class="btn" data-x="' +
-      i +
-      '" title="Remove">&#215;</button></div>' +
-      (i === more ? '<div class="dk-more">' + whenField(t, i) + "</div>" : "") +
-      "</div>"
-    );
-  }
-  function prnLine(d, s) {
-    if (d.source === "ha" && !d.serial) return "Pick the printer in Home Assistant";
-    if (!s.secret) return "Serial and access code not saved";
-    if (!s.powered) return d.plug ? "Off (plug off)" : "Off";
-    return (
-      (s.link || "") +
-      (s.err ? " - " + s.err : "") +
-      (s.state ? " - " + s.state.toLowerCase() : "") +
-      (s.state === "RUNNING" ? " " + s.progress + "%" : "")
-    );
-  }
-  async function printersStatus() {
-    if (!prnOn()) return;
-    try {
-      const r = await api("/api/printers");
-      prnStat = {};
-      (r.printers || []).forEach((s) => (prnStat[s.id] = s));
-      renderPrinters();
-    } catch (e) {}
-  }
-  /* The card's tag: printer count and how many are online. */
-  function prnTag() {
-    const ps = deck.printers || [];
-    const on = ps.filter((d) => (prnStat[d.id] || {}).link === "online").length;
-    $("dkPrnTag").textContent = ps.length
-      ? ps.length + " printer" + (ps.length > 1 ? "s" : "") + ", " + on + " online"
-      : "Bambu Lab";
-  }
-  function renderPrinters() {
-    const el = $("dkPrn");
-    if (!el) return;
-    $("dkPrnCard").classList.toggle("hidden", !prnOn());
-    const ps = deck.printers || [];
-    prnTag();
-    if (
-      ps.some(
-        (d, i) =>
-          document.activeElement &&
-          document.activeElement.closest &&
-          document.activeElement.closest('[data-prb="' + i + '"]'),
-      )
-    )
-      return;
-    el.innerHTML =
-      ps
-        .map((d, i) => {
-          const s = prnStat[d.id] || {};
-          const ha = d.source === "ha";
-          if (ha && haPrn === null) setTimeout(loadHaPrinters);
-          const haList = (haPrn || []).slice();
-          if (d.serial && !haList.some((p) => p.serial === d.serial))
-            haList.unshift({ serial: d.serial, name: d.serial, model: "" });
-          return (
-            '<div class="dk-more" data-prb="' +
-            i +
-            '" style="margin-bottom:10px">' +
-            '<div class="field"><label class="field-label">Source</label><select data-prsrc="' +
-            i +
-            '">' +
-            opt("lan", "Printer LAN", !ha) +
-            opt("ha", "Home Assistant", ha) +
-            "</select></div>" +
-            (ha
-              ? '<div class="field"><label class="field-label">Printer in Home Assistant</label><div class="dk-row" style="flex-wrap:nowrap"><select style="flex:1;min-width:0" data-prha="' +
-                i +
-                '"><option value="">' +
-                (haList.length ? "Pick a printer" : "None found") +
-                "</option>" +
-                haList.map((p) => opt(p.serial, haPrnLabel(p, haList), p.serial === d.serial)).join("") +
-                '</select><button type="button" class="btn" data-prhf="1">Refresh</button></div>' +
-                (haPrnErr ? '<p class="field-hint">' + esc(haPrnErr) + "</p>" : "") +
-                "</div>"
-              : "") +
-            [
-              ["id", "Id (letters, digits, _)", "h2c"],
-              ["name", "Name", "H2C"],
-              ...(ha ? [] : [["ip", "IP address", "192.168.0.54"]]),
-              ["plug", "Plug (HA switch, optional)", "switch.printer_plug"],
-              ["energy", "Energy meter (HA sensor, kWh, optional)", "sensor.printer_energy_total"],
-            ]
-              .map(
-                ([k, l, ph]) =>
-                  '<div class="field"><label class="field-label">' +
-                  l +
-                  '</label><input type="text" data-pr="' +
-                  i +
-                  '" data-prk="' +
-                  k +
-                  '" value="' +
-                  esc(d[k] || "") +
-                  '" placeholder="' +
-                  ph +
-                  '" spellcheck="false"></div>',
-              )
-              .join("") +
-            (ha
-              ? ""
-              : '<div class="field"><label class="field-label">Serial</label><input type="text" id="dkPrS' +
-                i +
-                '" placeholder="' +
-                (s.secret ? "saved - leave empty to keep" : "printer serial number") +
-                '" autocomplete="off" spellcheck="false"></div>' +
-                '<div class="field"><label class="field-label">Access code</label><input type="password" id="dkPrC' +
-                i +
-                '" placeholder="' +
-                (s.secret ? "saved - leave empty to keep" : "LAN access code") +
-                '" autocomplete="off"></div>') +
-            '<div class="field wide"><div class="dk-row">' +
-            (ha ? "" : '<button type="button" class="btn" data-prs="' + i + '">Save serial and code</button>') +
-            '<button type="button" class="btn" data-prp="' +
-            i +
-            '">Create printer page</button><button type="button" class="btn btn-danger" data-prx="' +
-            i +
-            '">Remove</button></div><div class="dk-status"><span class="dk-dot ' +
-            (s.link === "online" ? "ok" : s.link === "failed" ? "err" : s.powered ? "busy" : "") +
-            '"></span><span>' +
-            esc(prnLine(d, s)) +
-            "</span></div></div></div>"
-          );
-        })
-        .join("") || '<p class="dk-empty">No printers yet.</p>';
-    el.querySelectorAll("[data-pr]").forEach(
-      (x) =>
-        (x.onchange = () => {
-          const d = ps[+x.dataset.pr],
-            k = x.dataset.prk,
-            v = x.value.trim();
-          if (k === "id" && v !== d.id) {
-            deck.pages.forEach((p) => {
-              if (p.printer === d.id) p.printer = v;
-              p.tiles.forEach((t) => {
-                if (t.type === "printer" && t.printer === d.id) t.printer = v;
-              });
-            });
-          }
-          if (v || k === "id") d[k] = v;
-          else delete d[k];
-          setDirty(true);
-          renderPage();
-        }),
-    );
-    el.querySelectorAll("[data-prsrc]").forEach(
-      (x) =>
-        (x.onchange = () => {
-          const d = ps[+x.dataset.prsrc];
-          if (x.value === "ha") d.source = "ha";
-          else {
-            delete d.source;
-            delete d.serial;
-          }
-          setDirty(true);
-          x.blur(); /* renderPrinters skips a block that has the focus */
-          renderPrinters();
-        }),
-    );
-    el.querySelectorAll("[data-prha]").forEach(
-      (x) =>
-        (x.onchange = () => {
-          const d = ps[+x.dataset.prha],
-            p = (haPrn || []).find((q) => q.serial === x.value);
-          if (x.value) d.serial = x.value;
-          else delete d.serial;
-          if (p && p.model && (!d.name || /^Printer \d+$/.test(d.name))) d.name = p.model;
-          setDirty(true);
-          x.blur();
-          renderPrinters();
-          renderPage();
-        }),
-    );
-    el.querySelectorAll("[data-prhf]").forEach(
-      (b) =>
-        (b.onclick = () => {
-          b.blur();
-          loadHaPrinters();
-        }),
-    );
-    el.querySelectorAll("[data-prs]").forEach(
-      (b) =>
-        (b.onclick = async () => {
-          const i = +b.dataset.prs,
-            d = ps[i],
-            q = new URLSearchParams();
-          q.set("id", d.id);
-          q.set("serial", $("dkPrS" + i).value.trim());
-          q.set("code", $("dkPrC" + i).value.trim());
-          if (
-            dirty &&
-            !confirm(
-              "Save the deck first, or the device will not know this printer yet. Store the serial and code anyway?",
-            )
-          )
-            return;
-          try {
-            await api("/api/printers/secret", { method: "POST", body: q });
-            $("dkPrS" + i).value = "";
-            $("dkPrC" + i).value = "";
-            printersStatus();
-          } catch (e) {
-            alert(e.message);
-          }
-        }),
-    );
-    el.querySelectorAll("[data-prp]").forEach(
-      (b) =>
-        (b.onclick = () => {
-          const d = ps[+b.dataset.prp];
-          deck.pages.push(...printerPage(d, prnStat[d.id] || {}));
-          cur = pages().length - 2;
-          setDirty(true);
-          render();
-        }),
-    );
-    el.querySelectorAll("[data-prx]").forEach(
-      (b) =>
-        (b.onclick = () => {
-          const d = ps[+b.dataset.prx];
-          if (!confirm("Remove " + (d.name || d.id) + " and its printer tiles?")) return;
-          deck.printers = ps.filter((x) => x !== d);
-          if (!deck.printers.length) delete deck.printers;
-          deck.pages.forEach((p) => {
-            if (p.printer === d.id) delete p.printer;
-            p.tiles = p.tiles.filter((t) => !(t.type === "printer" && t.printer === d.id));
-          });
-          setDirty(true);
-          render();
-        }),
-    );
-  }
-  /* Progress and temperatures, with an AMS page stacked below. */
-  function printerPage(d, s) {
-    const id = d.id,
-      u = Date.now().toString(36).slice(-4);
-    const t = (show, x, y, w, ex) =>
-      Object.assign(
-        {
-          id: show + ((ex && (ex.nozzle || ex.unit)) || "") + u,
-          type: "printer",
-          printer: id,
-          show: show,
-          pos: { landscape: { x: x, y: y, w: w, h: 1 } },
-        },
-        ex || {},
-      );
-    const tiles = [t("hero", 0, 0, 4)];
-    if (s.dual)
-      tiles.push(
-        t("nozzle", 0, 1, 1, { nozzle: "left" }),
-        t("nozzle", 1, 1, 1),
-        t("bed", 2, 1, 1),
-        t("chamber", 3, 1, 1),
-        t("filament", 0, 2, 2),
-        t("layer", 2, 2, 1),
-        t("light", 3, 2, 1),
-      );
-    else if (s.chamber)
-      tiles.push(
-        t("nozzle", 0, 1, 1),
-        t("bed", 1, 1, 1),
-        t("chamber", 2, 1, 1),
-        t("layer", 3, 1, 1),
-        t("filament", 0, 2, 3),
-        t("light", 3, 2, 1),
-      );
-    else
-      tiles.push(
-        t("nozzle", 0, 1, 1),
-        t("bed", 1, 1, 1),
-        t("layer", 2, 1, 1),
-        t("light", 3, 1, 1),
-        t("filament", 0, 2, 4),
-      );
-    let pid = "prn_" + id,
-      n = 2;
-    while (deck.pages.some((p) => p.id === pid || p.id === pid + "_ams")) pid = "prn_" + id + "_" + n++;
-    const ams = [],
-      count = Math.max(1, Math.min(6, Math.floor(+s.ams) || 2));
-    for (let i = 0; i < count; i++) ams.push(t("ams", (i % 2) * 2, Math.floor(i / 2), 2, { unit: i + 1 }));
-    const amsRows = Math.ceil(count / 2);
-    return [
-      {
-        id: pid,
-        name: d.name || id,
-        group: pid,
-        printer: id,
-        layouts: { landscape: { cols: 4, rows: 3 } },
-        tiles: tiles,
-      },
-      {
-        id: pid + "_ams",
-        name: (d.name || id) + " AMS",
-        group: pid,
-        printer: id,
-        layouts: { landscape: { cols: 4, rows: amsRows } },
-        tiles: ams,
-      },
-    ];
+  function bambuRow(t, i) {
+    return '<div class="dk-tile' + (i === sel ? " sel" : "") +
+      '"><div class="dk-ic" style="background:#927DFF;color:white">P1S</div>' +
+      '<div class="dk-tmain"><input type="text" data-l="' + i +
+      '" value="' + esc(t.label || "") + '" placeholder="Bambu widget">' +
+      '<div class="dk-tsub">' + esc(BAMBU_VIEWS.find(v => v[0] === t.sub)?.[1] || t.sub || "Bambu widget") +
+      '</div></div><div class="dk-tact">' + sizeSel(t, i) +
+      '<button type="button" class="btn' + (i === more ? " on" : "") +
+      '" data-mo="' + i + '" title="More options">&#8943;</button>' +
+      '<button type="button" class="btn" data-u="' + i + '" title="Move up">&#8593;</button>' +
+      '<button type="button" class="btn" data-x="' + i + '" title="Remove">&#215;</button></div>' +
+      (i === more ? '<div class="dk-more"><div class="field wide">' +
+        lbl("Bambu widget", "Live values come from the configured printer. The layout, label, size and position are saved in deck.json.") +
+        '<select data-bambu-view="' + i + '">' +
+        BAMBU_VIEWS.map(v => opt(v[0], v[1], v[0] === t.sub)).join("") +
+        '</select></div></div>' : '') + '</div>';
   }
   function clockRow(t, i) {
     return (
       '<div class="dk-tile' +
       (i === sel ? " sel" : "") +
       '"><div class="dk-ic" style="background:' +
-      (t.color || "#E6E8EC") +
+      (t.color || "#EDF0F8") +
       '">12</div><div class="dk-tmain"><b>Clock</b><div class="dk-tsub">Time and date (24h and time zone from Time settings)</div></div>' +
-      '<div class="dk-tact"><select data-cd="' +
-      i +
-      '" style="width:auto" title="Small tiles leave the date out unless Always">' +
-      opt("", "Date if it fits", t.date !== "always") +
-      opt("always", "Date always", t.date === "always") +
-      "</select>" +
-      sizeSel(t, i) +
-      '<button type="button" class="btn' +
-      (i === more ? " on" : "") +
-      '" data-mo="' +
-      i +
-      '" title="More options">&#8943;</button><button type="button" class="btn" data-u="' +
-      i +
-      '" title="Move up">&#8593;</button><button type="button" class="btn" data-x="' +
-      i +
-      '" title="Remove">&#215;</button></div>' +
-      (i === more ? '<div class="dk-more">' + colorField(t, i) + whenField(t, i) + "</div>" : "") +
-      "</div>"
-    );
-  }
-  /* Audio visualizer: spectrum bars or a scope, fed by the companion's audio stream. */
-  function vizRow(t, i) {
-    const scope = t.style === "scope";
-    return (
-      '<div class="dk-tile' +
-      (i === sel ? " sel" : "") +
-      '"><div class="dk-ic" style="background:' +
-      (t.color || "#7DB5FF") +
-      '">' +
-      (scope ? "~" : "EQ") +
-      '</div><div class="dk-tmain"><b>' +
-      (scope ? "Oscilloscope" : "Visualizer") +
-      '</b><div class="dk-tsub">What the PC plays (needs audio streaming in the companion)</div></div>' +
-      '<div class="dk-tact"><select data-vs="' +
-      i +
-      '" style="width:auto">' +
-      opt("bars", "Bars", !scope) +
-      opt("scope", "Scope", scope) +
-      "</select>" +
-      sizeSel(t, i) +
-      '<button type="button" class="btn' +
-      (i === more ? " on" : "") +
-      '" data-mo="' +
-      i +
-      '" title="More options">&#8943;</button><button type="button" class="btn" data-u="' +
-      i +
-      '" title="Move up">&#8593;</button><button type="button" class="btn" data-x="' +
-      i +
-      '" title="Remove">&#215;</button></div>' +
-      (i === more ? '<div class="dk-more">' + colorField(t, i) + whenField(t, i) + "</div>" : "") +
-      "</div>"
-    );
-  }
-  /* Now playing source: a PC (companion), a Home Assistant media player (#6),
-     or auto: whichever of the two plays. */
-  function mediaSrcSel(t, i) {
-    const cur = pcOf(t),
-      auto = !!(t.entity && t.auto);
-    let o = pcs.length
-      ? pcs
-          .map((x) => opt("pc:" + x.id, "PC: " + x.name + (x.online ? "" : " (offline)"), !t.entity && cur === x))
-          .join("")
-      : opt("pc:", "PC (companion)", !t.entity);
-    if (!t.entity && t.pc && !cur) o += opt("pc:" + t.pc, "Unknown PC", true);
-    o += opt("ha", "Home Assistant player", !!t.entity && !auto);
-    o += pcs.length
-      ? pcs.map((x) => opt("auto:" + x.id, "Auto: PC " + x.name + " or HA player", auto && cur === x)).join("")
-      : opt("auto:", "Auto: PC or HA player", auto);
-    if (auto && t.pc && !cur) o += opt("auto:" + t.pc, "Auto: unknown PC or HA player", true);
-    return (
-      '<select data-ms="' +
-      i +
-      '">' +
-      o +
-      "</select>" +
-      (t.entity
-        ? '<button type="button" class="btn" data-e="' +
-          i +
-          '">' +
-          esc((entMap[t.entity] || {}).name || t.entity) +
-          "</button>"
-        : "")
-    );
-  }
-  function mediaRow(t, i) {
-    return (
-      '<div class="dk-tile' +
-      (i === sel ? " sel" : "") +
-      '"><div class="dk-ic" style="background:' +
-      (t.color || "#E6E8EC") +
-      '">' +
-      (t.entity ? (t.auto ? "A" : "HA") : "PC") +
-      '</div><div class="dk-tmain"><b>Now playing</b><div class="dk-tsub">' +
-      (t.entity
-        ? t.auto
-          ? "The PC or " + esc(t.entity) + ", whichever plays (the PC when both do)"
-          : "Track and playback controls from " + esc(t.entity)
-        : "Cover, track and playback controls") +
-      "</div></div>" +
       '<div class="dk-tact">' +
-      mediaSrcSel(t, i) +
       sizeSel(t, i) +
       '<button type="button" class="btn' +
       (i === more ? " on" : "") +
@@ -1233,44 +561,68 @@
       '" title="Move up">&#8593;</button><button type="button" class="btn" data-x="' +
       i +
       '" title="Remove">&#215;</button></div>' +
-      (i === more ? '<div class="dk-more">' + colorField(t, i) + whenField(t, i) + "</div>" : "") +
+      (i === more ? '<div class="dk-more"><div class="field wide">' + lbl("Clock background", "Standalone shows only the time and date; Boxed uses the current theme background and border.") + '<select data-clock-box="' + i + '">' + opt("0", "Standalone (no box or border)", t.box === false) + opt("1", "Boxed (background and border)", t.box !== false) + '</select></div>' +
+      '<div class="field wide">' + lbl("Clock date", "Choose whether the date appears; Always may reduce the time size.") +
+      '<select data-clock-date="' + i + '">' + opt("", "Date if it fits", t.date !== "always" && t.date !== "never") + opt("always", "Date always", t.date === "always") + opt("never", "Date never", t.date === "never") + '</select></div>' + colorField(t, i) + whenField(t, i) + "</div>" : "") +
       "</div>"
     );
+  }
+  // Dedicated icon-only page navigation: no entity, label or status on
+  // the physical tile. Reuses the installed icon picker and uploaded PNGs.
+  function navRow(t, i) {
+    const target = (deck.pages || []).find((p) => p.id === (t.tap && t.tap.page));
+    const cp = tileCp(t);
+    return (
+      '<div class="dk-tile' + (i === sel ? " sel" : "") +
+      '"><button type="button" class="dk-ic' + (cp ? " mdi" : "") +
+      '" data-ic="' + i + '" title="Change navigation icon" style="background:' +
+      (t.color || "#48A5FF") + '">' +
+      (cp ? String.fromCodePoint(cp) : "→") +
+      '</button><div class="dk-tmain"><b>Navigation</b><div class="dk-tsub">Open ' +
+      esc((target && (target.name || target.id)) || (t.tap && t.tap.page) || "page") +
+      '</div></div><div class="dk-tact">' +
+      sizeSel(t, i) +
+      '<button type="button" class="btn' + (i === more ? " on" : "") +
+      '" data-mo="' + i + '" title="More options">&#8943;</button>' +
+      '<button type="button" class="btn" data-u="' + i + '" title="Move up">&#8593;</button>' +
+      '<button type="button" class="btn" data-x="' + i + '" title="Remove">&#215;</button></div>' +
+      (i === more ?
+        '<div class="dk-more"><div class="field wide">' +
+        lbl("Destination page", "Tap this tile to navigate straight to the selected page.") +
+        '<select data-nav-page="' + i + '">' +
+        (deck.pages || []).filter((p) => p.type !== "metrics" && !p.printer)
+          .map((p) => opt(p.id, p.name || p.id, !!t.tap && p.id === t.tap.page)).join("") +
+        '</select></div>' +
+        iconFields(t, i) + whenField(t, i) + colorField(t, i) + '</div>' : "") +
+      '</div>'
+    );
+  }
+  function haMediaRow(t, i) {
+    const en = entMap[t.entity] || {};
+    return '<div class="dk-tile' + (i === sel ? ' sel' : '') +
+      '"><div class="dk-ic" style="background:' + (t.color || "#48A5FF") +
+      '">HA</div><div class="dk-tmain"><b>' +
+      esc(t.label || en.name || "Media controls") + '</b><div class="dk-tsub">' +
+      esc(t.entity) + '</div></div><div class="dk-tact">' +
+      sizeSel(t, i) +
+      '<button type="button" class="btn" data-ham-edit="' + i + '">Media player</button>' +
+      '<button type="button" class="btn' + (i === more ? " on" : "") +
+      '" data-mo="' + i + '" title="More options">&#8943;</button>' +
+      '<button type="button" class="btn" data-u="' + i + '" title="Move up">&#8593;</button>' +
+      '<button type="button" class="btn" data-x="' + i + '" title="Remove">&#215;</button>' +
+      '</div>' +
+      (i === more ? '<div class="dk-more">' +
+        '<div class="field wide">' + lbl("Name (optional)") +
+        '<input data-ham-label="' + i + '" value="' + esc(t.label || "") +
+        '" placeholder="' + esc(en.name || "Media controls") + '"></div>' +
+        '<p class="field-hint wide">Uses the selected Home Assistant media player: Previous, Play/Pause, Next, Volume down, Stop and Volume up. At least 2×2 is recommended.</p>' +
+        colorField(t, i) + whenField(t, i) + '</div>' : '') +
+      '</div>';
   }
   const opt = (v, l, on) =>
     '<option value="' + esc(v) + '"' + (on ? " selected" : "") + ">" + esc(l) + "</option>";
   const isHttpSensor = (t) => t.type === "sensor" && !!t.http;
   const isHttp = (t) => !!(t.tap && t.tap.action === "http");
-  const isPcCmd = (t) => !!(t.tap && t.tap.action === "pc");
-  /* PC commands: [cmd, label, icon]; the last three ask on the device by default. */
-  const PCCMD = [
-    ["media_play_pause", "Play / pause", "play-pause"],
-    ["media_next", "Next track", "skip-next"],
-    ["media_prev", "Previous track", "skip-previous"],
-    ["media_stop", "Stop", "stop"],
-    ["volume_up", "Volume up", "volume-plus"],
-    ["volume_down", "Volume down", "volume-minus"],
-    ["volume_mute", "Mute", "volume-mute"],
-    ["lock", "Lock", "lock"],
-    ["sleep", "Sleep", "power-sleep"],
-    ["restart", "Restart", "restart"],
-    ["shutdown", "Shut down", "power"],
-    ["hotkey", "Hotkey", "keyboard"],
-  ];
-  const RISKY = ["sleep", "restart", "shutdown"];
-  function pcCmdSet(t, cmd) {
-    const c = PCCMD.find((x) => x[0] === cmd) || PCCMD[0];
-    const old = PCCMD.find((x) => x[0] === (t.tap && t.tap.cmd));
-    t.tap = Object.assign(
-      { action: "pc", cmd: c[0] },
-      t.tap && t.tap.pc ? { pc: t.tap.pc } : {},
-      c[0] === "hotkey" ? { keys: (t.tap && t.tap.keys) || "ctrl+shift+m" } : {},
-    );
-    if (!t.label || (old && t.label === old[1])) t.label = c[1];
-    if (!t.icon || (old && t.icon === "mdi:" + old[2])) t.icon = "mdi:" + c[2];
-    if (RISKY.includes(c[0])) t.confirm = "always";
-    else if (old && RISKY.includes(old[0]) && t.confirm === "always") delete t.confirm;
-  }
   const tapName = (a) =>
     a.action === "page"
       ? "Open page " + a.page
@@ -1283,6 +635,9 @@
       .join("\n");
   /* A tile's "more options": sensor, action, icon, colours, on state, visibility. */
   function moreRow(t, i) {
+    if (t.type === "climate")
+      return '<div class="dk-more"><p class="field-hint wide">Inline thermostat: the setpoint, plus/minus and supported HVAC modes appear directly on the page. Use a 2x2 tile (or larger) for comfortable controls. The tile uses the selected Home Assistant climate entity.</p>' +
+        whenField(t, i) + colorField(t, i) + "</div>";
     let h = "";
     if (t.type === "sensor") {
       h +=
@@ -1291,17 +646,35 @@
         '<select data-st="' +
         i +
         '">' +
-        opt("number", "Number", t.style !== "chart") +
+        opt("number", "Number", !t.style || t.style === "number") +
         opt("chart", "Chart", t.style === "chart") +
+        opt("headline", "Large temperature (clock font)", t.style === "headline") +
+        (domainOf(t.entity) === "weather" || t.style === "weather" ?
+          opt("weather", "Weather conditions", t.style === "weather") : "") +
         "</select></div>" +
-        '<div class="field">' +
-        lbl("Show as", "Duration turns a number in s, min, h or d into 1h 49m.") +
-        '<select data-fm="' +
-        i +
-        '">' +
-        opt("", "Value", t.format !== "duration") +
-        opt("duration", "Duration (s, min, h, d)", t.format === "duration") +
-        "</select></div>";
+        (t.style === "headline" || t.style === "weather" ?
+          '<div class="field">' +
+          lbl("Background", "Standalone shows the reading without a box; Boxed uses the current theme background.") +
+          '<select data-sensor-box="' + i + '">' +
+          opt("0", "Standalone (no box or border)", t.box === false) +
+          opt("1", "Boxed (background and border)", t.box !== false) +
+          '</select></div>' : "") +
+        (t.style === "weather" ?
+          '<div class="field">' +
+          lbl("Show entity ID in popup", "Display the Home Assistant entity ID below the Weather title.") +
+          '<select data-weather-entity="' + i + '">' +
+          opt("1", "Show", t.showEntityId !== false) +
+          opt("0", "Hide", t.showEntityId === false) +
+          '</select></div>' : "") +
+        (t.style === "weather" || t.style === "headline" ? "" :
+          '<div class="field">' +
+          lbl("Show as", "Duration turns a number in s, min, h or d into 1h 49m.") +
+          '<select data-fm="' +
+          i +
+          '">' +
+          opt("", "Value", t.format !== "duration") +
+          opt("duration", "Duration (s, min, h, d)", t.format === "duration") +
+          "</select></div>");
       if (t.style === "chart" && !isHttpSensor(t))
         h +=
           '<div class="field">' +
@@ -1314,10 +687,10 @@
           '" value="' +
           esc(t.hours == null ? 24 : t.hours) +
           '"></div>';
-      [
+      (t.style === "weather" ? [] : [
         ["warn", "Warn at"],
         ["crit", "Critical at"],
-      ].forEach(([k, label]) => {
+      ]).forEach(([k, label]) => {
         h +=
           '<div class="field">' +
           lbl(
@@ -1336,10 +709,34 @@
     const sensorPart = h;
     let wideAct = false;
     h = "";
+    if (t.type === "sensor" && !isHttpSensor(t)) {
+      const tap = t.tap && t.tap.action === "page" ? "page" :
+        t.tap && t.tap.action === "none" ? "none" : "more-info";
+      h += '<div class="field">' +
+        lbl("On tap", "Open the sensor detail card, navigate to a page or do nothing.") +
+        '<select data-stap="' + i + '">' +
+        opt("more-info", "Show sensor details", tap === "more-info") +
+        opt("page", "Open page", tap === "page") +
+        opt("none", "Do nothing", tap === "none") +
+        '</select></div>';
+      if (tap === "page") {
+        h += '<div class="field">' + lbl("Destination page") +
+          '<select data-spage="' + i + '">' +
+          (deck.pages || []).filter((p) => p.type !== "metrics" && !p.printer)
+            .map((p) => opt(p.id, p.name || p.id, p.id === t.tap.page)).join("") +
+          '</select></div>';
+      }
+    }
     if (t.type === "action" || isHttpSensor(t)) {
-      const tp = t.tap || {},
-        k = isHttp(t) ? "http" : t.tap ? "keep" : "";
-      const kk = isPcCmd(t) ? "pc" : k;
+      const tp = t.tap || {};
+      const isScript = tp.action === "call-service" &&
+        tp.domain === "script" && tp.service === "turn_on";
+      const scriptId = isScript ? (tp.data && tp.data.entity_id) || "" : "";
+      const holdScript = t.hold && t.hold.action === "call-service" &&
+        t.hold.domain === "script" && t.hold.service === "turn_on"
+          ? (t.hold.data && t.hold.data.entity_id) || "" : "";
+      const k = isHttp(t) ? "http" : isScript ? "script" : t.tap ? "keep" : "";
+      const kk = k;
       h +=
         '<div class="field">' +
         lbl("On tap") +
@@ -1347,48 +744,19 @@
         i +
         '">' +
         opt("", isHttpSensor(t) ? "None" : "Home Assistant entity", kk === "") +
+        opt("script", "Run Home Assistant script", kk === "script") +
         opt("http", "HTTP request", kk === "http") +
-        opt("pc", "PC command", kk === "pc") +
         (kk === "keep" ? opt("keep", tapName(tp), true) : "") +
         "</select></div>";
-      if (kk === "pc") {
-        wideAct = true;
-        const tg = pcs.find((x) => x.id === (tp.pc || "")) || (!tp.pc && pcs[0]);
-        h +=
-          '<div class="field">' +
-          lbl("Command", "Sleep, Restart and Shut down ask on the device before they run.") +
-          '<select data-pcc="' +
-          i +
-          '">' +
-          PCCMD.map((c) => opt(c[0], c[1], tp.cmd === c[0])).join("") +
-          "</select></div>";
-        if (tp.cmd === "hotkey")
-          h +=
-            '<div class="field">' +
-            lbl(
-              "Keys",
-              "Joined with +, up to 5: ctrl, shift, alt, win, a-z, 0-9, f1-f24, space, enter, tab, esc, backspace, delete, insert, home, end, pageup, pagedown, up, down, left, right, printscreen. The PC gets them in its focused window.",
-            ) +
-            '<input type="text" data-pck="' +
-            i +
-            '" value="' +
-            esc(tp.keys || "") +
-            '" placeholder="ctrl+shift+m" spellcheck="false"></div>';
-        h +=
-          '<div class="field">' +
-          lbl(
-            "PC",
-            tg && tg.paired
-              ? "Paired with " + tg.name + "."
-              : 'Pair the PC first: TouchDeck Companion, Device page, "Pair for control".',
-            tg && tg.paired ? "" : "Not paired",
-          ) +
-          '<select data-pcp="' +
-          i +
-          '">' +
-          opt("", "Default PC" + (pcs[0] ? " (" + pcs[0].name + ")" : ""), !tp.pc) +
-          pcs.map((x) => opt(x.id, x.name + (x.paired ? "" : " - not paired"), tp.pc === x.id)).join("") +
-          "</select></div>";
+      if (kk === "script") {
+        h += '<div class="field wide">' +
+          lbl("Script on tap", "The script entity, e.g. script.turn_on_tv_and_start_netflix.") +
+          '<input type="text" data-script="' + i + '" value="' + esc(scriptId) +
+          '" placeholder="script.turn_on_tv_and_start_netflix" spellcheck="false"></div>' +
+          '<div class="field wide">' +
+          lbl("Script on long press (optional)", "Leave empty to retain the existing long-press action, or set a script for play/pause.") +
+          '<input type="text" data-hscript="' + i + '" value="' + esc(holdScript) +
+          '" placeholder="script.hal_tv_play_pause" spellcheck="false"></div>';
       }
       if (k === "http") {
         wideAct = true;
@@ -1440,6 +808,16 @@
           '" style="margin:0;white-space:normal;flex:1">Sends the request from the device and shows the answer.</span></div></div>';
       }
     }
+    if (t.type === "action" || t.type === "toggle") {
+      h += '<div class="field wide">' +
+        lbl("Status entity (optional)", "Watch this Home Assistant sensor independently of the action. e.g. binary_sensor.bedroom_hal_lg_tv_is_netflix_on.") +
+        '<input type="text" data-status="' + i + '" value="' +
+        esc(t.statusEntity || "") + '" placeholder="binary_sensor..." spellcheck="false"></div>' +
+        '<div class="field">' +
+        lbl("Active when state equals", "Exact Home Assistant state, e.g. on, playing, Netflix.") +
+        '<input type="text" data-active="' + i + '" value="' +
+        esc(t.activeState || "on") + '" placeholder="on"></div>';
+    }
     const cf = t.confirm || "";
     h +=
       '<div class="field">' +
@@ -1455,8 +833,16 @@
         .map((o) => opt(o[0], o[1], cf === o[0]))
         .join("") +
       "</select></div>";
+    const hiddenName = t.hideName === true ||
+      (Object.hasOwn(t, "label") && t.label === "");
+    const nameOption = ['action', 'toggle', 'slider'].includes(t.type)
+      ? '<label class="check-row standalone wide dk-hide-name"><input type="checkbox" data-hide-name="' +
+        i + '"' + (hiddenName ? ' checked' : '') +
+        '><span class="check-box"></span><span class="check-text"><strong>Hide name</strong><span class="ct-hint">Show just the image or icon, centred and enlarged to use the tile.</span></span></label>'
+      : '';
     return (
       '<div class="dk-more">' +
+      nameOption +
       (sensorPart ? grp("Sensor", sensorPart, true) : "") +
       grp(t.type === "sensor" ? "Tap" : "Action", h, wideAct) +
       whenField(t, i) +
@@ -1667,22 +1053,13 @@
   };
   function setDirty(v) {
     dirty = v;
-    $("dkMsg").textContent = $("dkPrnMsg").textContent = v ? "Unsaved changes" : "Saved";
+    $("dkMsg").textContent = v ? "Unsaved changes" : "Saved";
   }
-  /* Printers off (Advanced page, window.snPrn from portal.js): printer pages and
-   tiles stay in deck.json but are left out here, as the firmware does. */
-  const prnOn = () => !!window.snPrn,
-    offT = (t) => t.type === "printer" && !prnOn();
-  /* "when" tiles: k names the condition (a PC, or an entity and state), neg = shown while it is not met.
+  /* "when" tiles: k names an entity condition, neg = shown while it is not met.
    pv holds the preview's answer per condition (default met); a tile it hides is laid out like an off one. */
   let pv = {};
   const whenOf = (t) => {
     const w = t.when;
-    if (w === "pc-on" || w === "pc-off")
-      return { k: "pc:" + ((isPcCmd(t) ? t.tap.pc : t.pc) || (pcs[0] || {}).id || ""), neg: w === "pc-off" };
-    if (w === "sound-on" || w === "sound-off") return { k: "sound", neg: w === "sound-off" };
-    if (w && typeof w === "object" && w.printer !== undefined)
-      return { k: "p:" + w.printer + (w.state === "printing" ? ":printing" : ""), neg: false };
     if (w && typeof w === "object") {
       const s = String(w.state || ""),
         n = s[0] === "!";
@@ -1691,7 +1068,6 @@
     return null;
   };
   const hidT = (t) => {
-    if (offT(t)) return true;
     const c = whenOf(t);
     return !!c && (pv[c.k] !== false) === c.neg;
   };
@@ -1699,7 +1075,7 @@
     const ks = [];
     p.tiles.forEach((t) => {
       const c = whenOf(t);
-      if (c && !offT(t) && !ks.includes(c.k)) ks.push(c.k);
+      if (c && !ks.includes(c.k)) ks.push(c.k);
     });
     if (!ks.length) return "";
     return (
@@ -1707,17 +1083,9 @@
       ks
         .map((k) => {
           let nm;
-          if (k.startsWith("pc:")) {
-            const pc = pcs.find((x) => x.id === k.slice(3)) || (k === "pc:" && pcs[0]);
-            nm = pc ? pc.name : "PC";
-          } else if (k === "sound") nm = "PC sound";
-          else if (k.startsWith("p:")) {
-            const [id, st] = k.slice(2).split(":"),
-              pr = (deck.printers || []).find((x) => x.id === id);
-            nm = (pr ? pr.name || pr.id : id) + (st ? " printing" : " on");
-          } else nm = k.slice(2).replace("=", " is ");
+          nm = k.slice(2).replace("=", " is ");
           const on = pv[k] !== false,
-            yes = k.startsWith("pc:") ? ["On", "Off"] : ["Yes", "No"];
+            yes = ["Yes", "No"];
           return (
             '<span class="dk-tsub" style="margin:0 0 0 8px">' +
             esc(nm) +
@@ -1747,17 +1115,10 @@
   }
   function whenField(t, i) {
     const w = t.when,
-      k = whenKind(w);
-    const hint = !k
-      ? ""
-      : (k === "entity"
-          ? "The state as Home Assistant reports it (on, off, home, playing...). Hidden until it is known."
-          : k === "printer"
-            ? "On = the printer is powered and reports. Prints = a job runs, and for the minutes after it ends (0 = only during the job)."
-            : k.startsWith("sound")
-            ? "Needs the companion's Audio visualizer switch. Sound counts after 2 s, silence after 30 s."
-            : "The PC counts as off about a minute after its companion goes quiet.") +
-        " Its cell is free otherwise: another tile with the opposite condition can take it. Switch the Preview above the grid to place it.";
+      k = !w ? "" : typeof w === "string" ? w : "entity";
+    const hint = k === "entity"
+      ? "The state as Home Assistant reports it (on, off, home, playing...). Hidden until it is known. Its cell is free otherwise: another tile with the opposite condition can take it. Switch the Preview above the grid to place it."
+      : "";
     let h =
       '<div class="field">' +
       lbl("Show", hint) +
@@ -1766,18 +1127,11 @@
       '">' +
       [
         ["", "Always"],
-        ["pc-on", "Only while the PC is on"],
-        ["pc-off", "Only while the PC is off"],
-        ["sound-on", "Only while the PC plays sound"],
-        ["sound-off", "Only while the PC is silent"],
         ["entity", "Only while an entity is in a state"],
-        ["printer", "Only while a printer is on or printing"],
       ]
-        .filter((o) => t.type !== "printer" || !/^(pc|sound)-/.test(o[0]) || o[0] === k)
         .map((o) => opt(o[0], o[1], k === o[0]))
         .join("") +
       "</select></div>";
-    if (k === "printer") h += prnWhenHtml(w, i);
     if (k === "entity") {
       const s = String(w.state || ""),
         n = s[0] === "!";
@@ -1804,12 +1158,11 @@
     }
     return grp("Visibility", h);
   }
-  const pages = () => deck.pages.filter((p) => p.type !== "metrics" && (prnOn() || !p.printer));
+  const pages = () => deck.pages;
   const MAX_PAGES = 8; // firmware MAX_DECK_PAGES, counts every page in deck.json
-  window.dkPrnSync = () => {
-    if (deck) render();
-  };
-  const visible = () => ["deck", "printers"].includes(document.querySelector(".page.active")?.dataset.page);
+  let bambuAvailable = false;
+  let bambuEnabled = false;
+  const visible = () => ["deck", "homeassistant"].includes(document.querySelector(".page.active")?.dataset.page);
 
   /* Home Assistant */
   async function haStatus() {
@@ -1858,20 +1211,21 @@
   /* pages and tiles */
   /* Grid and positions are per orientation (ori is the one being edited).
    The editor counts positions and spans in half cells (deck.json: 1.5). */
+  const DEF = { landscape: [4, 3], portrait: [3, 4] };
   const grid = (p) => {
     const l = (p.layouts && p.layouts[ori]) || {};
-    return [gi(l.cols, scr.grid[ori][0]), gi(l.rows, scr.grid[ori][1])];
+    return [gi(l.cols, DEF[ori][0]), gi(l.rows, DEF[ori][1])];
   };
   const tpos = (t) => (t.pos && t.pos[ori]) || {};
   const cl = (v, a, b) => Math.min(b, Math.max(a, v == null ? a : Math.round(v)));
-  /* Like the firmware's parser: a non-integer takes the default, an integer is clamped to 1..gridMax. */
-  const gi = (v, d) => (Number.isInteger(v) ? Math.min(scr.gridMax, Math.max(1, v)) : d);
+  /* Like the firmware's parser: a non-integer takes the default, an integer is clamped to 1..6. */
+  const gi = (v, d) => (Number.isInteger(v) ? Math.min(6, Math.max(1, v)) : d);
   /* Like the firmware: a number rounds to the nearest half cell and is clamped, anything else takes the default. */
   const hv = (v, d, a, b) =>
     typeof v === "number" && isFinite(v) ? Math.min(b, Math.max(a, Math.round(v * 2))) : d;
   const tdim = (t) => {
     const q = tpos(t);
-    return [hv(q.w, 2, 1, 2 * scr.gridMax), hv(q.h, 2, 1, 2 * scr.gridMax)];
+    return [hv(q.w, 2, 1, 12), hv(q.h, 2, 1, 12)];
   };
   const tileSize = (t) =>
     tdim(t)
@@ -2027,30 +1381,21 @@
     );
   }
   function gtile(t, k, a) {
-    const m = t.type === "metric",
-      mm = m && mlist(t).find((x) => x.id === t.metric),
-      en = entMap[t.entity],
-      d = domainOf(t.entity);
-    const np = t.type === "media",
-      ck = t.type === "clock",
-      pr = t.type === "printer",
-      vz = t.type === "viz",
-      col =
-        t.color ||
-        (m ? PAL[((t.metric || 1) - 1) % 8] : ck ? "#E6E8EC" : pr ? "#F5B83D" : COL[d] || "#7DB5FF"),
-      cp = m || ck || pr || np || vz ? 0 : tileCp(t);
-    const nm = np
-      ? "Now playing"
-      : vz
-        ? t.style === "scope"
-          ? "Oscilloscope"
-          : "Visualizer"
-        : ck
-        ? "Clock"
-        : pr
-          ? prnTileName(t)
-          : t.label || (m ? (mm ? mm.name : "Metric #" + t.metric) : (en && en.name) || t.entity || "Tile");
+    const en = entMap[t.entity], d = domainOf(t.entity);
+    const ck = t.type === "clock";
+    const col = t.color || (ck ? "#EDF0F8" : COL[d] || "#48A5FF");
+    const cp = ck ? 0 : tileCp(t);
+    const nm = ck ? "Clock" : t.label || (en && en.name) || t.entity || "Tile";
     const chip = iconTile(t) ? gchip(t, col, cp) : null;
+    if (t.type === "nav") {
+      return '<div class="dk-gt dk-gt-nav' + (k === sel ? " sel" : "") +
+        '" data-g="' + k + '"' +
+        (a ? ' style="grid-area:' + (a.y + 1) + "/" + (a.x + 1) +
+               "/span " + a.h + "/span " + a.w + '"' : "") +
+         '>' + gchip(Object.assign({}, t, { iconStyle: "plain" }), col, cp || 0) +
+        (a ? '<span class="dk-rs" data-rs="' + k + '"></span>' : "") +
+        '</div>';
+    }
     return (
       '<div class="dk-gt' +
       (k === sel ? " sel" : "") +
@@ -2070,13 +1415,7 @@
           ">" +
           (cp
             ? String.fromCodePoint(cp)
-            : m || np
-              ? "PC"
-              : ck
-                ? "12"
-                : pr
-                  ? "3D"
-                  : esc((d || "?").slice(0, 2).toUpperCase())) +
+            : ck ? "12" : esc((d || "?").slice(0, 2).toUpperCase())) +
           "</i>") +
       "<b>" +
       esc(nm) +
@@ -2195,7 +1534,6 @@
             i +
             '">' +
             (stackedAt(ps, i) ? "&#8595; " : "") +
-            (p.home ? "&#8962; " : "") +
             esc(p.name || p.id) +
             "</button>",
         )
@@ -2215,6 +1553,7 @@
       deck.pages.push({
         id: "p" + Date.now().toString(36),
         name: "New page",
+        layouts: { landscape: { cols: 4, rows: 3 } },
         tiles: [],
       });
       cur = pages().length - 1;
@@ -2273,12 +1612,6 @@
     renderTabs();
     renderPage();
   }
-  /* 2..max, plus the current value when a hand-edited deck went past max. */
-  function gridOpts(max, v) {
-    const ns = [];
-    for (let n = Math.min(2, v); n <= Math.max(max, v); n++) if ((n >= 2 && n <= max) || n === v) ns.push(n);
-    return ns.map((n) => "<option" + (n === v ? " selected" : "") + ">" + n + "</option>").join("");
-  }
   function renderPage() {
     const ps = pages();
     const el = $("dkPage");
@@ -2289,16 +1622,14 @@
     const p = ps[cur];
     const [c, r] = grid(p),
       land = ori === "landscape",
-      pick = (scr.pick || { landscape: [6, 4], portrait: [4, 6] })[ori],
       at = layout(p),
       lost = p.tiles.map((t, k) => k).filter((k) => !at[k] && !hidT(p.tiles[k]));
     let cells = 0;
     at.forEach((a) => {
       if (a) cells += (a.w * a.h) / 4;
     });
-    /* Wide windows: page settings in two columns, the right one lined up with the tile list. */
     let h =
-      '<div class="dk-pset"><div class="dk-pcol"><div class="dk-row" style="margin-bottom:12px"><span class="field-label" style="margin:0">Layout</span>' +
+      '<div class="dk-row" style="margin-bottom:12px"><span class="field-label" style="margin:0">Layout</span>' +
       [
         ["landscape", "Landscape"],
         ["portrait", "Portrait"],
@@ -2320,27 +1651,25 @@
       '<div class="grid-2 dk-phead"><div class="field"><label class="field-label">Page name</label><input type="text" id="dkPName" value="' +
       esc(p.name || "") +
       '"></div><div class="field"><label class="field-label">Grid (columns x rows)</label><div class="dk-row"><select id="dkPCols" style="width:auto">' +
-      gridOpts(pick[0], c) +
+      (land ? [2, 3, 4, 5, 6] : [2, 3, 4])
+        .map((n) => "<option" + (n === c ? " selected" : "") + ">" + n + "</option>")
+        .join("") +
       '</select><span>x</span><select id="dkPRows" style="width:auto">' +
-      gridOpts(pick[1], r) +
-      '</select><button type="button" class="btn" id="dkPLeft" style="margin-left:auto">Move left</button><button type="button" class="btn" id="dkPRight">Move right</button><button type="button" class="btn" id="dkPDup">Duplicate</button><button type="button" class="btn btn-danger" id="dkPDel">Delete page</button></div></div></div></div><div class="dk-pcol">';
-    if (prnOn() && (deck.printers || []).length && (p.printer || p.tiles.some((t) => t.type === "printer")))
-      h +=
-        '<div class="field"><label class="field-label">Printer page</label><select id="dkPPrn" style="width:auto">' +
-        opt("", "Always shown", !p.printer) +
-        (deck.printers || [])
-          .map((d) => opt(d.id, "Only while " + (d.name || d.id) + " is on", p.printer === d.id))
-          .join("") +
-        "</select></div>";
+      (land ? [2, 3, 4] : [2, 3, 4, 5, 6])
+        .map((n) => "<option" + (n === r ? " selected" : "") + ">" + n + "</option>")
+        .join("") +
+      '</select><button type="button" class="btn" id="dkPLeft" style="margin-left:auto">Move left</button><button type="button" class="btn" id="dkPRight">Move right</button><button type="button" class="btn" id="dkPDup">Duplicate</button><button type="button" class="btn btn-danger" id="dkPDel">Delete page</button></div></div></div>';
+    if ((p.id === "office_printer" || p.id === "office_ams") && !bambuEnabled)
+      h += '<p class="field-hint" style="margin:6px 0 12px">Saved layout · Hidden on the touchscreen while the Bambu printer is disabled. Your edits are preserved and return when the printer is enabled.</p>';
     h += pageWhenField(p);
     h +=
       '<label class="check-row standalone"><input type="checkbox" id="dkPStack"' +
       (stackedAt(ps, cur) ? " checked" : "") +
       (cur === 0 ? " disabled" : "") +
-      '><span class="check-box"></span><span class="check-text"><strong>Below the previous page</strong><span class="ct-hint">Stacked pages form one column: swipe up and down between them, left and right to the next column. Move left/right moves a column head with its column, or swaps a stacked page within its column.</span></span></label>' +
-      '<label class="check-row standalone"><input type="checkbox" id="dkPHome"' +
-      (p.home ? " checked" : "") +
-      '><span class="check-box"></span><span class="check-text"><strong>Home page</strong><span class="ct-hint">The deck starts on this page after power-on or a restart, and falls back to it when a shown page goes away. Only one page is home; while it is hidden (a condition or a printer that is off) the first page takes its place.</span></span></label></div></div>';
+      '><span class="check-box"></span><span class="check-text"><strong>Below the previous page</strong><span class="ct-hint">Stacked pages form one column: swipe up and down between them, left and right to the next column. Move left/right moves a column head with its column, or swaps a stacked page within its column.</span></span></label>';
+    // Large screens keep the page preview alongside the editable tile list.
+    // At smaller widths the same sections stack in their original order.
+    h += '<div class="dk-split"><div class="dk-left">';
     let g = "";
     for (let y = 0; y < r; y++)
       for (let x = 0; x < c; x++)
@@ -2351,18 +1680,17 @@
           (2 * x + 1) +
           '/span 2/span 2"></div>';
     const hd = $("dkHeader").checked ? 30 : 0;
-    /* Wide windows: grid preview (sticky) left, tile list right; narrow: stacked. */
     h +=
-      '<div class="dk-split"><div class="dk-left"><div class="dk-grid' +
+      '<div class="dk-grid' +
       (land ? "" : " pt") +
       '" id="dkGrid" style="grid-template-columns:repeat(' +
       2 * c +
       ",minmax(0,1fr));grid-template-rows:repeat(" +
       2 * r +
       ",minmax(0,1fr));aspect-ratio:" +
-      (land ? scr.w : scr.h) +
+      (land ? 480 : 320) +
       "/" +
-      ((land ? scr.h : scr.w) - hd) +
+      ((land ? 320 : 480) - hd) +
       '">' +
       g +
       p.tiles.map((t, k) => (at[k] ? gtile(t, k, at[k]) : "")).join("") +
@@ -2380,19 +1708,17 @@
         ps.map((q, i) => (i === cur ? "" : opt(String(i), q.name || q.id, false))).join("") +
         '</select><button type="button" class="btn" id="dkMv">Move</button></div>';
     h +=
-      '</div><div class="dk-right"><div class="dk-tiles" id="dkTiles">' +
+      '</div><div class="dk-right"><div class="dk-tiles">' +
       p.tiles
         .map((t, i) => {
-          if (t.type === "metric") return metricRow(t, i);
+          if (t.type === "bambu") return bambuRow(t, i);
           if (t.type === "clock") return clockRow(t, i);
-          if (t.type === "media") return mediaRow(t, i);
-          if (t.type === "viz") return vizRow(t, i);
-          if (isPcVol(t)) return pcVolRow(t, i);
-          if (t.type === "printer") return offT(t) ? "" : printerRow(t, i);
+          if (t.type === "nav") return navRow(t, i);
+          if (t.type === "ha-media") return haMediaRow(t, i);
           const d = domainOf(t.entity);
           const en = entMap[t.entity];
           const nm = en && en.name ? en.name : t.entity || (isHttpSensor(t) ? "HTTP sensor" : "No entity");
-          const cp = iconOptional(t) ? iconCp(t.icon) : tileCp(t);
+          const cp = tileCp(t);
           return (
             '<div class="dk-tile' +
             (i === sel ? " sel" : "") +
@@ -2403,13 +1729,13 @@
             '" title="' +
             esc(t.icon === "none" ? "No icon" : cp ? t.icon || (en && en.icon) || "automatic" : "Choose an icon") +
             '" style="background:' +
-            (t.color || COL[d] || "#7DB5FF") +
+            (t.color || COL[d] || "#48A5FF") +
             '">' +
             (cp ? String.fromCodePoint(cp) : esc((d || "?").slice(0, 2).toUpperCase())) +
             '</button><div class="dk-tmain"><input type="text" data-l="' +
             i +
             '" value="' +
-            esc(t.label === "" ? " " : t.label || "") +
+            esc(t.label || "") +
             '" placeholder="' +
             esc(nm) +
             '"><div class="dk-tsub">' +
@@ -2419,8 +1745,6 @@
                   ? "HTTP sensor" + (t.http.path ? ": " + t.http.path : "")
                   : isHttp(t)
                     ? "HTTP " + (t.tap.method || "GET") + " " + (t.tap.url || "")
-                    : isPcCmd(t)
-                      ? "PC command: " + (PCCMD.find((c) => c[0] === t.tap.cmd) || [0, t.tap.cmd])[1]
                       : "no entity"),
             ) +
             (en && en.state ? " - " + esc(en.state) + (en.unit ? " " + esc(en.unit) : "") : "") +
@@ -2432,15 +1756,17 @@
                 i +
                 '"><option value="toggle"' +
                 (t.type === "toggle" ? " selected" : "") +
-                ">" +
-                (d === "climate" ? "Thermostat" : "Switch") +
-                '</option><option value="action"' +
+                '>Switch</option><option value="action"' +
                 (t.type === "action" ? " selected" : "") +
                 '>Button</option><option value="sensor"' +
                 (t.type === "sensor" ? " selected" : "") +
                 ">Sensor</option>" +
                 (SLIDER.includes(d) || t.type === "slider"
                   ? '<option value="slider"' + (t.type === "slider" ? " selected" : "") + ">Slider</option>"
+                  : "") +
+                (d === "climate" || t.type === "climate"
+                  ? '<option value="climate"' + (t.type === "climate" ? " selected" : "") +
+                    '>Climate controls</option>'
                   : "") +
                 "</select>") +
             sizeSel(t, i) +
@@ -2459,6 +1785,7 @@
             "</div>"
           );
         })
+        .map((html, i) => html.replace('<div class="dk-tile', '<div data-tile-row="' + i + '" class="dk-tile'))
         .join("") +
       "</div>";
     h +=
@@ -2466,24 +1793,21 @@
       +cells.toFixed(2) +
       " of " +
       c * r +
-      ' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddPc">+ Add PC metric</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddPcCmd">+ Add PC control</button><button type="button" class="btn" id="dkAddPcVol">+ Add PC volume</button><button type="button" class="btn" id="dkAddMedia">+ Add now playing</button><button type="button" class="btn" id="dkAddClock">+ Add clock</button><button type="button" class="btn" id="dkAddViz">+ Add visualizer</button><button type="button" class="btn" id="dkAddHttpSensor">+ Add HTTP sensor</button>' +
-      (prnOn() && (deck.printers || []).length
-        ? '<button type="button" class="btn" id="dkAddPrinter">+ Add printer tile</button>'
-        : "") +
+      ' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddClimate">+ Add climate controls</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddHaMedia">+ Add media controls</button><button type="button" class="btn" id="dkAddClock">+ Add clock</button><button type="button" class="btn" id="dkAddNav">+ Add navigation</button><button type="button" class="btn" id="dkAddTemperature">+ Add temperature</button><button type="button" class="btn" id="dkAddWeather">+ Add weather</button><button type="button" class="btn" id="dkAddHttpSensor">+ Add HTTP sensor</button>' +
+      (bambuAvailable ? '<button type="button" class="btn" id="dkAddBambu">+ Add Bambu widget</button>' : '') +
       "</div>" +
-      pcList() +
       '<p class="field-hint">Chart and Bar need a wide tile (2x1 on most grids, a 2x0.5 one fits them in a row between the name and the number, a narrower one shows the number), so picking one makes a 1x1 tile 2x1.</p></div></div>';
     el.innerHTML = h;
-    /* A click on a row's free area selects its tile in the preview. */
-    el.querySelectorAll("#dkTiles > .dk-tile").forEach((row) => {
-      const x = row.querySelector("[data-x]");
-      if (x)
-        row.onclick = (e) => {
-          const k = +x.dataset.x;
-          if (k === sel || e.target.closest("input,select,button,textarea,a,label,.dk-more")) return;
-          sel = k;
-          renderPage();
-        };
+    // Upstream TouchDeck: clicking unused space in a tile's editor row
+    // selects that tile in the preview, without stealing input/control clicks.
+    el.querySelectorAll("[data-tile-row]").forEach((row) => {
+      row.addEventListener("click", (event) => {
+        if (event.target.closest("button, input, select, textarea, a, label, [contenteditable]")) return;
+        const i = Number(row.dataset.tileRow);
+        if (!Number.isInteger(i) || i < 0 || i >= p.tiles.length || sel === i) return;
+        sel = i;
+        renderPage();
+      });
     });
     $("dkPName").oninput = (e) => {
       p.name = e.target.value;
@@ -2512,66 +1836,6 @@
         setDirty(true);
         renderPage();
       };
-    if ($("dkPPrn"))
-      $("dkPPrn").onchange = (e) => {
-        if (e.target.value) p.printer = e.target.value;
-        else delete p.printer;
-        setDirty(true);
-      };
-    if ($("dkAddPrinter"))
-      $("dkAddPrinter").onclick = () => {
-        const t = {
-          id: "pr" + Date.now().toString(36),
-          type: "printer",
-          printer: deck.printers[0].id,
-          show: "hero",
-        };
-        setSize(t, "2x1");
-        p.tiles.push(t);
-        setDirty(true);
-        renderPage();
-      };
-    el.querySelectorAll("[data-pt]").forEach(
-      (x) =>
-        (x.onchange = () => {
-          const t = p.tiles[+x.dataset.pt],
-            w = t.when;
-          if (w && typeof w === "object" && w.printer === t.printer) w.printer = x.value;
-          t.printer = x.value;
-          setDirty(true);
-          renderPage();
-        }),
-    );
-    el.querySelectorAll("[data-psh]").forEach(
-      (x) =>
-        (x.onchange = () => {
-          const t = p.tiles[+x.dataset.psh];
-          t.show = x.value;
-          if (x.value !== "nozzle") delete t.nozzle;
-          if (x.value === "ams") t.unit = t.unit || 1;
-          else delete t.unit;
-          setDirty(true);
-          renderPage();
-        }),
-    );
-    el.querySelectorAll("[data-pnz]").forEach(
-      (x) =>
-        (x.onchange = () => {
-          const t = p.tiles[+x.dataset.pnz];
-          if (x.value === "left") t.nozzle = "left";
-          else delete t.nozzle;
-          setDirty(true);
-          renderPage();
-        }),
-    );
-    el.querySelectorAll("[data-pau]").forEach(
-      (x) =>
-        (x.onchange = () => {
-          p.tiles[+x.dataset.pau].unit = +x.value;
-          setDirty(true);
-          renderPage();
-        }),
-    );
     const setGrid = (gc, gr) => {
       p.layouts = p.layouts || {};
       p.layouts[ori] = { cols: gc, rows: gr };
@@ -2611,23 +1875,17 @@
       renderTabs();
       renderPage();
     };
-    $("dkPHome").onchange = (e) => {
-      deck.pages.forEach((x) => delete x.home);
-      if (e.target.checked) p.home = true;
-      setDirty(true);
-      renderTabs();
-    };
     $("dkPLeft").disabled = !canMovePage(ps, cur, -1);
     $("dkPRight").disabled = !canMovePage(ps, cur, 1);
     $("dkPLeft").onclick = () => movePage(-1);
     $("dkPRight").onclick = () => movePage(1);
     /* The copy is a plain page after this page's column: stacking, conditions and
-     the printer link stay with the original. */
+     the previous page. */
     $("dkPDup").disabled = deck.pages.length >= MAX_PAGES;
     $("dkPDup").title = $("dkPDup").disabled ? "The deck holds at most " + MAX_PAGES + " pages" : "";
     $("dkPDup").onclick = () => {
       const copy = JSON.parse(JSON.stringify(p));
-      ["group", "when", "auto", "printer", "home"].forEach((k) => delete copy[k]);
+      ["group", "when", "auto"].forEach((k) => delete copy[k]);
       copy.id = "p" + Date.now().toString(36);
       copy.name = (p.name || p.id) + " copy";
       let end = cur + 1;
@@ -2646,13 +1904,25 @@
       setDirty(true);
       render();
     };
+    el.querySelectorAll("[data-hide-name]").forEach((x) => {
+      x.onchange = () => {
+        const t = p.tiles[+x.dataset.hideName];
+        t.hideName = x.checked;
+        // A legacy empty label also hides the name. Remove it when the
+        // checkbox is unchecked to restore the normal entity fallback.
+        if (!x.checked && t.label === "") delete t.label;
+        setDirty(true);
+        renderPage();
+      };
+    });
     el.querySelectorAll("[data-l]").forEach(
       (x) =>
         (x.oninput = (e) => {
           const t = p.tiles[+x.dataset.l];
           const v = e.target.value.trim();
-          /* Blank but not empty (a space): no name on the tile. */
-          if (v || e.target.value) t.label = v;
+          // Hide name is an independent, persisted preference. An empty
+          // name input simply means "use the entity's default label".
+          if (v) t.label = v;
           else delete t.label;
           setDirty(true);
         }),
@@ -2663,10 +1933,31 @@
           const t = p.tiles[+x.dataset.t];
           t.type = e.target.value;
           if (t.type !== "action") delete t.tap;
+          if (t.type === "climate") {
+            delete t.hold;
+            // Inline controls need at least 2x2. Give both orientations room,
+            // allowing the layout engine to place this tile in a free area.
+            t.pos = t.pos || {};
+            for (const orientation of ["landscape", "portrait"]) {
+              const q = Object.assign({}, t.pos[orientation]);
+              delete q.x;
+              delete q.y;
+              q.w = 2;
+              q.h = 2;
+              t.pos[orientation] = q;
+            }
+          }
           setDirty(true);
           renderPage();
         }),
     );
+    el.querySelectorAll("[data-bambu-view]").forEach((x) => {
+      x.onchange = (e) => {
+        p.tiles[+x.dataset.bambuView].sub = e.target.value;
+        setDirty(true);
+        renderPage();
+      };
+    });
     el.querySelectorAll("[data-s]").forEach(
       (x) =>
         (x.onchange = (e) => {
@@ -2677,6 +1968,8 @@
     );
     el.querySelectorAll("[data-e]").forEach((x) => (x.onclick = () => openPicker(+x.dataset.e)));
     el.querySelectorAll("[data-ic]").forEach((x) => (x.onclick = () => openIcons(+x.dataset.ic)));
+    el.querySelectorAll("[data-nav-icon]").forEach((x) =>
+      (x.onclick = () => openIcons(+x.dataset.navIcon)));
     el.querySelectorAll("[data-u]").forEach(
       (x) =>
         (x.onclick = () => {
@@ -2700,6 +1993,45 @@
           renderPage();
         }),
     );
+    // Home Assistant chart/sensor tiles can navigate to another page.
+    // Leave an unconfigured sensor's existing show-details tap unchanged.
+    el.querySelectorAll("[data-stap]").forEach((x) => {
+      x.onchange = (e) => {
+        const t = p.tiles[+x.dataset.stap];
+        if (e.target.value === "page") {
+          const dest = (deck.pages || []).find((pg) => pg.type !== "metrics" && !pg.printer);
+          if (dest) t.tap = { action: "page", page: dest.id };
+        } else if (e.target.value === "none") {
+          t.tap = { action: "none" };
+        } else {
+          delete t.tap;  // firmware default: more-info
+        }
+        setDirty(true);
+        renderPage();
+      };
+    });
+    el.querySelectorAll("[data-spage]").forEach((x) => {
+      x.onchange = (e) => {
+        p.tiles[+x.dataset.spage].tap = { action: "page", page: e.target.value };
+        setDirty(true);
+      };
+    });
+    el.querySelectorAll("[data-clock-box]").forEach((x) => {
+      x.onchange = () => {
+        p.tiles[+x.dataset.clockBox].box = x.value === "1";
+        setDirty(true);
+        renderPage();
+      };
+    });
+    el.querySelectorAll("[data-clock-date]").forEach((x) => {
+      x.onchange = () => {
+        const tile = p.tiles[+x.dataset.clockDate];
+        if (x.value === "always" || x.value === "never") tile.date = x.value;
+        else delete tile.date;
+        setDirty(true);
+        renderPage();
+      };
+    });
     el.querySelectorAll("[data-mo]").forEach(
       (x) =>
         (x.onclick = () => {
@@ -2723,38 +2055,11 @@
             v = e.target.value;
           if (!v) delete t.when;
           else if (v === "entity") t.when = { entity: domainOf(t.entity) ? t.entity : "", state: "on" };
-          else if (v === "printer") t.when = prnWhenNew(t.printer);
           else t.when = v;
           setDirty(true);
           renderPage();
         }),
     );
-    const whenObj = (key) => (key === "p" ? p : p.tiles[+key]).when;
-    el.querySelectorAll("[data-wpr]").forEach(
-      (x) =>
-        (x.onchange = (e) => {
-          whenObj(x.dataset.wpr).printer = e.target.value;
-          setDirty(true);
-          renderPage();
-        }),
-    );
-    el.querySelectorAll("[data-wpst]").forEach(
-      (x) =>
-        (x.onchange = (e) => {
-          const w = whenObj(x.dataset.wpst);
-          w.state = e.target.value;
-          if (w.state === "printing") w.idle = w.idle === undefined ? 30 : w.idle;
-          else delete w.idle;
-          setDirty(true);
-          renderPage();
-        }),
-    );
-    el.querySelectorAll("[data-wpi]").forEach((x) => {
-      x.oninput = (e) => {
-        whenObj(x.dataset.wpi).idle = Math.max(0, Math.min(1440, parseInt(e.target.value, 10) || 0));
-        setDirty(true);
-      };
-    });
     el.querySelectorAll("[data-we]").forEach((x) => {
       x.oninput = (e) => {
         p.tiles[+x.dataset.we].when.entity = e.target.value.trim();
@@ -2808,16 +2113,16 @@
           renderPage();
         }),
     );
-    el.querySelectorAll("[data-li]").forEach(
-      (x) =>
-        (x.onclick = () => {
-          const t = p.tiles[+x.dataset.li];
-          if (t.lightIcon) delete t.lightIcon;
-          else t.lightIcon = true;
-          setDirty(true);
-          renderPage();
-        }),
-    );
+    el.querySelectorAll("[data-lc]").forEach((x) => {
+      x.onchange = () => {
+        const t = p.tiles[+x.dataset.lc];
+        if (x.value === "fixed") delete t.lightColor;
+        else t.lightColor = x.value;
+        delete t.lightIcon;
+        setDirty(true);
+        renderPage();
+      };
+    });
     el.querySelectorAll("[data-is]").forEach(
       (x) =>
         (x.onchange = (e) => {
@@ -2899,7 +2204,8 @@
           renderPage();
         }),
     );
-    $("dkAddTile").onclick = () => openPicker(-1);
+    $("dkAddTile").onclick = () => { dom = ""; openPicker(-1); };
+    $("dkAddClimate").onclick = () => { dom = "climate"; openPicker(-2); };
     $("dkAddHttpSensor").onclick = () => {
       p.tiles.push({
         id: "s" + Date.now().toString(36),
@@ -2940,120 +2246,68 @@
     el.querySelectorAll("[data-hst]").forEach(
       (x) => (x.onclick = () => testHttpSensor(p.tiles[+x.dataset.hst], +x.dataset.hst)),
     );
-    el.querySelectorAll("[data-ms]").forEach(
-      (x) =>
-        (x.onchange = () => {
-          const i = +x.dataset.ms,
-            t = p.tiles[i];
-          if (x.value === "ha" && t.entity) {
-            delete t.auto;
-            delete t.pc;
-            setDirty(true);
-            renderPage();
-            return;
-          }
-          if (x.value.startsWith("auto:")) {
-            if (t.entity) t.auto = true; // else the picker sets it with the player
-            if (x.value.length > 5) t.pc = x.value.slice(5);
-            else delete t.pc;
-            setDirty(true);
-            renderPage();
-            if (!t.entity) openPicker(i, true);
-            return;
-          }
-          if (x.value === "ha") {
-            delete t.auto;
-            renderPage(); // the select shows the old source until a player is picked
-            openPicker(i);
-            return;
-          }
-          delete t.entity;
-          delete t.auto;
-          if (x.value.length > 3) t.pc = x.value.slice(3);
-          else delete t.pc;
-          setDirty(true);
-          renderPage();
-        }),
-    );
-    $("dkAddMedia").onclick = () => {
-      const t = { id: "np" + Date.now().toString(36), type: "media" };
-      setSize(t, "2x2");
-      p.tiles.push(t);
-      setDirty(true);
-      renderPage();
+    $("dkAddHaMedia").onclick = () => {
+      dom = "media_player";
+      openPicker(-3); // must choose the player; do not add a default tile
     };
-    $("dkAddViz").onclick = () => {
-      const t = { id: "z" + Date.now().toString(36), type: "viz" };
+    el.querySelectorAll("[data-ham-edit]").forEach((x) => {
+      x.onclick = () => {
+        mediaEditIndex = +x.dataset.hamEdit;
+        dom = "media_player";
+        openPicker(-4);
+      };
+    });
+    el.querySelectorAll("[data-ham-label]").forEach((x) => {
+      x.oninput = () => {
+        const t = p.tiles[+x.dataset.hamLabel];
+        if (x.value.trim()) t.label = x.value.trim();
+        else delete t.label;
+        setDirty(true);
+      };
+    });
+    if ($("dkAddBambu")) $("dkAddBambu").onclick = () => {
+      if (p.tiles.length >= 24) {
+        alert("The page already has the maximum of 24 tiles.");
+        return;
+      }
+      const t = { id: "bambu_custom_" + Date.now().toString(36),
+                  type: "bambu", label: "Bambu status", sub: "hero" };
       setSize(t, "2x1");
-      p.tiles.push(t);
-      setDirty(true);
-      renderPage();
-    };
-    el.querySelectorAll("[data-cd]").forEach(
-      (x) =>
-        (x.onchange = () => {
-          const t = p.tiles[+x.dataset.cd];
-          if (x.value === "always") t.date = "always";
-          else delete t.date;
-          setDirty(true);
-          renderPage();
-        }),
-    );
-    el.querySelectorAll("[data-vs]").forEach(
-      (x) =>
-        (x.onchange = () => {
-          const t = p.tiles[+x.dataset.vs];
-          if (x.value === "scope") t.style = "scope";
-          else delete t.style;
-          setDirty(true);
-          renderPage();
-        }),
-    );
-    $("dkAddClock").onclick = () => {
-      const t = { id: "k" + Date.now().toString(36), type: "clock" };
-      setSize(t, "2x1");
-      p.tiles.push(t);
-      setDirty(true);
-      renderPage();
-    };
-    $("dkAddPcCmd").onclick = () => {
-      const t = { id: "c" + Date.now().toString(36), type: "action" };
-      pcCmdSet(t, "media_play_pause");
       p.tiles.push(t);
       more = p.tiles.length - 1;
       setDirty(true);
       renderPage();
     };
-    $("dkAddPcVol").onclick = () => {
-      const t = {
-        id: "v" + Date.now().toString(36),
-        type: "slider",
-        control: "pc-volume",
-        label: "PC volume",
-        icon: "mdi:volume-high",
-      };
+    $("dkAddClock").onclick = () => {
+      const t = { id: "k" + Date.now().toString(36), type: "clock", box: false };
       setSize(t, "2x1");
       p.tiles.push(t);
       setDirty(true);
       renderPage();
     };
-    el.querySelectorAll("[data-vpc]").forEach(
-      (x) =>
-        (x.onchange = (e) => {
-          const t = p.tiles[+x.dataset.vpc];
-          if (e.target.value === (pcs[0] && pcs[0].id)) delete t.pc;
-          else t.pc = e.target.value;
-          setDirty(true);
-          renderPage();
-        }),
-    );
+    $("dkAddNav").onclick = () => {
+      const target = pages().find((x, i) => i !== cur);
+      if (!target) {
+        alert("Add a second page before creating a navigation button.");
+        return;
+      }
+      const t = { id: "nav" + Date.now().toString(36),
+                  type: "nav", icon: "mdi:arrow-right-circle-outline", iconStyle: "plain",
+                  tap: { action: "page", page: target.id } };
+      setSize(t, "1x1");
+      p.tiles.push(t);
+      more = p.tiles.length - 1;
+      setDirty(true);
+      renderPage();
+    };
+    $("dkAddTemperature").onclick = () => { dom = ""; openPicker(-5); };
+    $("dkAddWeather").onclick = () => { dom = "weather"; openPicker(-6); };
     $("dkPWh").onchange = (e) => {
       const v = e.target.value;
       if (!v) {
         delete p.when;
         delete p.auto;
       } else if (v === "entity") p.when = { entity: "", state: "on" };
-      else if (v === "printer") p.when = prnWhenNew(p.printer);
       else p.when = v;
       setDirty(true);
       renderPage();
@@ -3105,45 +2359,66 @@
           x.dataset.ht
         )
       ];
+    // Status is visual only: it never changes the service target.
+    el.querySelectorAll("[data-status]").forEach((x) => {
+      x.oninput = () => {
+        const t = p.tiles[+x.dataset.status];
+        if (x.value.trim()) t.statusEntity = x.value.trim();
+        else delete t.statusEntity;
+        setDirty(true);
+      };
+    });
+    el.querySelectorAll("[data-active]").forEach((x) => {
+      x.oninput = () => {
+        const t = p.tiles[+x.dataset.active];
+        if (x.value.trim() && x.value.trim() !== "on") t.activeState = x.value.trim();
+        else delete t.activeState;
+        setDirty(true);
+      };
+    });
+    el.querySelectorAll("[data-nav-page]").forEach((x) => {
+      x.onchange = () => {
+        p.tiles[+x.dataset.navPage].tap = { action: "page", page: x.value };
+        setDirty(true);
+        renderPage();
+      };
+    });
+    el.querySelectorAll("[data-img]").forEach((x) => {
+      x.onchange = () => {
+        const t = p.tiles[+x.dataset.img], k = x.dataset.imgkey;
+        if (x.value) t[k] = x.value;
+        else delete t[k];
+        setDirty(true);
+      };
+    });
+    el.querySelectorAll("[data-script]").forEach((x) => {
+      x.oninput = () => {
+        const t = p.tiles[+x.dataset.script];
+        t.tap = { action: "call-service", domain: "script", service: "turn_on",
+                  data: { entity_id: x.value.trim() } };
+        setDirty(true);
+      };
+    });
+    el.querySelectorAll("[data-hscript]").forEach((x) => {
+      x.onchange = () => {
+        const t = p.tiles[+x.dataset.hscript];
+        if (x.value.trim()) t.hold = { action: "call-service", domain: "script", service: "turn_on",
+                                      data: { entity_id: x.value.trim() } };
+        else if (t.hold && t.hold.action === "call-service" && t.hold.domain === "script")
+          delete t.hold;
+        setDirty(true);
+      };
+    });
     el.querySelectorAll("[data-ak]").forEach(
       (x) =>
         (x.onchange = (e) => {
           const t = tapOf(x),
             v = e.target.value;
           if (v === "keep") return;
-          if (v === "http") t.tap = { action: "http", method: "GET", url: "http://" };
-          else if (v === "pc") {
-            delete t.tap;
-            pcCmdSet(t, "media_play_pause");
-          } else delete t.tap;
-          setDirty(true);
-          renderPage();
-        }),
-    );
-    el.querySelectorAll("[data-pcc]").forEach(
-      (x) =>
-        (x.onchange = (e) => {
-          pcCmdSet(p.tiles[+x.dataset.pcc], e.target.value);
-          setDirty(true);
-          renderPage();
-        }),
-    );
-    el.querySelectorAll("[data-pck]").forEach(
-      (x) =>
-        (x.oninput = (e) => {
-          p.tiles[+x.dataset.pck].tap.keys = e.target.value
-            .trim()
-            .toLowerCase()
-            .replace(/\s*\+\s*/g, "+");
-          setDirty(true);
-        }),
-    );
-    el.querySelectorAll("[data-pcp]").forEach(
-      (x) =>
-        (x.onchange = (e) => {
-          const a = p.tiles[+x.dataset.pcp].tap;
-          if (e.target.value) a.pc = e.target.value;
-          else delete a.pc;
+          if (v === "script") t.tap = { action: "call-service", domain: "script", service: "turn_on",
+                                          data: { entity_id: "" } };
+          else if (v === "http") t.tap = { action: "http", method: "GET", url: "http://" };
+          else delete t.tap;
           setDirty(true);
           renderPage();
         }),
@@ -3193,65 +2468,20 @@
         }),
     );
     el.querySelectorAll("[data-ht]").forEach((x) => (x.onclick = () => testHttp(tapOf(x), +x.dataset.ht)));
-    $("dkAddPc").onclick = async () => {
-      if (!pcs.some((pc) => (pc.metrics || []).length)) await loadPc();
-      const pc = pcs.find((pc) => (pc.metrics || []).length);
-      if (!pc) {
-        alert("No PC metrics yet - start the companion app on the PC.");
-        return;
-      }
-      const metrics = pc.metrics;
-      const usedIds = p.tiles
-        .filter((t) => t.type === "metric" && (t.pc || pcs[0].id) === pc.id)
-        .map((t) => t.metric);
-      const m = metrics.find((x) => !usedIds.includes(x.id)) || metrics[0];
-      p.tiles.push(
-        Object.assign(
-          { id: "m" + Date.now().toString(36), type: "metric", metric: m.id, style: "number" },
-          pcs.length > 1 ? { pc: pc.id } : {},
-        ),
-      );
-      setDirty(true);
-      renderPage();
-    };
-    el.querySelectorAll("[data-pc]").forEach(
-      (x) =>
-        (x.onchange = (e) => {
-          const t = p.tiles[+x.dataset.pc];
-          t.pc = e.target.value;
-          const ml = mlist(t);
-          if (t.type === "metric" && ml.length && !ml.find((y) => y.id === t.metric)) t.metric = ml[0].id;
-          setDirty(true);
-          renderPage();
-        }),
-    );
-    el.querySelectorAll("[data-fpc]").forEach(
-      (x) =>
-        (x.onclick = async (e) => {
-          e.preventDefault();
-          const pc = pcs.find((y) => y.id === x.dataset.fpc);
-          if (
-            !pc ||
-            !confirm('Forget the PC "' + pc.name + '"? Its tiles show it as unknown until it sends again.')
-          )
-            return;
-          try {
-            await api("/api/pc/forget?id=" + encodeURIComponent(pc.id), { method: "POST" });
-            await loadPc();
-            renderPage();
-          } catch (err) {
-            alert(err.message);
-          }
-        }),
-    );
-    el.querySelectorAll("[data-m]").forEach(
-      (x) =>
-        (x.onchange = (e) => {
-          p.tiles[+x.dataset.m].metric = +e.target.value;
-          setDirty(true);
-          renderPage();
-        }),
-    );
+    el.querySelectorAll("[data-weather-entity]").forEach((x) => {
+      x.onchange = () => {
+        p.tiles[+x.dataset.weatherEntity].showEntityId = x.value === "1";
+        setDirty(true);
+        renderPage();
+      };
+    });
+    el.querySelectorAll("[data-sensor-box]").forEach((x) => {
+      x.onchange = () => {
+        p.tiles[+x.dataset.sensorBox].box = x.value === "1";
+        setDirty(true);
+        renderPage();
+      };
+    });
     el.querySelectorAll("[data-st]").forEach(
       (x) =>
         (x.onchange = (e) => {
@@ -3259,6 +2489,8 @@
           if (e.target.value === "number") delete t.style;
           else {
             t.style = e.target.value;
+            if (e.target.value === "headline" && t.box === undefined) t.box = false;
+            if (e.target.value === "weather" && t.box === undefined) t.box = true;
             if (tileSize(t) === "1x1") setSize(t, "2x1");
           }
           setDirty(true);
@@ -3270,10 +2502,10 @@
     renderTabs();
     renderPage();
     ledSync();
-    renderPrinters();
   }
 
   /* entity picker */
+  let mediaEditIndex = -1;
   function setList(r) {
     ents = (r.entities || []).slice().sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     entMap = {};
@@ -3289,41 +2521,18 @@
       (refresh ? "Fetching the entity list from Home Assistant..." : "Loading...") +
       "</p>";
     $("dkListUpdate").disabled = true;
-    entsBusy = true;
     try {
       setList(await api("/api/ha/entities" + (refresh ? "?refresh=1" : "")));
-      entsErr = "";
       if (deck) {
         renderPage();
       }
     } catch (e) {
-      entsErr = e.message;
       $("dkEnts").innerHTML =
-        typedRow() +
         '<p class="dk-empty">' + esc(e.message) + "<br>Check the Home Assistant settings above.</p>";
-      bindEnts();
       throw e;
     } finally {
-      entsBusy = false;
       $("dkListUpdate").disabled = false;
     }
-  }
-  /* A full entity id typed in the search can be used without the list (#5). */
-  function typedRow() {
-    const q = $("dkQ").value.trim().toLowerCase();
-    if (!/^[a-z0-9_]+\.[a-z0-9_]+$/.test(q) || entMap[q]) return "";
-    return (
-      '<div class="dk-ent" data-id="' +
-      esc(q) +
-      '"><div><b>Use ' +
-      esc(q) +
-      "</b><small>not on the list from Home Assistant</small></div></div>"
-    );
-  }
-  function bindEnts() {
-    $("dkEnts")
-      .querySelectorAll("[data-id]")
-      .forEach((r) => (r.onclick = () => pick(r.dataset.id)));
   }
   $("dkListUpdate").onclick = async () => {
     try {
@@ -3332,7 +2541,12 @@
     } catch (e) {}
   };
   function renderDomains() {
-    $("dkDomains").innerHTML = DOMS.map(
+    const domainOptions = (pickFor === -3 || pickFor === -4)
+      ? DOMS.filter((d) => d[0] === "media_player")
+      : pickFor === -5
+        ? DOMS.filter((d) => !d[0] || d[0] === "sensor" || d[0] === "climate")
+        : DOMS;
+    $("dkDomains").innerHTML = domainOptions.map(
       (d) =>
         '<span class="chip' + (d[0] === dom ? " on" : "") + '" data-d="' + d[0] + '">' + d[1] + "</span>",
     ).join("");
@@ -3348,22 +2562,21 @@
       );
   }
   function renderEnts() {
-    if (entsBusy) return;
-    if (!ents || !ents.length) {
+    if (!ents) return;
+    if (!ents.length) {
       $("dkEnts").innerHTML =
-        typedRow() +
-        '<p class="dk-empty">' +
-        (entsErr
-          ? esc(entsErr) + "<br>Check the Home Assistant settings above."
-          : 'No entity list on the device yet. Press "Update from HA".') +
-        "<br>Or type a full entity id, for example light.kitchen.</p>";
-      bindEnts();
+        '<p class="dk-empty">No entity list on the device yet. Press "Update from HA".</p>';
       return;
     }
     const q = $("dkQ").value.trim().toLowerCase();
     let list = ents.filter(
       (e) =>
-        (!dom || domainOf(e.id) === dom) &&
+        ((pickFor === -3 || pickFor === -4)
+          ? domainOf(e.id) === "media_player"
+          : pickFor === -5
+            ? (domainOf(e.id) === "sensor" || domainOf(e.id) === "climate") &&
+              (!dom || domainOf(e.id) === dom)
+            : (!dom || domainOf(e.id) === dom)) &&
         (!q || e.id.toLowerCase().includes(q) || (e.name || "").toLowerCase().includes(q)),
     );
     if (!dom && !q) {
@@ -3378,8 +2591,7 @@
       list = list.slice().sort((a, b) => pri(a) - pri(b));
     }
     const shown = list.slice(0, 250);
-    const typed = typedRow();
-    const rows = shown.length
+    $("dkEnts").innerHTML = shown.length
       ? shown
           .map(
             (e) =>
@@ -3398,20 +2610,13 @@
         (list.length > shown.length
           ? '<p class="dk-empty">' + (list.length - shown.length) + " more - refine the search</p>"
           : "")
-      : typed
-        ? ""
-        : '<p class="dk-empty">Nothing matches.</p>';
-    $("dkEnts").innerHTML = typed + rows;
-    bindEnts();
+      : '<p class="dk-empty">Nothing matches.</p>';
+    $("dkEnts")
+      .querySelectorAll("[data-id]")
+      .forEach((r) => (r.onclick = () => pick(r.dataset.id)));
   }
-  async function openPicker(i, auto) {
+  async function openPicker(i) {
     pickFor = i;
-    pickAuto = !!auto;
-    const pt = i >= 0 ? pages()[cur].tiles[i] : null;
-    if (pt && pt.type === "media") {
-      domBefore = dom; // only this picker is limited to players
-      dom = "media_player";
-    }
     $("dkQ").value = "";
     $("dkPicker").classList.add("show");
     renderDomains();
@@ -3423,10 +2628,6 @@
   }
   function closePicker() {
     $("dkPicker").classList.remove("show");
-    if (domBefore !== null) {
-      dom = domBefore;
-      domBefore = null;
-    }
   }
   /* deck.json "led" is set on the Hardware page (portal.js sets window.snLedEntity); keep this copy in step
    so a save from here does not bring back the old entity. */
@@ -3436,22 +2637,60 @@
     else delete deck.led;
   }
   window.dkLedSync = ledSync;
+  // A visibility condition initially follows the tile's entity. If the user
+  // deliberately selected a different entity to control visibility, keep it.
+  function updateTileEntity(tile, id) {
+    const previous = tile.entity || "";
+    if (tile.when && typeof tile.when === "object" &&
+        tile.when.entity === previous) {
+      tile.when.entity = id;
+    }
+    tile.entity = id;
+  }
+
   function pick(id) {
     const p = pages()[cur];
     const type = autoType(domainOf(id));
-    if (pickFor < 0) p.tiles.push({ id: "t" + Date.now().toString(36), type: type, entity: id });
-    else if (p.tiles[pickFor].type === "media") {
-      if (domainOf(id) !== "media_player") {
-        alert("Now playing needs a media player (media_player.*).");
-        return;
-      }
-      p.tiles[pickFor].entity = id;
-      if (pickAuto) p.tiles[pickFor].auto = true;
-      if (!p.tiles[pickFor].auto) delete p.tiles[pickFor].pc;
+    if (pickFor === -3) {
+      if (domainOf(id) !== "media_player") return;
+      const t = { id: "ham" + Date.now().toString(36), type: "ha-media", entity: id };
+      t.pos = { landscape: { w: 2, h: 2 }, portrait: { w: 2, h: 2 } };
+      p.tiles.push(t);
+    } else if (pickFor === -4) {
+      if (domainOf(id) !== "media_player" || mediaEditIndex < 0 ||
+          !p.tiles[mediaEditIndex] || p.tiles[mediaEditIndex].type !== "ha-media") return;
+      updateTileEntity(p.tiles[mediaEditIndex], id);
+      mediaEditIndex = -1;
+    } else if (pickFor === -2) {
+      if (domainOf(id) !== "climate") return;
+      const t = { id: "clim" + Date.now().toString(36), type: "climate", entity: id };
+      t.pos = { landscape: { w: 2, h: 2 }, portrait: { w: 2, h: 2 } };
+      p.tiles.push(t);
+    } else if (pickFor === -5 || pickFor === -6) {
+      if (pickFor === -5 ? !["sensor", "climate"].includes(domainOf(id)) : domainOf(id) !== "weather") return;
+      const t = {
+        id: (pickFor === -5 ? "temp" : "weather") + Date.now().toString(36),
+        type: "sensor", entity: id,
+        style: pickFor === -5 ? "headline" : "weather",
+        box: pickFor === -6
+      };
+      setSize(t, "2x1");
+      p.tiles.push(t);
+    } else if (pickFor < 0) {
+      const t = { id: "t" + Date.now().toString(36), type: type, entity: id };
+      if (domainOf(id) === "weather") { t.style = "weather"; setSize(t, "2x1"); }
+      p.tiles.push(t);
     } else {
       const t = p.tiles[pickFor];
-      t.entity = id;
-      t.type = type;
+      updateTileEntity(t, id);
+      // Keep an existing temperature headline read-only when switching its
+      // source between a sensor and a thermostat: do not turn it into a
+      // thermostat control tile simply because the entity is climate.*.
+      const temperatureSource = t.type === "sensor" && t.style === "headline" &&
+        ["sensor", "climate"].includes(domainOf(id));
+      t.type = temperatureSource ? "sensor" : type;
+      if (t.type === "sensor" && domainOf(id) === "weather" && !t.style) t.style = "weather";
+      if (t.style === "weather" && domainOf(id) !== "weather") delete t.style;
       delete t.http;
       delete t.unit;
       delete t.detail;
@@ -3475,7 +2714,9 @@
   let mdi = null,
     mdiNames = [],
     icFor = -1,
-    icKey = "icon";
+    icKey = "icon",
+    icBrowse = false,
+    icShown = 240;
   // name -> codepoint from the font's own glyph names (post v2 + cmap format 12).
   function parseMdi(buf) {
     const d = new DataView(buf),
@@ -3523,8 +2764,6 @@
     return mdi ? mdi.get(n) || 0 : 0;
   };
   const tileCp = (t) => iconCp(t.icon) || iconCp((entMap[t.entity] || {}).icon);
-  // PC metrics and chart sensors show an icon only when one is picked, never the entity's.
-  const iconOptional = (t) => t.type === "metric" || (t.type === "sensor" && t.style === "chart" && !(t.rows || []).length);
   async function loadMdi(size) {
     try {
       const r = await fetch("/mdi.ttf?v=" + size);
@@ -3541,12 +2780,22 @@
       $("dkIcState").textContent = "font on the device, but the portal could not read it: " + e.message;
     }
   }
+  let mdiInstalled = false, mdiBusy = false;
+  function icButtons() {
+    $("dkIcNet").disabled = $("dkIcFile").disabled = mdiBusy;
+    $("dkIcRemove").disabled = mdiBusy || !mdiInstalled;
+  }
   function icStatus(s) {
+    mdiInstalled = !!s.loaded;
     $("dkIcDot").className = "dk-dot " + (s.loaded ? "ok" : "");
     $("dkIcState").textContent = s.loaded
       ? s.count + " icons, " + Math.round(s.size / 1024) + " KB"
       : "not installed";
     $("dkIcTag").textContent = s.loaded ? "installed" : "-";
+    // The device has no persisted MDI version: describe the target version,
+    // not an unverified claim about the currently installed font.
+    $("dkIcNet").textContent = s.loaded ? "Update / reinstall MDI 7.4.47" : "Install MDI 7.4.47";
+    icButtons();
   }
   async function icRefresh() {
     try {
@@ -3560,7 +2809,8 @@
   async function icInstall(blob) {
     $("dkIcDot").className = "dk-dot busy";
     $("dkIcState").textContent = "Sending to the device and installing (about 20 s)...";
-    $("dkIcNet").disabled = $("dkIcFile").disabled = true;
+    mdiBusy = true;
+    icButtons();
     try {
       const fd = new FormData();
       fd.append("font", blob, "mdi.ttf");
@@ -3570,9 +2820,11 @@
       if (s.loaded) await loadMdi(s.size);
     } catch (e) {
       $("dkIcDot").className = "dk-dot err";
-      $("dkIcState").textContent = "Not installed: " + e.message;
+      $("dkIcState").textContent = (mdiInstalled ? "Update failed; previous icons may still be present: " :
+        "Install failed: ") + e.message;
     } finally {
-      $("dkIcNet").disabled = $("dkIcFile").disabled = false;
+      mdiBusy = false;
+      icButtons();
     }
   }
   $("dkIcNet").onclick = async () => {
@@ -3585,6 +2837,43 @@
       $("dkIcDot").className = "dk-dot err";
       $("dkIcState").textContent =
         "Download failed (" + e.message + '). Get the file yourself and use "Upload .ttf file".';
+    }
+  };
+  function iconReferences(prefix) {
+    // This is an advisory count only: hidden pages and other references may
+    // also depend on a pack. Never delete or rewrite deck.json during remove.
+    if (!deck) return 0;
+    let count = 0;
+    for (const page of pages())
+      for (const tile of (page.tiles || []))
+        for (const key of ["icon", "onIcon", "offIcon"])
+          if (typeof tile[key] === "string" &&
+              (prefix === "mdi:" ?
+                (tile[key].startsWith("mdi:") || (!tile[key].includes(":") && !!tile[key])) :
+                tile[key].startsWith(prefix))) count++;
+    return count;
+  }
+  function confirmIconRemoval(kind, prefix) {
+    const refs = iconReferences(prefix);
+    return confirm("Remove " + kind + " icons from this device?\n\n" +
+      (refs ? "At least " + refs + " saved tile icon selection(s) may depend on this pack.\n" :
+        "Existing tile selections may depend on this pack.\n") +
+      "Those icons will disappear or fall back to built-in symbols until you reinstall the pack. " +
+      "Your saved pages and tile configuration will NOT be deleted.\n\nContinue?");
+  }
+  $("dkIcRemove").onclick = async () => {
+    if (mdiBusy || !mdiInstalled || !confirmIconRemoval("Material Design", "mdi:")) return;
+    mdiBusy = true; icButtons();
+    $("dkIcState").textContent = "Removing MDI icons...";
+    try {
+      const status = await api("/api/deck/icons/remove", { method: "POST" });
+      mdi = null; mdiNames = [];
+      icStatus(status);
+      if (deck) renderPage();
+    } catch (e) {
+      $("dkIcState").textContent = "Could not remove MDI icons: " + e.message;
+    } finally {
+      mdiBusy = false; icButtons();
     }
   };
   $("dkIcFile").onclick = () => $("dkIcInput").click();
@@ -3605,25 +2894,15 @@
   const brProgress = (text) => { $("dkBrState").textContent = text; };
   const brYield = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-  /* One file (var icons = {...}) or, since release 2026.11.2, a loader listing
-     chunk files (export default {...}); icons collects across chunks. */
-  function brandLoader(src) {
-    const c = /\bvar\s+CHUNKS\s*=\s*(\[[^\]]*\])/.exec(src), m = /\bvar\s+MANIFEST\s*=\s*(\{[^}]*\})/.exec(src);
-    if (!c || !m) return null;
-    const chunks = JSON.parse(c[1]).map((n) => String(n).split("?")[0]);
-    if (!chunks.length || chunks.length > 500 || chunks.some((n) => !/^cbi-\d+\.js$/.test(n)))
-      throw new Error("Invalid chunk list");
-    return { chunks, count: Object.keys(JSON.parse(m[1])).length };
-  }
-  function parseBrandSource(src, icons = new Map()) {
+  function parseBrandSource(src) {
     if (src.length > 12 * 1024 * 1024) throw new Error("The .js file is too big");
-    const start = /\b(?:(?:var|let|const)\s+icons\s*=|export\s+default)\s*\{/.exec(src);
-    if (!start)
-      throw new Error(brandLoader(src) ? "This is the loader only: pick its cbi-*.js chunk files too" : "No icons object in this file");
-    const quoted = '"(?:[^"\\\\\\r\\n]|\\\\.)*"';
+    const start = /\b(?:var|let|const)\s+icons\s*=\s*\{|\bexport\s+default\s*\{/.exec(src);
+    if (!start) throw new Error("No icons object in this file");
+    const quoted = '"(?:[^"\\\\\\r\n]|\\\\.)*"';
     const number = '-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?';
     const entry = new RegExp('(' + quoted + ')\\s*:\\s*(\\[\\s*' +
       (number + '\\s*,\\s*').repeat(4) + quoted + '\\s*\\])', 'y');
+    const icons = new Map();
     let at = start.index + start[0].length;
     const space = () => { while (/\s/.test(src[at] || "") && at < src.length) at++; };
     while (true) {
@@ -3646,10 +2925,84 @@
     if (!icons.size) throw new Error("No icons in this file");
     return icons;
   }
-  async function fetchBrandText(url) {
-    const r = await fetch(url);
-    if (!r.ok) throw new Error("Download HTTP " + r.status);
-    return r.text();
+
+  // Current Custom Brand Icons releases split the pack into an index
+  // (CHUNKS + MANIFEST) and many "export default { ... }" chunk modules.
+  // Parse as data, never execute the supplied JavaScript.
+  function parseBrandManifest(src) {
+    const cm = /\b(?:var|let|const)\s+CHUNKS\s*=\s*(\[[^\]]*\])\s*;/.exec(src);
+    const mm = /\b(?:var|let|const)\s+MANIFEST\s*=\s*(\{[^}]*\})\s*;/.exec(src);
+    if (!cm && !mm) return null;
+    if (!cm || !mm) throw new Error("Incomplete chunked brand icon index");
+    let chunks, manifest;
+    try { chunks = JSON.parse(cm[1]); manifest = JSON.parse(mm[1]); }
+    catch (e) { throw new Error("Invalid chunked brand icon index: " + e.message); }
+    if (!Array.isArray(chunks) || !chunks.length || chunks.length > 128 ||
+        !manifest || typeof manifest !== "object" || Array.isArray(manifest) ||
+        Object.keys(manifest).length > 20000)
+      throw new Error("Invalid brand icon chunk index");
+    if (chunks.some((n, i) => typeof n !== "string" ||
+        !new RegExp("^cbi-" + i + "[.]js(?:[?][A-Za-z0-9_=&-]+)?$").test(n)))
+      throw new Error("Unexpected brand icon chunk filename");
+    const names = Object.keys(manifest);
+    if (!names.length || names.some((n) => !validBrandName(n) ||
+        !Number.isInteger(manifest[n]) || manifest[n] < 0 || manifest[n] >= chunks.length))
+      throw new Error("Invalid brand icon manifest entries");
+    return { chunks, manifest, total: names.length };
+  }
+
+  async function brandLatest() {
+    const response = await fetch("https://api.github.com/repos/elax46/custom-brand-icons/releases/latest");
+    if (!response.ok) throw new Error("GitHub release lookup: HTTP " + response.status);
+    const tag = (await response.json()).tag_name;
+    if (typeof tag !== "string" || !brandVersion.test(tag))
+      throw new Error("Invalid GitHub release tag");
+    return { tag, version: tag.replace(/^v(?=[0-9])/, "") };
+  }
+
+  // Use version-pinned chunks so their content always matches the index.
+  // Try both hosts: a blocked CDN should not prevent installing icons.
+  async function fetchBrandDist(tag, filename) {
+    if (!/^(?:custom-brand-icons|cbi-[0-9]+)[.]js$/.test(filename))
+      throw new Error("Invalid brand icon filename");
+    const suffix = encodeURIComponent(tag) + "/dist/" + filename;
+    const urls = [
+      "https://cdn.jsdelivr.net/gh/elax46/custom-brand-icons@" + suffix,
+      "https://raw.githubusercontent.com/elax46/custom-brand-icons/" + suffix,
+    ];
+    let failure = "";
+    for (const url of urls) {
+      try {
+        const r = await fetch(url);
+        if (r.ok) return await r.text();
+        failure = "HTTP " + r.status;
+      } catch (e) { failure = e.message; }
+    }
+    throw new Error("Could not download " + filename + ": " + failure);
+  }
+
+  async function downloadBrandChunks(index, tag) {
+    const icons = new Map(), batchSize = 4;
+    for (let i = 0; i < index.chunks.length; i += batchSize) {
+      brProgress("Downloading brand icons... " + Math.min(i + batchSize, index.chunks.length) +
+        "/" + index.chunks.length + " chunks");
+      const chunkData = await Promise.all(index.chunks.slice(i, i + batchSize).map(async (filename) => {
+        const path = filename.split("?")[0];
+        return parseBrandSource(await fetchBrandDist(tag, path));
+      }));
+      for (let j = 0; j < chunkData.length; j++) {
+        const chunkIndex = i + j;
+        for (const [name, path] of chunkData[j]) {
+          if (index.manifest[name] !== chunkIndex || icons.has(name))
+            throw new Error("Brand icon chunk " + chunkIndex + " does not match the release index");
+          icons.set(name, path);
+        }
+      }
+      await brYield();
+    }
+    if (icons.size !== index.total)
+      throw new Error("Incomplete brand icon pack: got " + icons.size + " of " + index.total);
+    return icons;
   }
 
   function parseBrandPath(d) {
@@ -3801,11 +3154,14 @@
 
   function brButtons() {
     $("dkBrNet").disabled = $("dkBrFile").disabled = brBusy || !brState || !brState.sd;
+    $("dkBrNet").textContent = brState && brState.loaded ? "Update from GitHub" : "Install latest from GitHub";
     $("dkBrRemove").disabled = brBusy || !brState || !brState.sd || !brState.loaded;
+    $("dkBrBrowse").disabled = $("dkBrExport").disabled = brBusy || !cbi || !cbiNames.length;
   }
   function brStatus(s) {
     brState = s;
     $("dkBrDot").className = "dk-dot" + (s.loaded ? " ok" : "");
+    $("dkBrTag").textContent = s.loaded ? "installed" : "-";
     brProgress(!s.sd ? "needs a microSD card" : s.loaded
       ? s.count + " icons, " + s.version + ", " + (s.size / 1024 / 1024).toFixed(2) + " MB" : "not installed");
     brButtons();
@@ -3815,6 +3171,7 @@
     cbiNames = [];
     if (cbiFace) document.fonts.delete(cbiFace);
     cbiFace = null;
+    brButtons();
   }
   async function loadBrand(size) {
     const responses = await Promise.all([fetch("/cbi.otf?v=" + size), fetch("/cbi.names?v=" + size)]);
@@ -3832,7 +3189,9 @@
     cbiNames = lines;
     cbiFace = face;
     document.fonts.add(face);
+    brButtons();
     if (deck) renderPage();
+    if (icBrowse && $("dkIcPick").classList.contains("show")) renderIcons();
   }
   async function brRefresh() {
     brBusy = true;
@@ -3847,61 +3206,108 @@
       brProgress("Brand icons unavailable: " + e.message);
     } finally { brBusy = false; brButtons(); }
   }
+  // Offline bundles are checked against the loader before converting any icons.
+  // No network access is needed when the complete loader and chunks are selected.
+  function parseOfflineBrandFiles(entries) {
+    const indexes = entries.filter(e => e.pack);
+    if (indexes.length > 1) throw new Error("Select only one brand icon loader");
+    const loader = indexes.length ? indexes[0].pack : null;
+    const chunks = entries.filter(e => !e.pack);
+    if (!chunks.length) return null; // a loader on its own uses the existing pinned download path
+    const icons = new Map();
+    if (loader) {
+      const expected = loader.chunks.map(name => name.split("?")[0]);
+      const byName = new Map();
+      for (const item of chunks) {
+        if (!expected.includes(item.name) || byName.has(item.name))
+          throw new Error("Unexpected or duplicate chunk file: " + item.name);
+        byName.set(item.name, item);
+      }
+      const missing = expected.filter(name => !byName.has(name));
+      if (missing.length) throw new Error("Missing brand icon chunks: " + missing.join(", "));
+      for (let i = 0; i < expected.length; i++) {
+        const parsed = parseBrandSource(byName.get(expected[i]).src);
+        for (const [name, path] of parsed) {
+          if (loader.manifest[name] !== i || icons.has(name))
+            throw new Error("Chunk " + expected[i] + " does not match the loader");
+          icons.set(name, path);
+        }
+      }
+      if (icons.size !== loader.total)
+        throw new Error("Incomplete brand icon pack: got " + icons.size + " of " + loader.total);
+    } else {
+      // Old-style single-file exports and selected chunks can form smaller subsets.
+      for (const item of chunks) {
+        for (const [name, path] of parseBrandSource(item.src)) {
+          if (icons.has(name)) throw new Error("Duplicate brand icon: " + name);
+          icons.set(name, path);
+        }
+        if (icons.size > 20000) throw new Error("Too many icons");
+      }
+    }
+    return icons;
+  }
+
   async function brInstall(files) {
-    if (brBusy || !brState || !brState.sd) return;
+    if (brBusy || !brState || !brState.sd ||
+        (brState.loaded && !confirmIconRemoval("brand", "phu:"))) return;
     brBusy = true;
     brButtons();
     $("dkBrDot").className = "dk-dot busy";
     try {
-      let icons = new Map(), version = "file";
-      if (files) {
-        brProgress("Reading the .js files...");
-        const srcs = [];
-        for (const f of files) {
-          if (f.size > 12 * 1024 * 1024) throw new Error("The .js file is too big: " + f.name);
-          srcs.push(await f.text());
+      let icons, version = "file";
+      if (files && files.length) {
+        if (files.length > 129) throw new Error("Too many brand icon files");
+        brProgress("Reading brand icon .js files...");
+        const entries = [];
+        const fileNames = new Set();
+        for (const file of files) {
+          if (file.size > 12 * 1024 * 1024) throw new Error("File is too big: " + file.name);
+          if (!/^(?:custom-brand-icons|cbi-[0-9]+|[A-Za-z0-9_.-]+)[.]js$/.test(file.name))
+            throw new Error("Invalid .js filename: " + file.name);
+          if (fileNames.has(file.name)) throw new Error("Duplicate filename: " + file.name);
+          fileNames.add(file.name);
+          const src = await file.text();
+          entries.push({ name: file.name, src, pack: parseBrandManifest(src) });
         }
-        // A loader picked along with its chunks adds nothing but the icon count.
-        const lds = srcs.map(brandLoader),
-          ld = srcs.length > 1 ? lds.find(Boolean) : null;
-        (ld ? srcs.filter((t, k) => !lds[k]) : srcs).forEach((t) => parseBrandSource(t, icons));
-        if (ld && icons.size !== ld.count)
-          throw new Error("Got " + icons.size + " icons, the loader lists " + ld.count + ": pick all " + ld.chunks.length + " cbi-*.js files");
+        icons = parseOfflineBrandFiles(entries);
+        if (!icons) {
+          const pack = entries[0].pack;
+          if (!pack || entries.length !== 1) throw new Error("No icon data in selected files");
+          brProgress("Finding the matching release for the uploaded index...");
+          const latest = await brandLatest();
+          const upstream = parseBrandManifest(await fetchBrandDist(latest.tag, "custom-brand-icons.js"));
+          if (!upstream || JSON.stringify(upstream.chunks) !== JSON.stringify(pack.chunks) ||
+              JSON.stringify(upstream.manifest) !== JSON.stringify(pack.manifest))
+            throw new Error("The uploaded index does not match the latest release. " +
+              "Select the index with all of its cbi-N.js files to install offline.");
+          version = latest.version;
+          icons = await downloadBrandChunks(pack, latest.tag);
+        }
       } else {
         brProgress("Finding the latest GitHub release...");
-        const release = await fetch("https://api.github.com/repos/elax46/custom-brand-icons/releases/latest");
-        if (!release.ok) throw new Error("GitHub HTTP " + release.status);
-        const tag = (await release.json()).tag_name;
-        if (typeof tag !== "string" || !brandVersion.test(tag)) throw new Error("Invalid GitHub release tag");
-        version = tag.replace(/^v(?=\d)/, "");
+        const latest = await brandLatest();
+        version = latest.version;
         brProgress("Downloading Custom Brand Icons " + version + "...");
-        const base = "https://cdn.jsdelivr.net/gh/elax46/custom-brand-icons@" + encodeURIComponent(tag) + "/dist/",
-          src = await fetchBrandText(base + "custom-brand-icons.js"),
-          ld = brandLoader(src);
-        if (!ld) parseBrandSource(src, icons);
-        else {
-          for (let i = 0; i < ld.chunks.length; i++) {
-            brProgress("Downloading Custom Brand Icons " + version + " (" + (i + 1) + "/" + ld.chunks.length + ")...");
-            parseBrandSource(await fetchBrandText(base + ld.chunks[i]), icons);
-          }
-          if (icons.size !== ld.count) throw new Error("Got " + icons.size + " icons, the release lists " + ld.count);
-        }
+        const src = await fetchBrandDist(latest.tag, "custom-brand-icons.js");
+        const pack = parseBrandManifest(src);
+        icons = pack ? await downloadBrandChunks(pack, latest.tag) : parseBrandSource(src);
       }
       const { data, index, skipped } = await convertBrand(icons, version);
       brProgress("Sending to the device and installing...");
       const fd = new FormData();
       fd.append("font", new Blob([data], { type: "font/otf" }), "cbi.otf");
       fd.append("names", new Blob([index], { type: "text/plain" }), "cbi.names");
-      const s = await api("/api/deck/brand", { method: "POST", body: fd });
+      const installed = await api("/api/deck/brand", { method: "POST", body: fd });
       clearBrand();
-      brStatus(s);
+      brStatus(installed);
       try {
-        await loadBrand(s.size);
+        await loadBrand(installed.size);
         if (skipped.length) brProgress($("dkBrState").textContent + " (skipped, too complex: " + skipped.join(", ") + ")");
       } catch (e) { brProgress("Installed, but the portal could not read the font: " + e.message); }
     } catch (e) {
       $("dkBrDot").className = "dk-dot err";
-      brProgress("Not installed: " + e.message + (files ? "" : '. Download the .js files from the release\'s dist folder and use "Upload .js files".'));
+      brProgress("Not installed: " + e.message);
     } finally { brBusy = false; brButtons(); }
   }
   $("dkBrNet").onclick = () => brInstall(null);
@@ -3925,24 +3331,28 @@
     finally { brBusy = false; brButtons(); }
   };
 
+  // Reuse the tile icon picker as a standalone, searchable brand icon gallery.
+  // Browse mode never changes deck.json: clicking a brand copies its phu: name.
   function renderIcons() {
-    const t = pages()[cur].tiles[icFor];
-    const q = $("dkIcQ").value.trim().toLowerCase().replace(/^mdi:/, "");
-    const cur0 = (t[icKey] || "").replace(/^mdi:/, "");
-    const all = mdiNames.concat(cbiNames.map((n) => "phu:" + n));
+    const t = icBrowse ? null : pages()[cur].tiles[icFor];
+    const q = $("dkIcQ").value.trim().toLowerCase().replace(/^(?:mdi|phu):/, "");
+    const cur0 = t ? (t[icKey] || "").replace(/^mdi:/, "") : "";
+    const all = icBrowse ? cbiNames.map((n) => "phu:" + n) :
+      mdiNames.concat(cbiNames.map((n) => "phu:" + n));
     const list = q ? all.filter((n) => n.toLowerCase().includes(q)) : all;
-    const shown = list.slice(0, 240);
-    $("dkIcInfo").textContent =
-      (t[icKey]
-        ? "Chosen: " + t[icKey]
-        : icKey === "onIcon"
-          ? "On icon: the same as the tile's icon"
-          : "Automatic (the entity icon in HA, else a default)") +
-      " - " +
-      list.length +
-      " match" +
-      (list.length === 1 ? "" : "es") +
-      (list.length > shown.length ? ", showing " + shown.length : "");
+    const shown = list.slice(0, icShown);
+    $("dkIcInfo").textContent = icBrowse
+      ? list.length + " installed brand icon" + (list.length === 1 ? "" : "s") +
+        " matching. Click an icon to copy its phu: name." +
+        (list.length > shown.length ? " Showing " + shown.length + "." : "")
+      : (t[icKey]
+          ? "Chosen: " + t[icKey]
+          : icKey === "onIcon"
+            ? "On icon: the same as the tile's icon"
+            : "Automatic (the entity icon in HA, else a default)") +
+        " - " + list.length + " match" + (list.length === 1 ? "" : "es") +
+        (list.length > shown.length ? ", showing " + shown.length : "");
+    $("dkIcMore").hidden = list.length <= shown.length;
     $("dkIcGrid").innerHTML =
       shown
         .map(
@@ -3960,14 +3370,45 @@
             "</small></button>",
         )
         .join("") || '<p class="dk-empty">Nothing matches.</p>';
-    $("dkIcGrid")
-      .querySelectorAll("[data-n]")
-      .forEach((b) => (b.onclick = () => setIcon(b.dataset.n.startsWith("phu:") ? b.dataset.n : "mdi:" + b.dataset.n)));
+    $("dkIcGrid").querySelectorAll("[data-n]").forEach((b) => {
+      b.onclick = () => {
+        const id = b.dataset.n.startsWith("phu:") ? b.dataset.n : "mdi:" + b.dataset.n;
+        if (icBrowse) copyBrandName(id);
+        else setIcon(id);
+      };
+    });
+  }
+  function copyBrandName(name) {
+    const done = () => { $("dkIcInfo").textContent = "Copied " + name + " — paste it into a tile's icon field."; };
+    const fallback = () => {
+      // TouchDeck is commonly opened over plain HTTP on a LAN, where the
+      // modern Clipboard API is disabled. execCommand works on those pages.
+      const field = document.createElement("textarea");
+      field.value = name;
+      field.style.cssText = "position:fixed;left:-9999px;opacity:0";
+      document.body.appendChild(field);
+      field.focus();
+      field.select();
+      let copied = false;
+      try { copied = document.execCommand("copy"); } catch (e) {}
+      field.remove();
+      if (copied) done();
+      else {
+        window.prompt("Copy this brand icon name:", name);
+        $("dkIcInfo").textContent = "Selected: " + name;
+      }
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(name).then(done, fallback);
+    } else fallback();
   }
   function setIcon(v) {
     const t = pages()[cur].tiles[icFor];
     if (v) t[icKey] = v;
     else delete t[icKey];
+    // On a navigation tile explicitly selecting an icon means we should
+    // display it, not keep an older PNG selection covering it.
+    if (t.type === "nav" && icKey === "icon") delete t.offImage;
     setDirty(true);
     $("dkIcPick").classList.remove("show");
     renderPage();
@@ -3977,17 +3418,56 @@
       alert("Install the icon font first (Icons card above).");
       return;
     }
+    icBrowse = false;
+    icShown = 240;
     icFor = i;
     icKey = key || "icon";
-    const opt = iconOptional(pages()[cur].tiles[i]);
-    $("dkIcAuto").textContent = icKey === "onIcon" ? "Same" : opt ? "No icon" : "Automatic";
-    $("dkIcNone").hidden = icKey === "onIcon" || opt;
+    $("dkIcAuto").hidden = false;
+    $("dkIcAuto").textContent = icKey === "onIcon" ? "Same" : "Automatic";
+    $("dkIcNone").hidden = icKey === "onIcon";
+    $("dkIcQ").placeholder = "Search icons, e.g. lamp, netflix, spotify";
     $("dkIcQ").value = "";
     $("dkIcPick").classList.add("show");
     renderIcons();
     $("dkIcQ").focus();
   }
-  $("dkIcQ").oninput = renderIcons;
+  function openBrandBrowser() {
+    if (!cbi || !cbiNames.length) return;
+    icBrowse = true;
+    icShown = 240;
+    $("dkIcAuto").hidden = true;
+    $("dkIcNone").hidden = true;
+    $("dkIcQ").placeholder = "Search installed brands, e.g. netflix, spotify, youtube";
+    $("dkIcQ").value = "";
+    $("dkIcPick").classList.add("show");
+    renderIcons();
+    $("dkIcQ").focus();
+  }
+  $("dkIcQ").oninput = () => {
+    icShown = 240;
+    $("dkIcGrid").scrollTop = 0;
+    renderIcons();
+  };
+  $("dkIcMore").onclick = () => {
+    const grid = $("dkIcGrid"), pos = grid.scrollTop;
+    icShown += 240;
+    renderIcons();
+    grid.scrollTop = pos;
+  };
+  $("dkBrBrowse").onclick = openBrandBrowser;
+  $("dkBrExport").onclick = () => {
+    if (!cbiNames.length) return;
+    const data = cbiNames.map((n) => "phu:" + n).join("\n") + "\n";
+    const file = new Blob([data], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(file);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "tactula-brand-icons-" + (brState && brState.version || "installed") + ".txt";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
   $("dkIcAuto").onclick = () => setIcon("");
   $("dkIcNone").onclick = () => setIcon("none");
   $("dkIcClose").onclick = () => $("dkIcPick").classList.remove("show");
@@ -4006,17 +3486,34 @@
     if (deck) renderPage();
   };
 
-  /* save; the Printers page has its own button for the same deck */
-  $("dkSave").onclick = $("dkPrnSave").onclick = async () => {
+  /* Save the deck layout and actions. Show the same toast used by other
+     portal settings, without changing any saved layout or firmware settings. */
+  let deckToastTimer = 0;
+  function deckToast(message, error = false) {
+    const toast = document.getElementById("toast");
+    if (!toast) return;
+    toast.textContent = message;
+    toast.className = "toast show" + (error ? " error" : "");
+    clearTimeout(deckToastTimer);
+    deckToastTimer = setTimeout(() => {
+      if (toast.textContent === message) toast.className = "toast";
+    }, 4200);
+  }
+  $("dkSave").onclick = async () => {
+    const button = $("dkSave");
+    button.disabled = true;
     try {
-      await api("/api/deck", {
+      const result = await api("/api/deck", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(deck),
       });
       setDirty(false);
+      deckToast(result.message || "Deck saved");
     } catch (e) {
-      alert("Not saved: " + e.message);
+      deckToast("Not saved: " + e.message, true);
+    } finally {
+      button.disabled = false;
     }
   };
   window.addEventListener("beforeunload", (e) => {
@@ -4026,33 +3523,30 @@
     }
   });
 
-  $("dkPrnAdd").onclick = () => {
-    deck.printers = deck.printers || [];
-    let n = deck.printers.length + 1;
-    while (deck.printers.some((d) => d.id === "printer" + n)) n++;
-    deck.printers.push({ id: "printer" + n, name: "Printer " + n, ip: "" });
-    setDirty(true);
-    renderPrinters();
-  };
   (async function init() {
-    const host = document.getElementById("prnListHost");
-    if (host) host.appendChild($("dkPrnCard"));
     haStatus();
     icRefresh();
     brRefresh();
-    printersStatus();
+    // Artwork already uploaded via Maintenance; no changes to existing PNG files.
+    try {
+      const listing = await api("/api/bedroom/icons");
+      bedroomIcons = (listing.files || []).map((f) => f.name).filter(Boolean).sort();
+    } catch (e) { bedroomIcons = []; }
     setInterval(() => {
       if (visible()) {
         haStatus();
-        printersStatus();
       }
     }, 3000);
-    await loadPc();
+    try { const cfg = await api("/api/config"); bambuAvailable = cfg.bambu_available === true; if (cfg.display) ori = cfg.display.rotation % 2 ? "landscape" : "portrait"; } catch (e) {}
+
     ori = ori || "landscape";
     try {
       const r = await api("/api/deck");
       deck = r.deck;
-      deck.pages = deck.pages.filter((p) => p.type !== "metrics");
+      bambuEnabled = r.bambu_enabled === true;
+      deck.pages = deck.pages.filter((p) => p.type !== "metrics" && !p.printer && !["pc-on", "pc-off"].includes(p.when));
+      deck.pages.forEach((p) => { p.tiles = p.tiles.filter((t) => !["printer", "metric", "media"].includes(t.type) && t.control !== "pc-volume" && t.tap?.action !== "pc" && t.hold?.action !== "pc" && !["pc-on", "pc-off"].includes(t.when)); });
+      delete deck.printers;  // Strip legacy printer config on next save.
       $("dkHeader").checked = r.header !== false;
       render();
     } catch (e) {

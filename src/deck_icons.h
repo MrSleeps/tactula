@@ -8,6 +8,9 @@
 
 namespace deck {
 
+// Register the microSD filesystem (B:) for PNG tiles, even without brand fonts.
+void iconsRegisterSdFs();
+
 // Where the font lives on LittleFS.
 const char* iconsPath();
 // Index the font at path; iconFont() then reads iconsPath(). The current

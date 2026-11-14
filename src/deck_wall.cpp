@@ -2,7 +2,6 @@
 #include "deck_wall.h"
 #include <src/misc/cache/instance/lv_image_cache.h>
 #include "deck_config.h"
-#include "deck_panel.h"
 #include <LittleFS.h>
 #include <esp_heap_caps.h>
 #include <esp_task_wdt.h>
@@ -18,7 +17,7 @@ namespace deck {
 namespace {
 
 uint16_t* s_sharp = nullptr;  // RGB565, dimmed and dithered
-uint8_t* s_blur = nullptr;    // RGB888 (LVGL order B, G, R), undimmed
+uint8_t* s_blur = nullptr;    // RGB888 (LVGL order B, G, R), black-overlay dimmed
 int s_w = 0, s_h = 0, s_blurR = -1, s_dim = -1;
 lv_image_dsc_t s_sharpDsc, s_blurDsc;
 uint32_t s_generation = 0;
@@ -91,7 +90,6 @@ struct JpegInput {
   WallReader file;
   uint8_t *r, *g, *b;
   int w, h;
-  int step = 1;  // bytes between two pixels of one channel
   uint16_t* rgb565 = nullptr;
   JpegInput(const char* path, uint8_t* red, uint8_t* green, uint8_t* blue, int width, int height)
       : file(path), r(red), g(green), b(blue), w(width), h(height) {}
@@ -115,20 +113,18 @@ int jpegOutput(JDEC* jd, void* pixels, JRECT* rect) {
       // LVGL's bundled JD_FORMAT 0 emits B, G, R, not upstream RGB order.
       if (in.rgb565) in.rgb565[i] = wallDither565(src[2], src[1], src[0], x, y);
       else {
-        in.b[i * in.step] = src[0];
-        in.g[i * in.step] = src[1];
-        in.r[i * in.step] = src[2];
+        in.b[i] = src[0];
+        in.g[i] = src[1];
+        in.r[i] = src[2];
       }
     }
   }
   return 1;
 }
 
-bool jpegLoad(const char* path, int w, int h, uint8_t* r, uint8_t* g, uint8_t* b, uint16_t* rgb565 = nullptr,
-              int step = 1) {
+bool jpegLoad(const char* path, int w, int h, uint8_t* r, uint8_t* g, uint8_t* b, uint16_t* rgb565 = nullptr) {
   JpegInput in(path, r, g, b, w, h);
   in.rgb565 = rgb565;
-  in.step = step;
   if (!in.file) return false;
   if (in.file.read() != 0xFF || in.file.read() != 0xD8 || !in.file.seek(0)) return false;
   // FASTDECODE 1 needs up to 4 KB for standard tables, input and MCU buffers.
@@ -188,15 +184,15 @@ void fillDsc(lv_image_dsc_t& d, const void* px, int w, int h, lv_color_format_t 
 uint8_t clamp8(float v) { return v <= 0 ? 0 : v >= 255 ? 255 : (uint8_t)(v + 0.5f); }
 
 // No file yet: a dusk gradient with a warm glow, so Glass works out of the box.
-// Written as RGB888 channels (r, g, b; step bytes apart), like a loaded file.
-void gradient(uint8_t* r, uint8_t* g, uint8_t* b, int w, int h, int step) {
+// Written as RGB888 planes (r, g, b), like a loaded file.
+void gradient(uint8_t* r, uint8_t* g, uint8_t* b, int w, int h) {
   for (int y = 0; y < h; y++)
     for (int x = 0; x < w; x++) {
       const float t = (x / (float)w + y / (float)h) / 2;
       const float dx = (x - 0.2f * w) / w, dy = (y - 1.05f * h) / h;
       const float glow = fmaxf(0, 1 - sqrtf(dx * dx + dy * dy) / 0.75f);
       const float g2 = glow * glow;
-      const int i = (y * w + x) * step;
+      const int i = y * w + x;
       r[i] = clamp8(0x24 + (0x16 - 0x24) * t + 0xB0 * g2);
       g[i] = clamp8(0x2C + (0x5E - 0x2C) * t + 0x58 * g2);
       b[i] = clamp8(0x5C + (0x66 - 0x5C) * t + 0x10 * g2);
@@ -204,7 +200,7 @@ void gradient(uint8_t* r, uint8_t* g, uint8_t* b, int w, int h, int step) {
 }
 
 // The file is RGB888 (r, g, b bytes) or, from older portals, RGB565.
-bool loadFile(uint8_t* r, uint8_t* g, uint8_t* b, int w, int h, int step) {
+bool loadFile(uint8_t* r, uint8_t* g, uint8_t* b, int w, int h) {
   if (!deckFsReady()) return false;
   WallReader f(wallPath(w, h), true);
   if (!f) return false;
@@ -217,7 +213,7 @@ bool loadFile(uint8_t* r, uint8_t* g, uint8_t* b, int w, int h, int step) {
     for (int y = 0; ok && y < h; y++) {
       ok = f.read(row, w * bpp) == (size_t)(w * bpp);
       for (int x = 0; ok && x < w; x++) {
-        const int i = (y * w + x) * step;
+        const int i = y * w + x;
         if (bpp == 3) {
           r[i] = row[x * 3];
           g[i] = row[x * 3 + 1];
@@ -289,52 +285,6 @@ void blurPlane(uint8_t* p, uint8_t* tmp, int w, int h, int r) {
   if (esp_task_wdt_status(nullptr) == ESP_OK) esp_task_wdt_reset();
 }
 
-// Blur one channel of an interleaved picture in place (step bytes apart),
-// same result as blurPlane. scratch: max(w, 32 * h) bytes.
-void blurChannel(uint8_t* p, int step, int w, int h, int r, uint8_t* scratch) {
-  if (r <= 0) return;
-  const int n = 2 * r + 1;
-  const uint32_t inv = 0xFFFFFFFFu / n + 1;
-  auto avg = [inv](uint32_t s) { return (uint8_t)(((uint64_t)s * inv) >> 32); };
-  constexpr int STRIP = 32;
-  uint32_t sum[STRIP];
-  for (int pass = 0; pass < 3; pass++) {
-    for (int l = 0; l < h; l++) {
-      uint8_t* s = p + (size_t)l * w * step;
-      uint32_t rowSum = n / 2;
-      for (int i = -r; i <= r; i++) rowSum += s[(i < 0 ? 0 : i >= w ? w - 1 : i) * step];
-      for (int i = 0; i < w; i++) {
-        scratch[i] = avg(rowSum);
-        const int add = i + r + 1, sub = i - r;
-        rowSum += s[(add >= w ? w - 1 : add) * step] - s[(sub < 0 ? 0 : sub) * step];
-      }
-      for (int i = 0; i < w; i++) s[i * step] = scratch[i];
-    }
-    for (int x0 = 0; x0 < w; x0 += STRIP) {
-      const int cols = std::min(STRIP, w - x0);
-      auto row = [&](int y) { return p + ((size_t)(y < 0 ? 0 : y >= h ? h - 1 : y) * w + x0) * step; };
-      for (int c = 0; c < cols; c++) sum[c] = n / 2;
-      for (int i = -r; i <= r; i++) {
-        const uint8_t* s = row(i);
-        for (int c = 0; c < cols; c++) sum[c] += s[c * step];
-      }
-      for (int i = 0; i < h; i++) {
-        uint8_t* d = scratch + i * cols;
-        const uint8_t *a = row(i + r + 1), *b = row(i - r);
-        for (int c = 0; c < cols; c++) {
-          d[c] = avg(sum[c]);
-          sum[c] += a[c * step] - b[c * step];
-        }
-      }
-      for (int i = 0; i < h; i++) {
-        uint8_t* d = row(i);
-        for (int c = 0; c < cols; c++) d[c * step] = scratch[i * cols + c];
-      }
-    }
-  }
-  if (esp_task_wdt_status(nullptr) == ESP_OK) esp_task_wdt_reset();
-}
-
 }  // namespace
 
 void wallBlurPlane(uint8_t* p, uint8_t* tmp, int w, int h, int r) { blurPlane(p, tmp, w, h, r); }
@@ -346,37 +296,45 @@ namespace {
 bool prepareImage(WallJob& job) {
   const int w = job.w, h = job.h;
   const size_t n = (size_t)w * h;
-  // Decoded straight into the blurred picture (b, g, r bytes) and blurred
-  // there: a new wallpaper takes what the old one frees, PSRAM has no more.
   job.sharp = (uint16_t*)heap_caps_malloc(n * 2, MALLOC_CAP_SPIRAM);
   job.blurred = (uint8_t*)heap_caps_malloc(n * 3, MALLOC_CAP_SPIRAM);
-  uint8_t* tmp = (uint8_t*)heap_caps_malloc(std::max(w, 32 * h), MALLOC_CAP_SPIRAM);
-  if (!job.sharp || !job.blurred || !tmp) {
+  uint8_t* planes = (uint8_t*)heap_caps_malloc(n * 4, MALLOC_CAP_SPIRAM);
+  if (!job.sharp || !job.blurred || !planes) {
     Serial.println("Deck: wallpaper PSRAM allocation failed");
-    free(tmp);
+    free(planes);
     return false;
   }
-  uint8_t *b = job.blurred, *g = job.blurred + 1, *r = job.blurred + 2;
+  uint8_t *r = planes, *g = planes + n, *b = planes + 2 * n, *tmp = planes + 3 * n;
   uint32_t start = millis();
   const bool jpeg = job.name[0];
-  const bool loaded = jpeg ? jpegLoad(job.path, w, h, r, g, b, nullptr, 3)
-                           : loadFile(r, g, b, w, h, 3);
+  const bool loaded = jpeg ? jpegLoad(job.path, w, h, r, g, b)
+                           : loadFile(r, g, b, w, h);
   if (jpeg && !loaded) {
     Serial.printf("Deck: wallpaper decode failed: %s\n", job.name);
-    free(tmp);
+    free(planes);
     return false;
   }
-  if (!loaded) gradient(r, g, b, w, h, 3);
+  if (!loaded) gradient(r, g, b, w, h);
   const uint32_t decodeMs = millis() - start;
   start = millis();
+  // Pre-composite a black overlay with the wallpaper ONCE when it loads.
+  // Keep this off the render loop: both sharp and frosted tiles use the same
+  // dimming, while labels, icons and controls are drawn afterwards untouched.
   const int keep = (100 - job.dim) * 256 / 100;
   for (int y = 0; y < h; y++)
     for (int x = 0; x < w; x++) {
-      const int i = (y * w + x) * 3;
-      job.sharp[y * w + x] = wallDither565(r[i] * keep >> 8, g[i] * keep >> 8, b[i] * keep >> 8, x, y);
+      const int i = y * w + x;
+      job.sharp[i] = wallDither565(r[i] * keep >> 8, g[i] * keep >> 8, b[i] * keep >> 8, x, y);
     }
-  for (int c = 0; c < 3; c++) blurChannel(job.blurred + c, 3, w, h, job.blur, tmp);
-  free(tmp);
+  uint8_t* ch[3] = {b, g, r};
+  for (int c = 0; c < 3; c++) {
+    blurPlane(ch[c], tmp, w, h, job.blur);
+    // The older Glass implementation left blurred wallpaper undimmed, so
+    // bright photos still washed out text on translucent tile backgrounds.
+    // Darken during the existing blur-to-RGB888 copy; no extra buffer/pass.
+    for (size_t i = 0; i < n; i++) job.blurred[i * 3 + c] = ch[c][i] * keep >> 8;
+  }
+  free(planes);
   Serial.printf("Deck: wallpaper %s decode %lu ms, dim+blur %lu ms\n",
                 jpeg ? job.name : loaded ? "legacy" : "gradient",
                 (unsigned long)decodeMs, (unsigned long)(millis() - start));
@@ -603,7 +561,7 @@ bool wallLoadPicture(const char* path, int w, int h, uint16_t* pixels) {
 }
 
 bool wallValidateJpeg(const char* path, bool portrait) {
-  return jpegLoad(path, screenW(portrait), screenH(portrait), nullptr, nullptr, nullptr);
+  return jpegLoad(path, portrait ? 320 : 480, portrait ? 480 : 320, nullptr, nullptr, nullptr);
 }
 
 void wallInvalidateJobs() {
@@ -683,12 +641,12 @@ void wallGalleryChanged(bool portrait) {
   wallRequest(portrait, next);
 }
 
-bool wallPoll(int w, int h, bool idle, bool canSwitch, bool rotate, void (*makeRoom)()) {
+bool wallPoll(int w, int h, bool idle, bool canSwitch) {
   const bool p = w < h;
   const uint32_t now = millis();
   if (jobState() == JOB_READY) {
     if (s_job.epoch != s_epoch || s_job.requestId != s_requestId[p] || s_job.settings != settingsKey() ||
-        s_job.w != w || s_job.h != h || !s_job.ok || (s_job.automatic && !rotate)) {
+        s_job.w != w || s_job.h != h || !s_job.ok) {
       if (!s_job.ok) s_retryMs = now;
       discardJob();
     } else {
@@ -700,10 +658,9 @@ bool wallPoll(int w, int h, bool idle, bool canSwitch, bool rotate, void (*makeR
   if (jobState() != JOB_IDLE || dispSettings.theme != THEME_GLASS || !canSwitch) return false;
   if (s_retryMs && now - s_retryMs < 30000) return false;
   initGallery(p);
-  if (s_request[p] && s_automatic[p] && !rotate) s_request[p] = false;
   if (s_request[p] && s_automatic[p] && !idle) return false;
   if (!s_request[p]) {
-    if (!rotate || !idle || !dispSettings.wallEvery || now - s_changedMs < (uint32_t)dispSettings.wallEvery * 60000)
+    if (!idle || !dispSettings.wallEvery || now - s_changedMs < (uint32_t)dispSettings.wallEvery * 60000)
       return false;
     if (now - s_scanMs < 1000) return false;
     s_scanMs = now;
@@ -711,7 +668,6 @@ bool wallPoll(int w, int h, bool idle, bool canSwitch, bool rotate, void (*makeR
     wallNext(p);
     s_automatic[p] = true;
   }
-  if (makeRoom) makeRoom();
   WallJob job = {};
   job.w = w;
   job.h = h;

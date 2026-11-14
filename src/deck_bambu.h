@@ -58,6 +58,7 @@ struct PrinterState {
   // Job
   char gcodeState[16] = "";   // IDLE, PREPARE, RUNNING, PAUSE, FINISH, FAILED
   char job[64] = "";          // subtask_name
+  char friendlyName[64] = ""; // Home Assistant sensor.*_printer_name
   uint8_t progress = 0;       // %
   uint16_t remainingMin = 0;
   uint16_t layer = 0, totalLayers = 0;

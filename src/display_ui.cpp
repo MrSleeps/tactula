@@ -4,8 +4,6 @@
 #include "deck_ui.h"
 #include "deck_touch.h"
 #include <time.h>
-#include <driver/gpio.h>
-#include <esp_system.h>
 
 static ScreenState s_screen = SCREEN_SPLASH;
 
@@ -45,7 +43,7 @@ constexpr uint8_t PEEK_LEVEL = 26;
 constexpr uint32_t PEEK_MS = 60000;
 
 void setBacklight(uint8_t level) {
-  ledcWrite(BOARD_BACKLIGHT_PIN, level);
+  analogWrite(BACKLIGHT_PIN, level);
   lastAppliedBrightness = level;
 }
 
@@ -175,32 +173,12 @@ void updateBacklightControl() {
 // ---------------------------------------------------------------------------
 //  Init
 // ---------------------------------------------------------------------------
-#if BOARD_BACKLIGHT_HOLD_ON_RESTART
-// An undriven backlight pin lights the panel white through reset and boot:
-// hold it off across esp_restart() until the splash is on the panel.
-static void backlightOffForRestart() {
-  ledcDetach(BOARD_BACKLIGHT_PIN);
-  pinMode(BOARD_BACKLIGHT_PIN, OUTPUT);
-  digitalWrite(BOARD_BACKLIGHT_PIN, BOARD_BACKLIGHT_ACTIVE_LOW ? HIGH : LOW);
-  gpio_hold_en((gpio_num_t)BOARD_BACKLIGHT_PIN);
-}
-#endif
-
 void initDisplay() {
-#if BOARD_BACKLIGHT_HOLD_ON_RESTART
-  pinMode(BOARD_BACKLIGHT_PIN, OUTPUT);
-  digitalWrite(BOARD_BACKLIGHT_PIN, BOARD_BACKLIGHT_ACTIVE_LOW ? HIGH : LOW);
-#endif
   // Panel bring-up wants the rails settled after power-on.
   delay(500);
   if (!deckBegin(dispSettings.rotation)) Serial.println("Display: deck pipeline init FAILED");
   displayTick();  // the splash is on the panel before the light comes on
-#if BOARD_BACKLIGHT_HOLD_ON_RESTART
-  gpio_hold_dis((gpio_num_t)BOARD_BACKLIGHT_PIN);
-  esp_register_shutdown_handler(backlightOffForRestart);
-#endif
-  ledcAttach(BOARD_BACKLIGHT_PIN, BOARD_BACKLIGHT_FREQ, 8);
-  if (BOARD_BACKLIGHT_ACTIVE_LOW) ledcOutputInvert(BOARD_BACKLIGHT_PIN, true);
+  pinMode(BACKLIGHT_PIN, OUTPUT);
   setBacklight(brightness);
 }
 

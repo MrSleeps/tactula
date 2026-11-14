@@ -3,26 +3,25 @@
 #include "led.h"       // sanitizeLedPin()
 #include "haptic.h"    // sanitizeHapticPin()
 #include <Preferences.h>
+#include "settings_nvs_migration.h"
 
 char wifiSSID[33] = "";
 char wifiPass[65] = "";
 uint8_t brightness = 200;
 DisplaySettings dispSettings;
 NetworkSettings netSettings;
-uint8_t timeSource = TIME_SRC_NTP;
 BacklightSettings backlightSettings;
 LedSettings ledSettings;
-AdvancedSettings advSettings = {};
 PresenceSettings presenceSettings;
 HapticSettings hapticSettings;
 AudioSettings audioSettings;
-PrinterSettings printerSettings;
 
 bool validFrameEvery(int minutes) {
   return minutes == 1 || minutes == 2 || minutes == 5 || minutes == 10 || minutes == 15 || minutes == 30;
 }
 
 static Preferences prefs;
+static const char* s_settingsNamespace = NVS_NAMESPACE;
 static const uint8_t BACKLIGHT_SETTINGS_VERSION = 1;
 static const uint8_t LED_SETTINGS_VERSION = 2;
 
@@ -94,10 +93,10 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.tempScaleMax     = GAUGE_TEMP_SCALE_DEFAULT;
   ds.powerScaleW      = GAUGE_POWER_SCALE_DEFAULT;
   ds.warnThresholdPct = 90;
-  ds.theme            = THEME_MIDNIGHT;
+  ds.theme            = THEME_GLASS;  // Bedroom deck defaults to the Glass theme
   ds.glassTint        = 40;
   ds.glassBlur        = 12;
-  ds.glassDim         = 15;
+  ds.glassDim         = 25;
   ds.glassOn          = 80;
   ds.wallEvery        = 5;
   ds.wallOrder        = 0;
@@ -110,7 +109,6 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.dailyCount       = 12;
   ds.glassAutoText    = false;
   ds.smoothCharts     = true;
-  ds.printerFx        = true;
   ds.tileFx           = 0;
   ds.fxTouch = ds.fxToggle = ds.fxPage = ds.fxCard = 0;
 }
@@ -131,7 +129,6 @@ void defaultLedSettings(LedSettings& ls) {
   ls.nightEnabled = 1;
   ls.nightBrightness = 24;
   ls.followDisplay = 1;
-  ls.offlineOff = 0;
   ls.nightStartMinute = 22 * 60;
   ls.nightEndMinute = 7 * 60;
 }
@@ -142,7 +139,12 @@ void defaultNetworkSettings(NetworkSettings& ns) {
   ns.showIPAtStartup = true;
   ns.use24h = true;
   ns.mdnsEnabled = true;
-  sanitizeHostname("touchdeck", ns.hostname, sizeof(ns.hostname));
+  // Default includes a stable device-specific suffix so multiple tactula devices
+  // do not advertise the same DHCP and mDNS hostname.
+  char defaultHost[32];
+  snprintf(defaultHost, sizeof(defaultHost), "tactula-%04x",
+           (unsigned)(ESP.getEfuseMac() & 0xFFFF));
+  sanitizeHostname(defaultHost, ns.hostname, sizeof(ns.hostname));
 }
 
 // ---------------------------------------------------------------------------
@@ -151,12 +153,15 @@ void defaultNetworkSettings(NetworkSettings& ns) {
 static uint16_t clampScale(uint16_t v, uint16_t def) { return v ? v : def; }
 
 void loadSettings() {
+  // Migrate before reading Wi-Fi and display settings; on failure use the old
+  // namespace without disturbing the contents of either namespace.
+  s_settingsNamespace = migrateSettingsNamespace() ? NVS_NAMESPACE : NVS_NAMESPACE_LEGACY;
   defaultDisplaySettings(dispSettings);
   defaultNetworkSettings(netSettings);
   defaultBacklightSettings(backlightSettings);
   defaultLedSettings(ledSettings);
 
-  prefs.begin(NVS_NAMESPACE, false);
+  prefs.begin(s_settingsNamespace, false);
   if (!prefs.isKey("rot")) {
     migrateFromStatNode();
   } else {
@@ -165,12 +170,11 @@ void loadSettings() {
     dispSettings.powerScaleW = prefs.getUShort("pscale", dispSettings.powerScaleW);
     dispSettings.warnThresholdPct = prefs.getUChar("warnpct", dispSettings.warnThresholdPct);
   }
-  dispSettings.theme = prefs.getUChar("theme", THEME_MIDNIGHT);
-  if (dispSettings.theme > THEME_GLASS) dispSettings.theme = THEME_MIDNIGHT;
-  timeSource = prefs.getUChar("tsrc", TIME_SRC_NTP) == TIME_SRC_HA ? TIME_SRC_HA : TIME_SRC_NTP;
+  dispSettings.theme = prefs.getUChar("theme", dispSettings.theme);
+  if (dispSettings.theme > THEME_GLASS) dispSettings.theme = THEME_GLASS;
   dispSettings.glassTint = min<uint8_t>(prefs.getUChar("gtint", dispSettings.glassTint), 90);
   dispSettings.glassBlur = min<uint8_t>(prefs.getUChar("gblur", dispSettings.glassBlur), 24);
-  dispSettings.glassDim = min<uint8_t>(prefs.getUChar("gdim", dispSettings.glassDim), 60);
+  dispSettings.glassDim = min<uint8_t>(prefs.getUChar("gdim", dispSettings.glassDim), 80);
   dispSettings.glassOn = constrain(prefs.getUChar("gon", dispSettings.glassOn), 20, 100);
   dispSettings.wallEvery = prefs.getUChar("wevery", 5);
   if (!validWallEvery(dispSettings.wallEvery)) dispSettings.wallEvery = 5;
@@ -186,22 +190,11 @@ void loadSettings() {
   dispSettings.dailyCount = constrain(prefs.getUChar("dcount", 12), 1, DAILY_MAX_COUNT);
   dispSettings.glassAutoText = prefs.getBool("gauto", false);
   dispSettings.smoothCharts = prefs.getBool("smooth", true);
-  dispSettings.printerFx = prefs.getBool("prnfx", true);
   dispSettings.tileFx = min<uint8_t>(prefs.getUChar("tilefx", 0), 5);
   dispSettings.fxTouch = min<uint8_t>(prefs.getUChar("fxtouch", 0), 4);
   dispSettings.fxToggle = min<uint8_t>(prefs.getUChar("fxtoggle", 0), 4);
   dispSettings.fxPage = min<uint8_t>(prefs.getUChar("fxpage", 0), 4);
   dispSettings.fxCard = min<uint8_t>(prefs.getUChar("fxcard", 0), 3);
-  advSettings.printers = prefs.getBool("prn", false);
-  printerSettings.errors = prefs.getBool("perr", true);
-  printerSettings.errorsAll = prefs.getBool("perrall", false);
-  printerSettings.errorWake = prefs.getBool("pwake", true);
-  printerSettings.follow = prefs.getBool("pfollow", false);
-  printerSettings.coolAlert = prefs.getBool("pcool", true);
-  printerSettings.coolTemp = constrain(prefs.getUChar("pcoolt", 35), PRN_COOL_MIN, PRN_COOL_MAX);
-  printerSettings.kwhPrice = prefs.isKey("pkwh") ? prefs.getFloat("pkwh", 0) : 0;  // getFloat logs a missing key
-  if (!isfinite(printerSettings.kwhPrice) || printerSettings.kwhPrice < 0) printerSettings.kwhPrice = 0;
-  if (prefs.isKey("pcur")) prefs.getString("pcur", printerSettings.currency, sizeof(printerSettings.currency));
   if (prefs.getBytesLength("net") == sizeof(NetworkSettings))
     prefs.getBytes("net", &netSettings, sizeof(NetworkSettings));
   if (prefs.getBytesLength("backlight") == sizeof(BacklightSettings)) {
@@ -215,7 +208,6 @@ void loadSettings() {
     prefs.getBytes("led", &stored, sizeof(stored));
     if (stored.version == LED_SETTINGS_VERSION) ledSettings = stored;
   } else if (ledLen == offsetof(LedSettings, nightStartMinute)) {
-    // v1 dimmed only inside the backlight's schedule: take its times and switch.
     LedSettings stored = ledSettings;
     prefs.getBytes("led", &stored, ledLen);
     if (stored.version == 1) {
@@ -231,8 +223,6 @@ void loadSettings() {
   brightness = prefs.getUChar("bright", 200);
   presenceSettings.sleepMin = min<uint16_t>(prefs.getUShort("psleep", 0), 1440);
   presenceSettings.dimPct = min<uint8_t>(prefs.getUChar("pdim", 0), 100);
-  presenceSettings.pc = prefs.getBool("ppc", false);
-  presenceSettings.printing = prefs.getBool("pprint", false);
   presenceSettings.frame = prefs.getBool("pframe", false);
   presenceSettings.frameEvery = prefs.getUChar("pfevery", 5);
   if (!validFrameEvery(presenceSettings.frameEvery)) presenceSettings.frameEvery = 5;
@@ -248,16 +238,7 @@ void loadSettings() {
   audioSettings.volume = min<uint8_t>(prefs.getUChar("audvol", 70), 100);
   audioSettings.nightMute = prefs.getBool("audnight", true);
   audioSettings.click = prefs.getBool("audclk", false);
-  audioSettings.finished = prefs.getBool("audfin", true);
-  audioSettings.error = prefs.getBool("auderr", true);
-  audioSettings.cooled = prefs.getBool("audcool", true);
-  audioSettings.wakeMs = min<uint16_t>(prefs.getUShort("audwake", BOARD_AUDIO_WAKE_MS), AUDIO_WAKE_MAX_MS);
-  audioSettings.keepOnMs = constrain(prefs.getUInt("audkeep", BOARD_AUDIO_KEEP_ON_MS), AUDIO_KEEP_ON_MIN_MS,
-                                     AUDIO_KEEP_ON_MAX_MS);
   // isKey first: getString logs a missing key.
-  if (prefs.isKey("audffin")) prefs.getString("audffin", audioSettings.fileFinished, AUDIO_FILE_LEN);
-  if (prefs.isKey("audferr")) prefs.getString("audferr", audioSettings.fileError, AUDIO_FILE_LEN);
-  if (prefs.isKey("audfcool")) prefs.getString("audfcool", audioSettings.fileCooled, AUDIO_FILE_LEN);
   // Entity ids, comma-separated.
   const String ids = prefs.getString("pent", "");
   for (size_t i = 0, from = 0; i < MAX_PRESENCE_ENTITIES && from < ids.length(); i++) {
@@ -275,21 +256,28 @@ void loadSettings() {
   if (backlightSettings.nightStartMinute >= 24 * 60) backlightSettings.nightStartMinute = 22 * 60;
   if (backlightSettings.nightEndMinute >= 24 * 60) backlightSettings.nightEndMinute = 7 * 60;
   netSettings.hostname[sizeof(netSettings.hostname) - 1] = '\0';
+  // Previously saved hostnames may lack the product prefix. Keep their
+  // suffix but normalize the effective name before WiFi initializes.
+  char normalizedHost[sizeof(netSettings.hostname)];
+  sanitizeHostname(netSettings.hostname, normalizedHost, sizeof(normalizedHost));
+  strlcpy(netSettings.hostname, normalizedHost, sizeof(netSettings.hostname));
   netSettings.timezoneStr[sizeof(netSettings.timezoneStr) - 1] = '\0';
   sanitizeLedPin();
   sanitizeHapticPin();
 }
 
 void saveSettings() {
+  char normalizedHost[sizeof(netSettings.hostname)];
+  sanitizeHostname(netSettings.hostname, normalizedHost, sizeof(normalizedHost));
+  strlcpy(netSettings.hostname, normalizedHost, sizeof(netSettings.hostname));
   sanitizeLedPin();
   sanitizeHapticPin();
-  prefs.begin(NVS_NAMESPACE, false);
+  prefs.begin(s_settingsNamespace, false);
   prefs.putUChar("rot", dispSettings.rotation);
   prefs.putUShort("tscale", dispSettings.tempScaleMax);
   prefs.putUShort("pscale", dispSettings.powerScaleW);
   prefs.putUChar("warnpct", dispSettings.warnThresholdPct);
   prefs.putUChar("theme", dispSettings.theme);
-  prefs.putUChar("tsrc", timeSource);
   prefs.putUChar("gtint", dispSettings.glassTint);
   prefs.putUChar("gblur", dispSettings.glassBlur);
   prefs.putUChar("gdim", dispSettings.glassDim);
@@ -305,21 +293,11 @@ void saveSettings() {
   prefs.putUChar("dcount", dispSettings.dailyCount);
   prefs.putBool("gauto", dispSettings.glassAutoText);
   prefs.putBool("smooth", dispSettings.smoothCharts);
-  prefs.putBool("prnfx", dispSettings.printerFx);
   prefs.putUChar("tilefx", dispSettings.tileFx);
   prefs.putUChar("fxtouch", dispSettings.fxTouch);
   prefs.putUChar("fxtoggle", dispSettings.fxToggle);
   prefs.putUChar("fxpage", dispSettings.fxPage);
   prefs.putUChar("fxcard", dispSettings.fxCard);
-  prefs.putBool("prn", advSettings.printers);
-  prefs.putBool("perr", printerSettings.errors);
-  prefs.putBool("perrall", printerSettings.errorsAll);
-  prefs.putBool("pwake", printerSettings.errorWake);
-  prefs.putBool("pfollow", printerSettings.follow);
-  prefs.putBool("pcool", printerSettings.coolAlert);
-  prefs.putUChar("pcoolt", printerSettings.coolTemp);
-  prefs.putFloat("pkwh", printerSettings.kwhPrice);
-  prefs.putString("pcur", printerSettings.currency);
   prefs.putBytes("net", &netSettings, sizeof(NetworkSettings));
   prefs.putBytes("backlight", &backlightSettings, sizeof(BacklightSettings));
   prefs.putBytes("led", &ledSettings, sizeof(LedSettings));
@@ -328,8 +306,6 @@ void saveSettings() {
   prefs.putUChar("bright", brightness);
   prefs.putUShort("psleep", presenceSettings.sleepMin);
   prefs.putUChar("pdim", presenceSettings.dimPct);
-  prefs.putBool("ppc", presenceSettings.pc);
-  prefs.putBool("pprint", presenceSettings.printing);
   prefs.putBool("pframe", presenceSettings.frame);
   prefs.putUChar("pfevery", presenceSettings.frameEvery);
   prefs.putBool("pfclock", presenceSettings.frameClock);
@@ -344,14 +320,6 @@ void saveSettings() {
   prefs.putUChar("audvol", audioSettings.volume);
   prefs.putBool("audnight", audioSettings.nightMute);
   prefs.putBool("audclk", audioSettings.click);
-  prefs.putBool("audfin", audioSettings.finished);
-  prefs.putBool("auderr", audioSettings.error);
-  prefs.putBool("audcool", audioSettings.cooled);
-  prefs.putUShort("audwake", audioSettings.wakeMs);
-  prefs.putUInt("audkeep", audioSettings.keepOnMs);
-  prefs.putString("audffin", audioSettings.fileFinished);
-  prefs.putString("audferr", audioSettings.fileError);
-  prefs.putString("audfcool", audioSettings.fileCooled);
   String ids;
   for (const String& id : presenceSettings.entities)
     if (id.length()) ids += (ids.length() ? "," : "") + id;
@@ -360,8 +328,9 @@ void saveSettings() {
 }
 
 bool factoryResetSettings() {
-  // Every NVS namespace the firmware writes: settings, PCs, HA link, deck UI, printers, MQTT.
-  static const char* const kSpaces[] = {NVS_NAMESPACE, "deckpc", "deckha", "deckui", "printers", "deckmqtt"};
+  // Every NVS namespace the firmware writes: settings, HA link, deck UI and MQTT.
+  static const char* const kSpaces[] = {NVS_NAMESPACE, NVS_NAMESPACE_LEGACY,
+    "deckpc", "deckha", "deckui", "deckmqtt", "officebambu"};
   bool ok = true;
   for (const char* ns : kSpaces) {
     if (!prefs.begin(ns, false)) {
@@ -378,21 +347,32 @@ bool factoryResetSettings() {
 //  Hostname sanitizer
 // ---------------------------------------------------------------------------
 void sanitizeHostname(const char* in, char* out, size_t outSize) {
-  if (outSize == 0) return;
-  size_t j = 0;
+  if (!outSize) return;
+  // Work in a temporary string so in and out are allowed to overlap.
+  String clean;
+  clean.reserve(outSize);
   bool lastHyphen = false;
-  for (size_t i = 0; in && in[i] && j < outSize - 1; i++) {
-    char c = in[i];
-    if (c >= 'A' && c <= 'Z') c = c - 'A' + 'a';
-    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
-      out[j++] = c;
+  for (size_t i = 0; in && in[i]; ++i) {
+    char ch = in[i];
+    if (ch >= 'A' && ch <= 'Z') ch += 'a' - 'A';
+    if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) {
+      clean += ch;
       lastHyphen = false;
-    } else if ((c == '-' || c == ' ' || c == '_') && j > 0 && !lastHyphen) {
-      out[j++] = '-';
+    } else if ((ch == '-' || ch == ' ' || ch == '_') && clean.length() && !lastHyphen) {
+      clean += '-';
       lastHyphen = true;
     }
   }
-  while (j > 0 && out[j - 1] == '-') j--;
-  out[j] = '\0';
-  if (j == 0) strlcpy(out, "touchdeck", outSize);
+  while (clean.endsWith("-")) clean.remove(clean.length() - 1);
+  // Public product identity is tactula; NVS namespace remains touchdeck.
+  // Preserve suffixes from old touchdeck-* hostnames across OTA updates.
+  if (clean == "touchdeck") clean = "tactula";
+  else if (clean.startsWith("touchdeck-"))
+    clean = String("tactula-") + clean.substring(strlen("touchdeck-"));
+  else if (!clean.startsWith("tactula"))
+    clean = clean.length() ? String("tactula-") + clean : String("tactula");
+  clean.toCharArray(out, outSize);
+  size_t n = strlen(out);
+  while (n && out[n - 1] == '-') out[--n] = '\0';
+  if (!n) strlcpy(out, "tactula", outSize);
 }

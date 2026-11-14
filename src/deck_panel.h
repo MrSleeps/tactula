@@ -1,23 +1,24 @@
-// Display pipeline: LVGL renders a logical framebuffer, one flush task turns
-// it (or a composed transition frame) into native panel frames with software
-// rotation, and a page-slide compositor builds transition frames from cached
-// page images without asking LVGL to render. The bus side is per display
-// (deck_panel_qspi.cpp, deck_panel_dsi.cpp; contract in deck_panel_int.h).
+// Guition JC3248W535 display pipeline: AXS15231B over QSPI driven directly
+// through spi_master, one flush task that owns the panel bus, software
+// rotation of a logical framebuffer into internal DMA bounce buffers, frames
+// started on the TE rising edge, and a page-slide compositor that builds
+// transition frames from cached page images without asking LVGL to render.
+//
+// Facts this rests on (measured in the Phase 0 spike, see the deck plan):
+// the panel only accepts full native 320x480 frames (no MADCTL rotation, the
+// CASET start column is ignored), 40 MHz is the clock ceiling, a full frame is
+// 15.4 ms on the wire against a 16.39 ms TE period, and the write is slower
+// than the scan, so a frame must start within ~1 ms of the TE rising edge.
 #ifndef DECK_PANEL_H
 #define DECK_PANEL_H
 
 #include <Arduino.h>
-#include "board.h"
 
 namespace deck {
 
-static constexpr int NATIVE_W = BOARD_PANEL_W;
-static constexpr int NATIVE_H = BOARD_PANEL_H;
-static constexpr int MAX_DIM = NATIVE_W > NATIVE_H ? NATIVE_W : NATIVE_H;
+static constexpr int NATIVE_W = 320;
+static constexpr int NATIVE_H = 480;
 static constexpr size_t FRAME_BYTES = (size_t)NATIVE_W * NATIVE_H * 2;
-// Screen size in an orientation (wallpaper and Daily picture sizes).
-constexpr int screenW(bool portrait) { return portrait ? NATIVE_W + NATIVE_H - MAX_DIM : MAX_DIM; }
-constexpr int screenH(bool portrait) { return portrait ? MAX_DIM : NATIVE_W + NATIVE_H - MAX_DIM; }
 
 // A full-screen logical image (logicalW() x logicalH()). stride is in pixels.
 // swap=true for little-endian RGB565 (LVGL), false for data already in panel
@@ -39,20 +40,14 @@ struct Src {
 // Backlight is left alone. Returns false if a buffer could not be allocated.
 bool panelBegin(uint8_t rotation);
 
-// Next TE edge on the millis() time base, or current time when TE is stale.
-// Monotonic across wrap; called only by the loop task.
-uint32_t panelFrameClockMs();
-
 // fn(ctx, lo, hi) over 0..n in batches, shared with a helper on core 0 when it
 // is free. Returns when all batches are done.
 void panelShare(void (*fn)(void* ctx, int lo, int hi), void* ctx, int n, int batch);
 
-// User rotation 0..3: even = portrait, odd = landscape on every board (on the
-// JC3248W535, 1 = landscape with USB-C on the right).
+// User rotation 0..3, 0 = native portrait (1 = landscape with USB-C on the
+// right).
 void panelSetRotation(uint8_t rotation);
 uint8_t panelRotation();
-// The rotation relative to the native scan (touch mapping uses it).
-uint8_t panelNativeRotation();
 int logicalW();
 int logicalH();
 
@@ -69,8 +64,6 @@ const uint16_t* panelLatestLvFrame();
 // every pixel out of a posted framebuffer (or dropped the frame): one token
 // per posted frame, up to two frames in flight.
 void panelPostLv(int idx, uint32_t gen);
-// An area (inclusive, logical pixels) LVGL redrew in the frame it posts next.
-void panelLvDirty(int x0, int y0, int x1, int y1);
 bool panelWaitLvReady(uint32_t timeoutMs);
 
 // --- Page-slide compositor ---------------------------------------------------
@@ -149,11 +142,7 @@ struct MorphScene {
 };
 // After the last frame the screen holds until LVGL has a frame of generation
 // >= holdGen (one already posted counts).
-// Opening may begin before the card is drawn (card.px null): the scrim fades
-// in at once, the card's animation starts on compMorphCard.
 bool compBeginMorph(const MorphScene& m, uint32_t durMs, uint32_t holdGen);
-bool compMorphWaiting();
-void compMorphCard(const Src& card);
 CompMode compMode();
 // True while LVGL must not render (drag or animation in progress).
 bool compOwnsScreen();

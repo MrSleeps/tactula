@@ -12,7 +12,7 @@ namespace {
 constexpr uint32_t RETRY_MS = 30000;  // a failed lookup is tried again after this
 
 enum Field : uint8_t {
-  F_STATUS, F_STAGE, F_PROGRESS, F_REMAIN, F_LAYER, F_LAYERS, F_TASK, F_SPEED,
+  F_STATUS, F_STAGE, F_PROGRESS, F_REMAIN, F_LAYER, F_LAYERS, F_TASK, F_NAME, F_SPEED,
   F_NOZZLE, F_NOZZLE_T, F_LNOZ, F_LNOZ_T, F_RNOZ, F_RNOZ_T, F_BED, F_BED_T, F_CHAMBER,
   F_ONLINE, F_LIGHT, F_WEIGHT, F_SIDE, F_HMS, F_PERR, F_DOOR,
   F_HUM, F_ATEMP, F_DRY, F_TRAY,  // per AMS unit
@@ -28,7 +28,9 @@ const KeyField kPrinterKeys[] = {
     {"print_status", "sensor", F_STATUS},       {"stage", "sensor", F_STAGE},
     {"print_progress", "sensor", F_PROGRESS},   {"remaining_time", "sensor", F_REMAIN},
     {"current_layer", "sensor", F_LAYER},       {"total_layers", "sensor", F_LAYERS},
-    {"subtask_name", "sensor", F_TASK},         {"speed_profile", "sensor", F_SPEED},
+    {"subtask_name", "sensor", F_TASK},         {"name", "sensor", F_NAME},
+    {"printer_name", "sensor", F_NAME}, // Compatibility with alternate integration versions.
+    {"speed_profile", "sensor", F_SPEED},
     {"nozzle_temp", "sensor", F_NOZZLE},        {"target_nozzle_temp", "sensor", F_NOZZLE_T},
     {"left_nozzle_temp", "sensor", F_LNOZ},     {"left_target_nozzle_temp", "sensor", F_LNOZ_T},
     {"right_nozzle_temp", "sensor", F_RNOZ},    {"right_target_nozzle_temp", "sensor", F_RNOZ_T},
@@ -548,6 +550,9 @@ void apply(Printer& p, Bind& b, JsonObjectConst ev, bool full) {
     case F_TASK:
       if (st) strlcpy(s.job, unusable(st) ? "" : st, sizeof(s.job));
       jobMap(p, a, full, removed);
+      break;
+    case F_NAME:
+      if (st) strlcpy(s.friendlyName, unusable(st) ? "" : st, sizeof(s.friendlyName));
       break;
     case F_SPEED:
       if (!st) break;

@@ -4,30 +4,18 @@
 // =============================================================================
 //  Firmware version
 // =============================================================================
-#define FW_VERSION          "1.3.0"
-#define PRODUCT_NAME        "TouchDeck"
+#define FW_VERSION          "1.2.0"
+#define PRODUCT_NAME        "tactula"
 
-// Board facts, BOARD_VARIANT (reported to the portal and the OTA page) among them.
-#include "board.h"
-
-// =============================================================================
-//  PC stats ingest (UDP push from the StatNode Companion)
-// =============================================================================
-#define UDP_PORT                4210    // companion pushes V2.1 JSON here
-#define PC_STALE_TIMEOUT_MS     15000   // no packet for 15s = PC offline
-#define PC_PACKET_BUF_SIZE      2048    // max UDP packet (oversize discarded)
-#define MAX_METRICS             32      // max metrics tracked per packet
-
-// PC companion status codes (mirror the V2.1 protocol)
-#define PC_STATUS_OK             1
-#define PC_STATUS_API_ERROR      2
-#define PC_STATUS_LHM_NOT_RUNNING 3
-#define PC_STATUS_LHM_STARTING   4
+// Board variant - reported to the portal and the OTA page.
+#ifndef BOARD_VARIANT
+#define BOARD_VARIANT       "jc3248w535"
+#endif
 
 // =============================================================================
 //  WiFi
 // =============================================================================
-#define WIFI_AP_PREFIX      "TouchDeck-"
+#define WIFI_AP_PREFIX      "tactula-"
 #define WIFI_AP_PASSWORD    "touchdeck1234"
 #define WIFI_CONNECT_TIMEOUT 15000  // 15s STA connect timeout
 #define WIFI_RECONNECT_TIMEOUT 60000 // 60s before re-entering AP mode
@@ -46,11 +34,13 @@
 // =============================================================================
 //  NVS
 // =============================================================================
-// Kept from StatNode so a device moved over keeps its WiFi and network setup.
-#define NVS_NAMESPACE       "pcmon"
+// The original "bedroomdeck" NVS settings are migrated once on boot.
+// The old namespace is retained as a fallback until migration succeeds.
+#define NVS_NAMESPACE       "touchdeck"
+#define NVS_NAMESPACE_LEGACY "bedroomdeck"
 
 // =============================================================================
-//  PC metric tiles: default full scale when a tile sets none
+//  Gauge display defaults (shared with Home Assistant sensors)
 // =============================================================================
 #define GAUGE_TEMP_SCALE_DEFAULT   100   // C
 #define GAUGE_POWER_SCALE_DEFAULT  300   // W

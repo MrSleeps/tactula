@@ -9,15 +9,15 @@
 namespace deck {
 namespace {
 
-constexpr uint32_t C_BG = 0x0D0F13;
-constexpr uint32_t C_CHIP = 0x272B33;
-constexpr uint32_t C_TITLE = 0xF1F2F4;
-constexpr uint32_t C_TEXT = 0xE6E8EC;
-constexpr uint32_t C_DIM = 0x8A91A0;
-constexpr uint32_t C_AMBER = 0xF6C56B;
-constexpr uint32_t C_TEAL = 0x5CC9A7;
-constexpr uint32_t C_VIOLET = 0xB3A6FF;
-constexpr uint32_t C_BLUE = 0x7DB5FF;
+constexpr uint32_t C_BG = 0x0C1019;
+constexpr uint32_t C_CHIP = 0x252E3D;
+constexpr uint32_t C_TITLE = 0xEDF0F8;
+constexpr uint32_t C_TEXT = 0xD3DAEA;
+constexpr uint32_t C_DIM = 0x8795AC;
+constexpr uint32_t C_AMBER = 0x927DFF;
+constexpr uint32_t C_TEAL = 0x927DFF;  // success accent, not old teal
+constexpr uint32_t C_VIOLET = 0xB8ADFF;
+constexpr uint32_t C_BLUE = 0x48A5FF;
 constexpr uint32_t C_RED = 0xFF8A7A;
 
 lv_obj_t* s_root = nullptr;
@@ -62,19 +62,29 @@ lv_obj_t* gap(lv_obj_t* parent, int h) {
 
 // Four rounded tiles in the deck's accent colours: the product mark.
 void logoMark(lv_obj_t* parent, int cell) {
-  const int g = cell / 4;
+  // Approximation of the tactula vector mark, built with four LVGL tiles.
+  // Drawn directly, so boot does not depend on a filesystem or PNG decoder.
+  const int width = cell * 2 + cell / 3;
   lv_obj_t* m = lv_obj_create(parent);
   lv_obj_remove_style_all(m);
-  lv_obj_set_size(m, 2 * cell + g, 2 * cell + g);
-  const uint32_t colors[4] = {C_AMBER, C_TEAL, C_VIOLET, C_BLUE};
-  for (int i = 0; i < 4; i++) {
-    lv_obj_t* c = lv_obj_create(m);
-    lv_obj_remove_style_all(c);
-    lv_obj_set_size(c, cell, cell);
-    lv_obj_set_pos(c, (i % 2) * (cell + g), (i / 2) * (cell + g));
-    lv_obj_set_style_radius(c, cell * 3 / 10, 0);
-    lv_obj_set_style_bg_color(c, lv_color_hex(colors[i]), 0);
-    lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+  lv_obj_set_size(m, width, width);
+  const int x[] = {0, cell + 4, 0, cell - 1};
+  const int y[] = {0, cell / 5, cell + 4, cell + 1};
+  const int w[] = {cell + 3, cell - 6, cell - 4, cell + 5};
+  const int h[] = {cell + 2, cell - 8, cell - 7, cell - 1};
+  const uint32_t colors[] = {0x7160FB, 0x444963, 0x444963, 0x444963};
+  for (int i = 0; i < 4; ++i) {
+    lv_obj_t* tile = lv_obj_create(m);
+    lv_obj_remove_style_all(tile);
+    lv_obj_set_pos(tile, x[i], y[i]);
+    lv_obj_set_size(tile, w[i], h[i]);
+    lv_obj_set_style_radius(tile, cell / 3, 0);
+    lv_obj_set_style_bg_color(tile, lv_color_hex(colors[i]), 0);
+    lv_obj_set_style_bg_opa(tile, LV_OPA_COVER, 0);
+    if (i == 0) {
+      lv_obj_set_style_bg_grad_color(tile, lv_color_hex(0x1FA4F3), 0);
+      lv_obj_set_style_bg_grad_dir(tile, LV_GRAD_DIR_HOR, 0);
+    }
   }
 }
 
@@ -111,7 +121,7 @@ void buildConnecting(lv_obj_t* col) {
 }
 
 void buildConnected(lv_obj_t* col) {
-  badge(col, LV_SYMBOL_OK, C_TEAL, C_BG);
+  badge(col, LV_SYMBOL_OK, 0x927DFF, 0xFFFFFF);
   gap(col, 6);
   text(col, "Connected", &deck_font_20, C_TITLE);
   text(col, WiFi.localIP().toString().c_str(), &lv_font_montserrat_40, C_TEXT);

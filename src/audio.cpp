@@ -1,6 +1,4 @@
 #include "audio.h"
-#include "audio_hw.h"
-#include "board.h"
 #include "deck_sd.h"
 #include "display_ui.h"
 #include "settings.h"
@@ -12,14 +10,16 @@
 
 namespace {
 
-constexpr gpio_num_t PIN_MCLK = (gpio_num_t)BOARD_I2S_MCLK;  // -1 = unused
-constexpr gpio_num_t PIN_BCLK = (gpio_num_t)BOARD_I2S_BCLK;
-constexpr gpio_num_t PIN_WS = (gpio_num_t)BOARD_I2S_WS;
-constexpr gpio_num_t PIN_DOUT = (gpio_num_t)BOARD_I2S_DOUT;
+// Vendor pincfg.h (DEMO_MP3): NS4168 has no MCLK.
+constexpr gpio_num_t PIN_BCLK = GPIO_NUM_42;
+constexpr gpio_num_t PIN_WS = GPIO_NUM_2;
+constexpr gpio_num_t PIN_DOUT = GPIO_NUM_41;
 
 constexpr uint32_t SYNTH_RATE = 22050;
 constexpr size_t CHUNK = 256;  // frames per i2s_channel_write
 constexpr uint32_t FADE_FRAMES = 128;  // ramp when a sound is cut short
+constexpr uint32_t IDLE_OFF_MS = 1500;
+constexpr uint32_t AMP_SETTLE_MS = 30;
 constexpr uint32_t MAX_CLIP_FRAMES = 1024 * 1024;  // 2 MB of mono PCM
 constexpr uint32_t CACHE_MAX_BYTES = 256 * 1024;   // larger file clips load per play
 constexpr int FILE_CACHE = 3;
@@ -84,9 +84,7 @@ Clip* newClip(uint32_t frames, uint32_t rate) {
   return new Clip{pcm, frames, rate};
 }
 
-uint16_t gainFor(uint8_t vol) {
-  return (uint16_t)((uint32_t)min<uint8_t>(vol, 100) * 4096 * BOARD_AUDIO_MAX_GAIN_PCT / 10000);
-}
+uint16_t gainFor(uint8_t vol) { return (uint16_t)((uint32_t)min<uint8_t>(vol, 100) * 4096 / 100); }
 
 bool IRAM_ATTR onSendOvf(i2s_chan_handle_t, i2s_event_data_t*, void*) {
   if (s_playing) s_underruns = s_underruns + 1;
@@ -97,7 +95,6 @@ bool IRAM_ATTR onSendOvf(i2s_chan_handle_t, i2s_event_data_t*, void*) {
 
 void closeChannel() {
   if (!s_tx) return;
-  audioHwStop();
   i2s_channel_disable(s_tx);
   i2s_del_channel(s_tx);
   s_tx = nullptr;
@@ -112,7 +109,6 @@ bool openChannel(uint32_t rate) {
     i2s_channel_disable(s_tx);
     err = i2s_channel_reconfig_std_clock(s_tx, &clk);
     if (err == ESP_OK) err = i2s_channel_enable(s_tx);
-    if (err == ESP_OK && !audioHwStart(rate)) err = ESP_ERR_NOT_SUPPORTED;
     if (err != ESP_OK) {
       s_lastErr = err;
       closeChannel();
@@ -137,7 +133,7 @@ bool openChannel(uint32_t rate) {
     .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(rate),
     .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
     .gpio_cfg = {
-      .mclk = PIN_MCLK,
+      .mclk = I2S_GPIO_UNUSED,
       .bclk = PIN_BCLK,
       .ws = PIN_WS,
       .dout = PIN_DOUT,
@@ -150,10 +146,6 @@ bool openChannel(uint32_t rate) {
   err = i2s_channel_init_std_mode(s_tx, &sc);
   if (err == ESP_OK) err = i2s_channel_register_event_callback(s_tx, &cbs, nullptr);
   if (err == ESP_OK) err = i2s_channel_enable(s_tx);
-  if (err == ESP_OK && !audioHwStart(rate)) {
-    err = ESP_ERR_NOT_SUPPORTED;
-    i2s_channel_disable(s_tx);
-  }
   if (err != ESP_OK) {
     s_lastErr = err;
     i2s_del_channel(s_tx);
@@ -164,7 +156,7 @@ bool openChannel(uint32_t rate) {
   s_opens = s_opens + 1;
   s_channelCost = before - heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
   // The amp wakes when BCLK returns; let it settle on silence.
-  vTaskDelay(pdMS_TO_TICKS(audioSettings.wakeMs));
+  vTaskDelay(pdMS_TO_TICKS(AMP_SETTLE_MS));
   return true;
 }
 
@@ -200,15 +192,9 @@ void addNote(float* acc, uint32_t frames, const Note& n, const Partial* p, int n
   }
 }
 
-const Partial BELL[] = {{1, 1, 1}, {2, 0.5f, 0.6f}, {3, 0.25f, 0.4f}, {4.2f, 0.12f, 0.3f}, {5.4f, 0.08f, 0.25f}};
-const Partial ALERT[] = {{1, 1, 1}, {3, 0.3f, 0.6f}, {5, 0.12f, 0.4f}};
-const Partial MARIMBA[] = {{1, 1, 1}, {4, 0.35f, 0.25f}, {10, 0.1f, 0.1f}};
 const Partial TICK[] = {{1, 1, 1}, {2.7f, 0.5f, 0.6f}};
 
 Clip* render(AudioSound s) {
-  static const Note finished[] = {{0, 1046.5f, 0.35f}, {0.12f, 1318.5f, 0.35f}, {0.24f, 1568.0f, 0.35f}, {0.36f, 2093.0f, 0.6f}};
-  static const Note error[] = {{0, 880.0f, 0.18f}, {0.18f, 659.3f, 0.18f}, {0.5f, 880.0f, 0.18f}, {0.68f, 659.3f, 0.25f}};
-  static const Note cooled[] = {{0, 784.0f, 0.3f}, {0.15f, 1174.7f, 0.35f}};
   static const Note click[] = {{0, 2400.0f, 0.004f}};
   const uint32_t t0 = millis();
   const Note* notes;
@@ -216,9 +202,6 @@ Clip* render(AudioSound s) {
   int nn, np;
   float lenS, peak = 26000.0f;
   switch (s) {
-    case SND_FINISHED: notes = finished; nn = 4; p = BELL; np = 5; lenS = 1.8f; break;
-    case SND_ERROR: notes = error; nn = 4; p = ALERT; np = 3; lenS = 1.3f; break;
-    case SND_COOLED: notes = cooled; nn = 2; p = MARIMBA; np = 3; lenS = 1.2f; break;
     case SND_CLICK: notes = click; nn = 1; p = TICK; np = 2; lenS = 0.03f; peak = 12000.0f; break;
     default: return nullptr;
   }
@@ -457,7 +440,7 @@ bool takeReq(Req& r) {
 void audioTask(void*) {
   static int16_t buf[CHUNK];
   for (;;) {
-    const uint32_t woke = ulTaskNotifyTake(pdTRUE, s_tx ? pdMS_TO_TICKS(audioSettings.keepOnMs) : portMAX_DELAY);
+    const uint32_t woke = ulTaskNotifyTake(pdTRUE, s_tx ? pdMS_TO_TICKS(IDLE_OFF_MS) : portMAX_DELAY);
     Req r;
     if (!takeReq(r)) {
       // Without BCLK the NS4168 powers down.
@@ -514,20 +497,8 @@ Req soundReq(AudioSound s, uint8_t vol, const char* file) {
   return r;
 }
 
-const char* eventFile(AudioSound s) {
-  switch (s) {
-    case SND_FINISHED: return audioSettings.fileFinished;
-    case SND_ERROR: return audioSettings.fileError;
-    case SND_COOLED: return audioSettings.fileCooled;
-    default: return "";
-  }
-}
-
 bool eventOn(AudioSound s) {
   switch (s) {
-    case SND_FINISHED: return audioSettings.finished;
-    case SND_ERROR: return audioSettings.error;
-    case SND_COOLED: return audioSettings.cooled;
     case SND_CLICK: return audioSettings.click;
     default: return false;
   }
@@ -547,7 +518,7 @@ void audioInit() {
 void audioEvent(AudioSound s) {
   if (!audioSettings.enabled || !audioSettings.volume || !eventOn(s)) return;
   if (audioSettings.nightMute && nightBrightnessActive()) return;
-  submit(soundReq(s, audioSettings.volume, eventFile(s)));
+  submit(soundReq(s, audioSettings.volume, ""));
 }
 
 void audioClick() { audioEvent(SND_CLICK); }

@@ -13,6 +13,7 @@ import re
 
 ASSETS = [  # (file in web/, C name)
     ("index.html", "WEB_INDEX_HTML"),
+    ("tactula-mark.svg", "WEB_TACTULA_MARK_SVG"),
     ("portal.css", "WEB_PORTAL_CSS"),
     ("portal-layout.css", "WEB_PORTAL_LAYOUT_CSS"),
     ("portal.js", "WEB_PORTAL_JS"),

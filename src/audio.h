@@ -6,7 +6,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 
-enum AudioSound : uint8_t { SND_FINISHED = 0, SND_ERROR, SND_COOLED, SND_CLICK, SND_COUNT };
+enum AudioSound : uint8_t { SND_CLICK = 0, SND_COUNT };
 
 // Starts the task when the speaker is enabled; the save handler calls it again.
 void audioInit();

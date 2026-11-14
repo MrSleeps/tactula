@@ -5,7 +5,7 @@
 // (in small batches, because the WebSocket library drops frames over 15 KB),
 // call_service, heartbeat and reconnect. Entity state lands in a small store
 // the UI reads by polling haStoreVersion(). The entity picker in the portal
-// uses haRefreshEntityList(): a list Home Assistant renders itself through
+// uses haFetchEntityList(): a list Home Assistant renders itself through
 // /api/template (id, name, state, icon, unit), kept on flash and refreshed
 // only when the user asks.
 //
@@ -40,7 +40,10 @@ struct HaEntity {
   String deviceClass;       // device_class (picks a default icon)
   int brightness = -1;      // 0..255 for lights that report it
   int32_t rgb = -1;         // 0xRRGGBB from rgb_color, lights that report it
+  int colorTempKelvin = -1; // colour-temperature lights without rgb_color
   int level = -1;           // 0..100: cover position, fan percentage, media volume
+  String mediaTitle, mediaArtist; // media_player metadata, empty when unavailable
+  float mediaPosition = NAN, mediaDuration = NAN;
   float numMin = NAN;       // input_number range and step
   float numMax = NAN;
   float numStep = NAN;
@@ -54,23 +57,16 @@ struct HaEntity {
   float tempStep = NAN;
   String hvacAction;        // "heating", "cooling", "idle"...
   String hvacModes;         // hvac_modes joined with ',' ("off,heat,cool")
-  // Media players: track, length and position in seconds (0 = unknown);
-  // the position was read at mediaPosAt (epoch, 0 = unknown).
-  String mediaTitle;
-  String mediaArtist;
-  String mediaPicture;      // entity_picture_local, else entity_picture (/api/media_player_proxy/...)
-  String mediaPictureRemote;  // entity_picture when the local one is set (may be https)
-  int32_t mediaDuration = 0;
-  String mediaSource;       // playing one of mediaInputs = fed by another device
-  String mediaInputs;       // source_list as "\nA\nB\n"
-  int32_t mediaPosition = 0;
-  time_t mediaPosAt = 0;
+  // Weather domain: current observations, not forecast API data.
+  float weatherTemp = NAN, weatherFeels = NAN, weatherHumidity = NAN;
+  float weatherWind = NAN, weatherGust = NAN, weatherPressure = NAN;
+  float weatherVisibility = NAN, weatherUV = NAN, weatherDew = NAN;
+  float weatherRainChance = NAN, weatherBearing = NAN;
+  String weatherTempUnit, weatherWindUnit, weatherPressureUnit, weatherVisibilityUnit;
   uint32_t version = 0;     // bumps on every change of this entity
 };
 
 void haBegin();
-// Drop the connection until resumed (the daily download needs its RAM).
-void haPause(bool pause);
 // Replace the URL and/or token. An empty token keeps the stored one.
 void haSetCredentials(const String& url, const String& token);
 void haClearCredentials();
@@ -106,8 +102,6 @@ using HaRegDone = void (*)(uint32_t tag, bool ok, const HaRegEntry* list, size_t
 // lookup is already queued.
 bool haRegistryLookup(const String& tmpl, uint32_t tag, HaRegDone done);
 
-// "http://host:port" of the configured Home Assistant, "" when not set up.
-String haBaseUrl();
 // Renders a template through /api/template. Blocking, loop task only.
 bool haRenderTemplate(const String& tmpl, String& out, String& err);
 // Copy of one entity. False when the id is not in the subscribed set.
@@ -145,20 +139,11 @@ bool haTakeCallResult(uint32_t id, HaCallResult& result);
 // show. False when none is pending.
 bool haTakeFailure(String& entity, String& message);
 
-// Clock from Home Assistant (for decks without network time): while on, the
-// deck asks Home Assistant for the time on every connection and then hourly,
-// and sets the system clock from it. The timezone stays the deck's own.
-void haSetTimeSync(bool on);
-// Epoch of the last time taken from Home Assistant, 0 = none yet; the last
-// error, "" when the last request worked.
-time_t haTimeSyncedAt();
-String haTimeError();
-
-// Portal entity picker: {"updated": epoch, "entities":
-// [{"id","name","state","icon","unit"}], "count": n}, kept on flash
-// (/ha_entities.json). Refresh fetches it from Home Assistant in pages
-// (blocking, a second or a few, loop task only).
-bool haRefreshEntityList(String& err);
+// Portal entity picker: {"updated": epoch, "count": n, "entities":
+// [{"id","name","state","icon","unit"}]}. Served from a copy on flash
+// (/ha_entities.json); refresh = fetch it from Home Assistant first (a
+// blocking call of about a second, loop task only).
+bool haFetchEntityList(String& outJson, bool refresh, String& err);
 // Where that copy lives, for streaming it straight from flash.
 const char* haEntityListPath();
 

@@ -1,324 +1,7 @@
-// Deck UI: PC metric tiles, gliding charts and sensor rows.
+// Home Assistant and HTTP sensor charts, rows and clock layout.
 #include "deck_ui_int.h"
 
 namespace deckui {
-
-// --- PC metric charts -----------------------------------------------------------------
-constexpr float SPARK_LINE = 2.0f;  // line thickness, px
-constexpr float SPARK_EASE_MS = 250.0f;
-constexpr int SPARK_MAX_W = MAX_DIM;  // a full-width chart
-
-constexpr float SPARK_SYNC_MS = 400.0f;
-constexpr int SPARK_SPAN = PC_HISTORY_LEN - 2;  // sample intervals across the chart
-
-uint32_t s_sparkPaintMs = 0;  // last glide frame of the shown page
-
-void sparkFree(Spark* s) {
-  if (!s) return;
-  if (s->buf) lv_draw_buf_destroy(s->buf);
-  lv_free(s);
-}
-
-// Catmull-Rom between samples, clamped to the four neighbours so it never
-// overshoots the data (a percentage below zero).
-float sparkAt(const Spark& s, float fi) {
-  const int n = s.n;
-  int i1 = (int)fi;
-  i1 = i1 < 0 ? 0 : i1 > n - 1 ? n - 1 : i1;
-  const float t = fi - (float)i1;
-  const float p0 = s.v[i1 > 0 ? i1 - 1 : 0], p1 = s.v[i1];
-  const float p2 = s.v[i1 + 1 < n ? i1 + 1 : n - 1], p3 = s.v[i1 + 2 < n ? i1 + 2 : n - 1];
-  const float v = 0.5f * (2.0f * p1 + (p2 - p0) * t + (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t * t +
-                          (3.0f * p1 - p0 - 3.0f * p2 + p3) * t * t * t);
-  const float lo = std::min(std::min(p0, p1), std::min(p2, p3));
-  const float hi = std::max(std::max(p0, p1), std::max(p2, p3));
-  return v < lo ? lo : v > hi ? hi : v;
-}
-
-// Segment i runs from vertex i to i + 1; lo / hi: the y band it can reach.
-struct SparkSeg {
-  float ay, dy, inv, lo, hi;
-  bool ok;
-};
-
-// sparkPaint scratch, once, in PSRAM: internal RAM is what WiFi buffers need.
-struct SparkScratch {
-  float ys[SPARK_MAX_W];
-  SparkSeg seg[SPARK_MAX_W];
-  int16_t cy0[SPARK_MAX_W], cy1[SPARK_MAX_W];
-};
-SparkScratch* s_sparkScratch = nullptr;
-
-// Each pixel near the line gets alpha from its distance to the line, so steep
-// spikes get smooth sides too. The line has a vertex per column.
-void sparkPaint(Spark& s, float right) {
-  lv_draw_buf_t* b = s.buf;
-  const int w = b->header.w, h = b->header.h;
-  for (int y = 0; y < h; y++) memset(b->data + y * b->header.stride, 0, w);
-  if (s.n < 2 || !(s.viewHi > s.viewLo)) return;
-  if (!s_sparkScratch) s_sparkScratch = (SparkScratch*)lv_malloc(sizeof(SparkScratch));
-  if (!s_sparkScratch) return;
-  float* ys = s_sparkScratch->ys;
-  SparkSeg* seg = s_sparkScratch->seg;
-  int16_t* cy0 = s_sparkScratch->cy0;
-  int16_t* cy1 = s_sparkScratch->cy1;
-  const float step = (float)SPARK_SPAN / (float)(w - 1);
-  const float m = SPARK_LINE / 2 + 0.5f;
-  const float k = ((float)h - 2 * m) / (s.viewHi - s.viewLo);
-  for (int x = 0; x < w; x++) {
-    const float fi = right - (float)(w - 1 - x) * step;
-    ys[x] = fi < 0 ? NAN : m + (s.viewHi - sparkAt(s, fi)) * k;
-  }
-  // Pixels of column x can only be reached by segments x - 2 .. x + 1, and
-  // only by the part of the line within rad of the column. Rows are written
-  // in order: PSRAM hates column strides.
-  const float rad = SPARK_LINE / 2 + 0.5f;  // full alpha within half a pixel of the stroke
-  for (int i = 0; i + 1 < w; i++) {
-    SparkSeg& g = seg[i];
-    g.ok = !isnan(ys[i]) && !isnan(ys[i + 1]);
-    g.ay = ys[i];
-    g.dy = ys[i + 1] - ys[i];
-    g.inv = 1.0f / (1.0f + g.dy * g.dy);
-    g.lo = std::min(ys[i], ys[i + 1]) - rad;
-    g.hi = std::max(ys[i], ys[i + 1]) + rad;
-  }
-  int yMin = h, yMax = -1;
-  for (int x = 0; x < w; x++) {
-    float top = INFINITY, bot = -INFINITY;
-    auto take = [&](float v) {
-      if (isnan(v)) return;
-      top = std::min(top, v);
-      bot = std::max(bot, v);
-    };
-    for (int i = x - 1; i <= x + 1; i++)
-      if (i >= 0 && i < w) take(ys[i]);
-    if (x >= 2) take((ys[x - 2] + ys[x - 1]) / 2);
-    if (x + 2 < w) take((ys[x + 1] + ys[x + 2]) / 2);
-    cy0[x] = top > bot ? h : (int16_t)std::max(0, (int)floorf(top - rad));
-    cy1[x] = top > bot ? -1 : (int16_t)std::min(h - 1, (int)ceilf(bot + rad));
-    yMin = std::min(yMin, (int)cy0[x]);
-    yMax = std::max(yMax, (int)cy1[x]);
-  }
-  const float rad2 = rad * rad, full2 = (rad - 1) * (rad - 1);
-  for (int y = yMin; y <= yMax; y++) {
-    uint8_t* row = b->data + y * b->header.stride;
-    const float py = (float)y + 0.5f;
-    for (int x = 0; x < w; x++) {
-      if (y < cy0[x] || y > cy1[x]) continue;
-      float d2 = rad2;
-      for (int i = std::max(0, x - 2); i <= std::min(w - 2, x + 1); i++) {
-        const SparkSeg& g = seg[i];
-        if (!g.ok || py < g.lo || py > g.hi) continue;
-        const float ex0 = (float)(x - i), ey0 = py - g.ay;  // pixel centre minus vertex i
-        float t = (ex0 + ey0 * g.dy) * g.inv;
-        t = t < 0 ? 0 : t > 1 ? 1 : t;
-        const float ex = ex0 - t, ey = ey0 - t * g.dy;
-        d2 = std::min(d2, ex * ex + ey * ey);
-      }
-      if (d2 >= rad2) continue;
-      row[x] = d2 <= full2 ? 255 : (uint8_t)((rad - sqrtf(d2)) * 255);
-    }
-  }
-}
-
-// Repaint when the glide moved a quarter of a pixel or the axis moved; true
-// when it painted. ease moves the glide and the axis on by dtMs; without it
-// both jump to where they should be.
-// sparkStep paints into buf without invalidating, so the draw event can use it.
-bool sparkStep(Spark& s, int w, int h, uint32_t now, bool ease, uint32_t dtMs) {
-  if (w < 8 || h < 8 || w > SPARK_MAX_W) return false;
-  if (!s.buf || s.buf->header.w != w || s.buf->header.h != h) {
-    if (s.buf) lv_draw_buf_destroy(s.buf);
-    s.buf = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_A8, 0);
-    s.dirty = true;
-    s.painted = false;
-    if (!s.buf) return false;
-  }
-  if (!s.haveView || !ease || !isfinite(s.viewLo) || !isfinite(s.viewHi)) {
-    s.viewLo = s.lo;
-    s.viewHi = s.hi;
-    s.haveView = true;
-  } else {
-    const float a = std::min(1.0f, (float)dtMs / SPARK_EASE_MS);
-    s.viewLo += (s.lo - s.viewLo) * a;
-    s.viewHi += (s.hi - s.viewHi) * a;
-  }
-  // The packet clock says one sample behind the newest at arrival, the newest
-  // one interval later; the glide runs at that rate and eases onto it.
-  const float target = std::min(0.0f, -1.0f + (float)(now - s.rxMs) / (float)s.gapMs);
-  if (!dispSettings.smoothCharts || s.n < 3) s.off = 0;
-  else if (!ease) s.off = target;
-  else s.off += (float)dtMs / (float)s.gapMs + (target - s.off) * std::min(1.0f, (float)dtMs / SPARK_SYNC_MS);
-  s.off = std::min(s.off, 0.0f);
-  if (s.n > SPARK_SPAN) s.off = std::max(s.off, (float)(SPARK_SPAN + 1 - s.n));  // left edge on data
-  const int32_t key = (int32_t)floorf(s.off * (float)(w - 1) / SPARK_SPAN * 4);
-  const float tol = (s.hi - s.lo) / 400;
-  if (!s.dirty && key == s.key && fabsf(s.viewLo - s.paintLo) <= tol && fabsf(s.viewHi - s.paintHi) <= tol)
-    return false;
-  sparkPaint(s, (float)(s.n - 1) + s.off);
-  s.painted = true;
-  s.dirty = false;
-  s.key = key;
-  s.paintLo = s.viewLo;
-  s.paintHi = s.viewHi;
-  return true;
-}
-
-bool sparkRender(TileRt& r, uint32_t now, bool ease, uint32_t dtMs) {
-  if (lv_obj_has_flag(r.viz, LV_OBJ_FLAG_HIDDEN)) return false;
-  if (!sparkStep(*r.spark, lv_obj_get_width(r.viz), lv_obj_get_height(r.viz), now, ease, dtMs)) return false;
-  lv_obj_invalidate(r.viz);
-  return true;
-}
-
-void sparkDrawEvent(lv_event_t* e) {
-  Spark* s = (Spark*)lv_event_get_user_data(e);
-  lv_obj_t* o = lv_event_get_target_obj(e);
-  lv_area_t a;
-  lv_obj_get_coords(o, &a);
-  // Charts off screen paint here, when a snapshot or a swipe draws them.
-  if (s->dirty && s->drawPaint && s->buf && lv_area_get_width(&a) == (int32_t)s->buf->header.w &&
-      lv_area_get_height(&a) == (int32_t)s->buf->header.h)
-    sparkStep(*s, lv_area_get_width(&a), lv_area_get_height(&a), millis(), false, 0);
-  if (!s->buf || !s->painted || lv_area_get_width(&a) != (int32_t)s->buf->header.w ||
-      lv_area_get_height(&a) != (int32_t)s->buf->header.h)
-    return;
-  lv_draw_image_dsc_t d;
-  lv_draw_image_dsc_init(&d);
-  d.src = s->buf;
-  d.recolor = lv_color_hex(s->color);
-  d.recolor_opa = LV_OPA_COVER;
-  lv_draw_image(lv_event_get_layer(e), &d, &a);
-}
-
-void sparkSizeEvent(lv_event_t* e) {
-  const size_t idx = (size_t)(uintptr_t)lv_event_get_user_data(e);
-  if (idx < s_tiles.size() && s_tiles[idx].spark) sparkRender(s_tiles[idx], millis(), false, 0);
-}
-
-// A sample for the chart: a non-finite one repeats its predecessor.
-float sparkSample(const SlotHistory& hs, int i, float prev) {
-  const float v = pcHistoryAt(hs, (uint8_t)i);
-  return isfinite(v) ? v : prev;
-}
-
-// Take a packet's new sample (or the whole history after a gap) into the
-// tile's chart and aim its axis. True when the chart changed.
-bool sparkFeed(TileRt& r, const PcSource& pc, const SlotHistory& hs, int n, float scale, bool autoRate,
-               uint32_t accent) {
-  Spark& s = *r.spark;
-  const uint8_t wasN = s.n;
-  const float wasLo = s.lo, wasHi = s.hi;
-  bool fed = false;
-  if (!n) {
-    s.n = 0;
-  } else if (hs.head != s.head || hs.count != s.cnt || !s.n) {
-    fed = true;
-    const uint32_t dt = pc.data.sampleMs - s.rxMs;
-    if (s.rxMs && dt >= 150 && dt <= 10000) s.gapMs = (s.gapMs * 3 + dt) / 4;
-    s.rxMs = pc.data.sampleMs;
-    const bool next = s.n && hs.count >= s.cnt && (hs.head + PC_HISTORY_LEN - s.head) % PC_HISTORY_LEN == 1;
-    if (next) {
-      if (s.n == SPARK_KEEP) memmove(s.v, s.v + 1, sizeof(float) * --s.n);
-      s.v[s.n] = sparkSample(hs, n - 1, s.v[s.n - 1]);
-      s.n++;
-      s.off -= 1;  // the same place on screen, one sample further from the newest
-    } else {
-      for (int i = 0; i < n; i++) s.v[i] = sparkSample(hs, i, i ? s.v[i - 1] : 0.0f);
-      s.n = (uint8_t)n;
-      s.off = -1;
-    }
-    s.head = hs.head;
-    s.cnt = hs.count;
-  }
-  float lo = 1e9f, hi = -1e9f;
-  for (int i = std::max(0, s.n - PC_HISTORY_LEN); i < s.n; i++) {
-    lo = std::min(lo, s.v[i]);
-    hi = std::max(hi, s.v[i]);
-  }
-  if (s.n) {
-    // Noise on a quiet metric must not fill the chart: span at least a tenth of the scale.
-    const float minSpan = autoRate ? 0 : scale * 0.1f;
-    if (hi - lo < minSpan) {
-      lo = std::max(lo >= 0 ? 0.0f : lo - minSpan, (lo + hi - minSpan) / 2);
-      hi = lo + minSpan;
-    }
-    const float pad = (hi - lo) * 0.15f + 0.5f;
-    s.lo = lo - pad;
-    s.hi = hi + pad;
-  }
-  if (!fed && s.n == wasN && s.lo == wasLo && s.hi == wasHi && s.color == accent) return false;
-  s.color = accent;
-  s.dirty = true;
-  // The shown page glides in deckTick; other pages paint when drawn (sparkDrawEvent).
-  s.drawPaint = r.page != sh.active || !sparkGliding();
-  if (r.page == sh.active && s.drawPaint) lv_obj_invalidate(r.viz);
-  return true;
-}
-
-// A style change refreshes the whole tile, so only on a change.
-bool setOpa(lv_obj_t* o, lv_opa_t opa) {
-  if (lv_obj_get_style_opa(o, LV_PART_MAIN) == opa) return false;
-  lv_obj_set_style_opa(o, opa, 0);
-  return true;
-}
-
-// Pull the latest companion packet into one metric tile. True when it changed.
-bool applyPcToTile(TileRt& r) {
-  const TileDef& d = *r.def;
-  const PcSource* pc = pcSource(d.pc);
-  const PcMetric* m = pcMetricFind(pc, d.metric);
-  bool changed = false;
-  if (!m) {
-    changed |= setText(r.sub, "--");
-    changed |= setText(r.unit, "");
-    if (!d.label.length())
-      changed |= setText(r.name, pc ? (String(pc->name) + " offline").c_str() : "PC offline");
-    return setOpa(r.obj, LV_OPA_50) || changed;
-  }
-  changed |= setOpa(r.obj, LV_OPA_COVER);
-  bool text = false;
-  if (!d.label.length()) text |= setText(r.name, m->name);
-  MetricText mt;
-  formatMetricText(*m, m->value, mt);
-  text |= setText(r.sub, mt.value);
-  text |= setText(r.unit, mt.unit);
-  if (text) fitValue(r);
-  changed |= text;
-
-  const SlotHistory& hs = pc->hist[d.metric <= MAX_METRICS ? d.metric : 0];
-  const int n = hs.metricId == d.metric ? hs.count : 0;
-  float hi = -1e9f;
-  for (int i = 0; i < n; i++) hi = max(hi, pcHistoryAt(hs, (uint8_t)i));
-  // A rate without a set scale never warns; its bar is relative to the recent peak.
-  const bool autoRate = metricIsRate(*m) && !d.scaleMax;
-  const float scale = autoRate ? max(hi, m->value) : metricScaleMax(*m, d.scaleMax);
-  const float pct = scale > 0 ? m->value * 100.0f / scale : 0;
-  // Enter the warning colour at warnThresholdPct, leave it 5 points below.
-  const float enter = (float)dispSettings.warnThresholdPct;
-  const bool warn = !autoRate && enter > 0 && (r.warn ? pct >= enter - 5 : pct >= enter);
-  if (warn != r.warn) {
-    r.warn = warn;
-    lv_obj_set_style_text_color(r.sub, lv_color_hex(warn ? C_WARN : tileTextRt(r)), 0);
-    changed = true;
-  }
-  const uint32_t accent = warn ? C_WARN : metricChart(d);
-  if (r.viz && d.style == METRIC_BAR) {
-    const int32_t v = (int32_t)constrain(pct, 0.0f, 100.0f);
-    if (lv_bar_get_value(r.viz) != v) {
-      lv_bar_set_value(r.viz, v, LV_ANIM_OFF);
-      changed = true;
-    }
-    const lv_color_t c = lv_color_hex(accent);
-    if (!lv_color_eq(lv_obj_get_style_bg_color(r.viz, LV_PART_INDICATOR), c)) {
-      lv_obj_set_style_bg_color(r.viz, c, LV_PART_INDICATOR);
-      changed = true;
-    }
-  } else if (r.spark) {
-    changed |= sparkFeed(r, *pc, hs, n, scale, autoRate, accent);
-  }
-  return changed;
-}
 
 lv_obj_t* makeRows(lv_obj_t* t, const TileDef& d) {
   if (!d.http.enabled || d.rows.empty()) return nullptr;
@@ -363,25 +46,14 @@ lv_obj_t* makeDetail(lv_obj_t* t, const TileDef& d) {
 void makeMetricContent(TileRt& r, lv_obj_t* t) {
   const TileDef& d = *r.def;
   const MetricStyle style = d.style;
-  const bool sensor = d.type == TILE_SENSOR;
-  const uint32_t accent = sensor ? sensorLine(r) : metricAccent(d);
-  if (!sensor) lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);  // read-only
+  const uint32_t accent = sensorLine(r);
 
   r.name = lv_label_create(t);
-  lv_label_set_text(r.name, d.label.length() ? d.label.c_str() : sensor && !d.noName ? tileLabel(d).c_str() : "");
+  lv_label_set_text(r.name, d.label.length() ? d.label.c_str() : !d.noName ? tileLabel(d).c_str() : "");
   // On glass the accent alone is hard to read: lift it toward white.
   const lv_color_t nameCol = lv_color_hex(accent);
   lv_obj_set_style_text_color(r.name, s_theme == THEME_GLASS ? lv_color_mix(lv_color_white(), nameCol, 110) : nameCol, 0);
   lv_label_set_long_mode(r.name, LV_LABEL_LONG_MODE_DOTS);
-  // A chosen icon sits before the name, as a child of its label (fitMetricIcon pads the name).
-  if (d.icon.length() && d.icon != "none") {
-    r.icon = lv_label_create(r.name);
-    lv_obj_remove_flag(r.icon, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
-    lv_obj_add_flag(r.name, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
-    if (d.hasIconColor) lv_obj_set_style_text_color(r.icon, lv_color_hex(d.iconColor), 0);
-    r.iconPx = 16;
-    r.iconCp = showIcon(r.icon, d, nullptr, false, r.iconPx, 0);
-  }
 
   // Value and unit side by side, bottoms aligned.
   lv_obj_t* row = lv_obj_create(t);
@@ -396,10 +68,10 @@ void makeMetricContent(TileRt& r, lv_obj_t* t) {
   r.unit = lv_label_create(row);
   lv_label_set_text(r.unit, "");
   lv_obj_set_style_text_opa(r.unit, LV_OPA_70, 0);
-  if (sensor) r.detail = makeDetail(t, d);
+  r.detail = makeDetail(t, d);
 
   // Fonts and places come from fitMetric once the tile has its size.
-  if (style == METRIC_NUMBER) return;
+  if (style == METRIC_NUMBER || style == METRIC_HEADLINE) return;
   if (style == METRIC_BAR) {
     r.viz = lv_bar_create(t);
     lv_obj_set_size(r.viz, lv_pct(100), 8);
@@ -407,23 +79,10 @@ void makeMetricContent(TileRt& r, lv_obj_t* t) {
     lv_bar_set_range(r.viz, 0, 100);
     lv_obj_set_style_bg_color(r.viz, lv_color_hex(C_TRACK), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(r.viz, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(r.viz, lv_color_hex(metricChart(d)), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(r.viz, lv_color_hex(sensorLine(r)), LV_PART_INDICATOR);
     return;
   }
-  // Chart: the number top right, the line under it. PC metrics draw their own
-  // (sparkPaint) to glide between packets; makeTile hooks up its events.
-  if (!sensor) {
-    r.spark = (Spark*)lv_malloc_zeroed(sizeof(Spark));
-    if (!r.spark) return;
-    r.spark->gapMs = 1000;
-    r.spark->key = -1;
-    r.viz = lv_obj_create(t);
-    lv_obj_remove_style_all(r.viz);
-    lv_obj_set_size(r.viz, lv_pct(100), lv_pct(62));
-    lv_obj_align(r.viz, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_remove_flag(r.viz, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
-    return;
-  }
+  // Native LVGL chart for Home Assistant and HTTP sensor history.
   r.viz = lv_chart_create(t);
   lv_obj_remove_style_all(r.viz);
   lv_obj_set_size(r.viz, lv_pct(100), lv_pct(62));
@@ -443,74 +102,105 @@ void makeMetricContent(TileRt& r, lv_obj_t* t) {
   lv_chart_set_series_ext_y_array(r.viz, r.ser, r.pts);
 }
 
-// A PC command tile shows what its PC reports: the volume, mute (lit while
-// muted), the track. A fixed "sub" wins; only the portal's default icon and
-// label follow (Play / pause then shows the track as its name).
-void applyPcStateToTile(TileRt& r) {
-  const TileDef& d = *r.def;
-  if (d.tap.kind != ACT_PC || !r.sub) return;
-  if (d.pcVolume && (r.sliding || pcVolHeld())) return;  // the finger's level stands
-  const String& cmd = d.tap.cmd;
-  const PcState* st = pcStateOf(pcSource(d.tap.pc));
-  String sub;
-  const char* icon = nullptr;
-  bool on = false;
-  if (st && cmd == "volume_mute") {
-    on = st->mute == 1;
-    sub = on ? String("Muted") : st->vol >= 0 ? String(st->vol) + "%" : String();
-    if (st->mute >= 0) icon = on ? "volume-off" : "volume-high";
-  } else if (st && (cmd == "volume_up" || cmd == "volume_down")) {
-    if (st->vol >= 0) sub = String(st->vol) + "%";
-  } else if (st && cmd.startsWith("media_") && st->media >= 0) {
-    sub = st->title;
-    if (st->artist[0]) sub += sub.length() ? String(" - ") + st->artist : String(st->artist);
-    if (cmd == "media_play_pause") icon = st->media == PC_MEDIA_PLAYING ? "pause" : "play";
-  }
-  bool changed = false;
-  if (d.pcVolume) {
-    const float f = st && st->vol >= 0 ? st->vol / 100.0f : 0;
-    if (fabsf(f - r.frac) > 0.001f) {
-      setSliderFill(r, f);
-      changed = true;
-    }
-  }
-  if (cmd == "media_play_pause" && r.name && (d.label.isEmpty() || d.label == "Play / pause")) {
-    String name = tileLabel(d);
-    if (st && st->media >= 0 && st->title[0]) {
-      name = st->title;
-      sub = st->artist;
-    }
-    if (name != lv_label_get_text(r.name)) {
-      lv_label_set_text(r.name, name.c_str());
-      fitNameText(r);
-      changed = true;
-    }
-  }
-  if (!d.sub.length() && sub != lv_label_get_text(r.sub)) {
-    lv_label_set_text(r.sub, sub.c_str());
-    changed = true;
-  }
-  if (on != r.on) {
-    setTileOn(r, on);
-    changed = true;
-  }
-  if ((cmd == "volume_mute" || cmd == "media_play_pause") &&
-      (d.icon.isEmpty() || d.icon == "mdi:volume-mute" || d.icon == "mdi:play-pause")) {
-    const uint32_t was = r.iconCp;
-    const lv_font_t* f = iconFont(r.iconPx);
-    const uint32_t cp = icon && f ? iconCodepoint(icon) : 0;
-    if (cp && cp != r.iconCp) {
-      char u[5];
-      iconUtf8(cp, u);
-      lv_obj_set_style_text_font(r.icon, f, 0);
-      lv_label_set_text(r.icon, u);
-      r.iconCp = cp;
-    } else if (!cp) {
-      r.iconCp = showIcon(r.icon, d, nullptr, false, r.iconPx, r.iconCp);  // back to the default
-    }
-    changed = changed || r.iconCp != was;
-  }
-  if (changed) markPageStale(r.page);
+
+// A climate entity's state is its HVAC mode ("heat", "auto", "off"), NOT
+// a temperature. The headline temperature widget must use the live
+// current_temperature attribute and must never substitute the target.
+String climateCurrentUnit(const HaEntity& e) {
+  // Some integrations include temperature_unit; weatherTempUnit is the HA
+  // store field for that attribute. Most climate integrations do not supply
+  // it, so fall back to the local deck's Celsius convention.
+  if (e.weatherTempUnit.length()) return e.weatherTempUnit;
+  if (e.unit.length()) return e.unit;
+  return "\xC2\xB0" "C";
+}
+
+String climateCurrentText(const HaEntity& e, bool withUnit) {
+  if (!e.known || e.state == "unavailable" || e.state == "unknown" ||
+      !isfinite(e.current)) return "--";
+  char text[32];
+  formatReading(e.current, text, sizeof(text));
+  return withUnit ? String(text) + climateCurrentUnit(e) : String(text);
+}
+
+const char* weatherIcon(const String& state) {
+  // Home Assistant normalises the weather.* state, but its "partlycloudy"
+  // state does not tell us whether to draw a sun or moon. Follow the actual
+  // sun.sun state instead of hard-coding a night-time clock interval.
+  HaEntity sun;
+  const bool night = state == "clear-night" ||
+      (haGetEntity("sun.sun", sun) && sun.known && sun.state == "below_horizon");
+  if (state == "sunny") return night ? "weather-night" : "weather-sunny";
+  if (state == "clear-night") return "weather-night";
+  if (state == "cloudy") return "weather-cloudy";
+  if (state == "partlycloudy") return night ? "weather-night-partly-cloudy"
+                                            : "weather-partly-cloudy";
+  if (state == "fog") return "weather-fog";
+  if (state == "hail") return "weather-hail";
+  if (state == "lightning") return "weather-lightning";
+  if (state == "lightning-rainy") return "weather-lightning-rainy";
+  if (state == "pouring") return "weather-pouring";
+  if (state == "rainy") return "weather-rainy";
+  if (state == "snowy") return "weather-snowy";
+  if (state == "snowy-rainy") return "weather-snowy-rainy";
+  if (state == "windy" || state == "windy-variant") return "weather-windy";
+  if (state == "exceptional") return "weather-hurricane";
+  return night ? "weather-night-partly-cloudy" : "weather-partly-cloudy";
+}
+
+String weatherCondition(const String& state) {
+  if (state == "partlycloudy") return "Partly cloudy";
+  if (state == "clear-night") return "Clear night";
+  if (state == "lightning-rainy") return "Thunderstorms";
+  if (state == "snowy-rainy") return "Sleet";
+  if (state == "unknown" || state == "unavailable" || !state.length()) return "Unavailable";
+  String s = state;
+  s.replace("-", " ");
+  s[0] = toupper((unsigned char)s[0]);
+  return s;
+}
+
+String weatherTempText(const HaEntity& e, bool withUnit) {
+  if (!e.known || e.state == "unavailable" || e.state == "unknown" ||
+      !isfinite(e.weatherTemp)) return "--";
+  char v[24];
+  formatReading(e.weatherTemp, v, sizeof(v));
+  return withUnit ? String(v) + e.weatherTempUnit : String(v);
+}
+
+// A compact weather tile uses the same low-overhead labels as a sensor,
+// rather than a chart or a downloaded icon/image.
+void makeWeatherContent(TileRt& r, lv_obj_t* tile) {
+  r.name = lv_label_create(tile);
+  lv_label_set_text(r.name, tileLabel(*r.def).c_str());
+  lv_label_set_long_mode(r.name, LV_LABEL_LONG_MODE_DOTS);
+  lv_obj_set_style_text_opa(r.name, LV_OPA_80, 0);
+  lv_obj_t* row = lv_obj_create(tile);
+  lv_obj_remove_style_all(row);
+  lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+  lv_obj_set_style_pad_column(row, 4, 0);
+  lv_obj_remove_flag(row, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+  r.sub = lv_label_create(row);
+  lv_label_set_text(r.sub, "--");
+  r.unit = lv_label_create(row);
+  lv_label_set_text(r.unit, "");
+  lv_obj_set_style_text_opa(r.unit, LV_OPA_80, 0);
+  r.detail = lv_label_create(tile);
+  lv_label_set_text(r.detail, "Waiting for weather");
+  lv_label_set_long_mode(r.detail, LV_LABEL_LONG_MODE_DOTS);
+  lv_obj_set_style_text_opa(r.detail, LV_OPA_70, 0);
+  r.chip = lv_obj_create(tile);
+  lv_obj_remove_flag(r.chip, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+  lv_obj_set_style_radius(r.chip, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_border_width(r.chip, 0, 0);
+  lv_obj_set_style_pad_all(r.chip, 0, 0);
+  styleIconChip(r.chip, r.def->hasColor ? r.def->color : domainColor("weather"));
+  r.icon = lv_label_create(r.chip);
+  lv_obj_center(r.icon);
+  r.iconPx = 28;
+  r.iconCp = showIcon(r.icon, *r.def, nullptr, false, r.iconPx, 0);
 }
 
 // Clock tile text; "--:--" until the time is synced.
@@ -537,33 +227,5 @@ void applyClock(TileRt& r) {
   markPageStale(r.page);
 }
 
-uint32_t s_pcSeen = 0;
-
-static void pcApplyTile(TileRt& r) {
-  if (r.def->type == TILE_MEDIA && (!r.def->entity.length() || r.def->mediaAuto)) applyMedia(r);
-  if (r.def->tap.kind == ACT_PC) applyPcStateToTile(r);
-  if (r.def->type == TILE_METRIC && applyPcToTile(r)) markPageStale(r.page);
-}
-
-// A companion packet or an online change of any PC: refresh its tiles. The
-// shown page at once, the other pages a few tiles per pass (all in one pass
-// cost a frame every second).
-void pcSync(bool force) {
-  static size_t rest = SIZE_MAX;  // next tile of the walk over the other pages
-  static int shown = -1;          // the page done when the packet came
-  const bool fresh = force || pcVersion() != s_pcSeen;
-  const uint32_t t0 = micros();
-  // A new packet finishes the walk of the one before.
-  while (rest < s_tiles.size() && (fresh || micros() - t0 < 300)) {
-    TileRt& r = s_tiles[rest++];
-    if (r.page != shown) pcApplyTile(r);
-  }
-  if (!fresh) return;
-  s_pcSeen = pcVersion();
-  shown = force ? -1 : sh.active;
-  rest = force ? SIZE_MAX : 0;
-  for (TileRt& r : s_tiles)
-    if (force || r.page == shown) pcApplyTile(r);
-}
 
 }  // namespace deckui

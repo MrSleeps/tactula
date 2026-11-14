@@ -18,6 +18,9 @@ lv_obj_t* s_modalIcon = nullptr;
 uint32_t s_modalIconCp = 0;
 lv_obj_t* s_modalChart = nullptr;
 lv_obj_t* s_modalRange = nullptr;
+lv_obj_t* s_modalWeatherInfo = nullptr;
+lv_obj_t* s_modalWeatherRight = nullptr;
+lv_obj_t* s_modalWeatherCondition = nullptr;
 lv_chart_series_t* s_modalSeries = nullptr;
 int32_t* s_modalPoints = nullptr;
 uint32_t s_modalHistoryVersion = 0;
@@ -40,28 +43,7 @@ bool modalShown() { return s_modalCard != nullptr; }
 lv_obj_t* s_modalUnder = nullptr;
 lv_draw_buf_t* s_underBuf = nullptr;  // kept once used
 
-// The cover's picture: the last frame at half brightness, as the compositor dims.
-void coverFill() {
-  if (!s_underBuf) return;
-  const int w = logicalW(), h = logicalH();
-  const uint16_t* fb = lastFrame();
-  for (int y = 0; y < h; y++) {
-    uint16_t* d = (uint16_t*)(s_underBuf->data + y * s_underBuf->header.stride);
-    const uint16_t* s = fb + y * w;
-    for (int x = 0; x < w; x++) d[x] = (s[x] >> 1) & 0x7BEF;
-  }
-}
-
-// Only with no card open; the next card allocates it again.
-void cardUnderFree() {
-  if (s_modalUnder || !s_underBuf) return;
-  lv_image_cache_drop(s_underBuf);
-  lv_draw_buf_destroy(s_underBuf);
-  s_underBuf = nullptr;
-}
-
-// fill false: the caller runs coverFill before LVGL draws again.
-bool coverPage(bool fill) {
+bool coverPage() {
   const int w = logicalW(), h = logicalH();
   if (s_underBuf && (s_underBuf->header.w != w || s_underBuf->header.h != h)) {
     lv_draw_buf_destroy(s_underBuf);
@@ -70,7 +52,12 @@ bool coverPage(bool fill) {
   if (!s_underBuf) s_underBuf = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
   if (!s_underBuf) return false;
   lv_image_cache_drop(s_underBuf);
-  if (fill) coverFill();
+  const uint16_t* fb = lastFrame();
+  for (int y = 0; y < h; y++) {
+    uint16_t* d = (uint16_t*)(s_underBuf->data + y * s_underBuf->header.stride);
+    const uint16_t* s = fb + y * w;
+    for (int x = 0; x < w; x++) d[x] = (s[x] >> 1) & 0x7BEF;  // half, as the compositor dims
+  }
   s_modalUnder = lv_image_create(lv_screen_active());
   lv_obj_add_flag(s_modalUnder, (lv_obj_flag_t)(LV_OBJ_FLAG_IGNORE_LAYOUT | LV_OBJ_FLAG_FLOATING));
   lv_obj_remove_flag(s_modalUnder, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
@@ -85,54 +72,24 @@ bool coverPage(bool fill) {
 void onModalScrim(lv_event_t*);
 
 // The scrim for a card: transparent over the covered page, else half black.
-lv_obj_t* makeScrim(bool fill = true) {
+lv_obj_t* makeScrim() {
   lv_obj_t* s = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s);
   lv_obj_set_size(s, logicalW(), logicalH());
   lv_obj_set_style_bg_color(s, lv_color_black(), 0);
-  lv_obj_set_style_bg_opa(s, coverPage(fill) ? LV_OPA_TRANSP : LV_OPA_50, 0);
+  lv_obj_set_style_bg_opa(s, coverPage() ? LV_OPA_TRANSP : LV_OPA_50, 0);
   lv_obj_add_event_cb(s, onModalScrim, LV_EVENT_CLICKED, nullptr);
   return s;
 }
 
 // Thin line on the top edge while daily pictures download: swipes may hitch then.
 lv_obj_t* s_dailyBar = nullptr;
-lv_obj_t* s_dailyPill = nullptr;  // "Daily pictures 3 of 20, tap to skip"
-
-void dailySkipTap(lv_event_t*) {
-  deck::dailySkip();
-  hapticTap();
-}
 
 void dailyBarSync() {
   int done = 0, total = 0;
   if (!deck::dailyProgress(done, total) || !total) {
     if (s_dailyBar) lv_obj_add_flag(s_dailyBar, LV_OBJ_FLAG_HIDDEN);
-    if (s_dailyPill) lv_obj_add_flag(s_dailyPill, LV_OBJ_FLAG_HIDDEN);
     return;
-  }
-  // Home Assistant and MQTT are paused meanwhile: say why, and offer a way out.
-  if (!s_dailyPill) {
-    s_dailyPill = lv_obj_create(lv_layer_top());
-    lv_obj_remove_style_all(s_dailyPill);
-    lv_obj_set_size(s_dailyPill, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_color(s_dailyPill, lv_color_hex(0x2A2F38), 0);
-    lv_obj_set_style_bg_opa(s_dailyPill, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(s_dailyPill, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_pad_hor(s_dailyPill, 14, 0);
-    lv_obj_set_style_pad_ver(s_dailyPill, 7, 0);
-    lv_obj_set_style_text_color(s_dailyPill, lv_color_hex(0xE6E8EC), 0);
-    lv_obj_add_event_cb(s_dailyPill, dailySkipTap, LV_EVENT_CLICKED, nullptr);
-    lv_label_create(s_dailyPill);
-  }
-  char text[64];
-  snprintf(text, sizeof(text), "Daily pictures %d of %d, tap to skip", std::min(done + 1, total), total);
-  lv_obj_t* label = lv_obj_get_child(s_dailyPill, 0);
-  if (strcmp(lv_label_get_text(label), text)) lv_label_set_text(label, text);
-  lv_obj_align(s_dailyPill, LV_ALIGN_TOP_MID, 0, 8);
-  if (lv_obj_has_flag(s_dailyPill, LV_OBJ_FLAG_HIDDEN)) {
-    lv_obj_remove_flag(s_dailyPill, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_foreground(s_dailyPill);
   }
   if (!s_dailyBar) {
     s_dailyBar = lv_obj_create(lv_layer_top());
@@ -164,12 +121,12 @@ void deckToastShow(const char* text, uint32_t holdMs) {
     s_toast = lv_obj_create(lv_layer_top());
     lv_obj_remove_style_all(s_toast);
     lv_obj_set_size(s_toast, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_color(s_toast, lv_color_hex(0x2A2F38), 0);
+    lv_obj_set_style_bg_color(s_toast, lv_color_hex(0x171E2C), 0);
     lv_obj_set_style_bg_opa(s_toast, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(s_toast, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_pad_hor(s_toast, 16, 0);
     lv_obj_set_style_pad_ver(s_toast, 9, 0);
-    lv_obj_set_style_text_color(s_toast, lv_color_hex(0xE6E8EC), 0);  // dark pill on both themes
+    lv_obj_set_style_text_color(s_toast, lv_color_hex(0xEDF0F8), 0);  // dark pill on both themes
     lv_obj_remove_flag(s_toast, LV_OBJ_FLAG_CLICKABLE);
     lv_label_create(s_toast);
   }
@@ -452,6 +409,36 @@ int climateBuild(lv_obj_t* c, int cw, int y, uint32_t accent, const HaEntity* e)
   return at - y;
 }
 
+// Up to five observations per column. Short labels avoid wrapping on 320px displays.
+String weatherInfoColumn(const HaEntity& e, bool right, bool compact) {
+  if (!e.known || e.state == "unavailable" || e.state == "unknown") return "";
+  String lines;
+  char v[24];
+  auto add = [&](const char* name, float value, const String& unit) {
+    if (!isfinite(value)) return;
+    formatReading(value, v, sizeof(v));
+    if (lines.length()) lines += "\n";
+    lines += name;
+    lines += "  ";
+    lines += v;
+    lines += unit;
+  };
+  if (!right) {
+    add(compact ? "Feels" : "Feels like", e.weatherFeels, e.weatherTempUnit);
+    add(compact ? "Humid." : "Humidity", e.weatherHumidity, "%");
+    add("Wind", e.weatherWind, e.weatherWindUnit.length() ? String(" ") + e.weatherWindUnit : String());
+    add("Gusts", e.weatherGust, e.weatherWindUnit.length() ? String(" ") + e.weatherWindUnit : String());
+    add(compact ? "Rain" : "Rain chance", e.weatherRainChance, "%");
+  } else {
+    add(compact ? "Dew" : "Dew point", e.weatherDew, e.weatherTempUnit);
+    add(compact ? "Press." : "Pressure", e.weatherPressure, e.weatherPressureUnit.length() ? String(" ") + e.weatherPressureUnit : String());
+    add(compact ? "Vis." : "Visibility", e.weatherVisibility, e.weatherVisibilityUnit.length() ? String(" ") + e.weatherVisibilityUnit : String());
+    add("UV", e.weatherUV, "");
+    add(compact ? "Dir." : "Direction", e.weatherBearing, "\xC2\xB0");
+  }
+  return lines;
+}
+
 void closeModal() {
   if (s_modalSlider && s_modalTile >= 0 && s_modalTile < (int)s_tiles.size()) {
     if (Wish* w = findWish(s_tiles[s_modalTile].def->entity)) {
@@ -469,6 +456,7 @@ void closeModal() {
   s_modalSlider = nullptr;
   s_modalIcon = nullptr;
   s_modalChart = s_modalRange = nullptr;
+  s_modalWeatherInfo = s_modalWeatherRight = s_modalWeatherCondition = nullptr;
   s_modalSeries = nullptr;
   heap_caps_free(s_modalPoints);
   s_modalPoints = nullptr;
@@ -538,6 +526,16 @@ void refreshModal() {
   if (haKnown) st = wishText(r.def->entity, e, false);
   if (s_climate) {
     climateRefresh(haKnown ? &e : nullptr);
+  } else if (s_modalWeatherInfo) {
+    const bool good = haKnown && e.known;
+    lv_label_set_text(s_modalState, good ? weatherTempText(e, true).c_str() : "--");
+    lv_label_set_text(s_modalWeatherCondition, good ? weatherCondition(e.state).c_str() : "Waiting for weather");
+    const bool compact = lv_obj_get_width(s_modalWeatherInfo) < 150;
+    lv_label_set_text(s_modalWeatherInfo, good ? weatherInfoColumn(e, false, compact).c_str() : "");
+    lv_label_set_text(s_modalWeatherRight, good ? weatherInfoColumn(e, true, compact).c_str() : "");
+  } else if (r.def->type == TILE_SENSOR && r.def->style == METRIC_HEADLINE &&
+             entityDomain(r.def->entity) == "climate") {
+    lv_label_set_text(s_modalState, haKnown ? climateCurrentText(e, true).c_str() : "--");
   } else if (s_modalSlider) {
     const float f = haKnown ? wishFrac(r.def->entity, e) : -1;
     const int pct = f > 0 ? (int)lroundf(f * 100) : 0;
@@ -570,7 +568,12 @@ void refreshModal() {
     }
   }
   const bool on = haKnown && wishOn(r.def->entity, e);
-  s_modalIconCp = showIcon(s_modalIcon, *r.def, haKnown ? &e : nullptr, on, 28, s_modalIconCp);
+  if (s_modalWeatherInfo && haKnown && !r.def->icon.length()) {
+    TileDef visual = *r.def;
+    visual.icon = String("mdi:") + weatherIcon(e.state);
+    s_modalIconCp = showIcon(s_modalIcon, visual, &e, on, 28, s_modalIconCp);
+  } else
+    s_modalIconCp = showIcon(s_modalIcon, *r.def, haKnown ? &e : nullptr, on, 28, s_modalIconCp);
 }
 
 // Detail card for a tile (hold action "more-info"): name, entity, state, a
@@ -594,20 +597,23 @@ void openModal(int tileIdx) {
   HaEntity he;
   float hv;
   const bool haKnown = d.entity.length() && haGetEntity(d.entity, he);
-  const bool graph = d.type == TILE_SENSOR && haKnown && he.known && haNumericState(he.state, hv);
+  const bool weather = d.type == TILE_SENSOR && d.style == METRIC_WEATHER;
+  const bool graph = d.type == TILE_SENSOR && d.style != METRIC_HEADLINE && !weather &&
+                     haKnown && he.known && haNumericState(he.state, hv);
+  // A climate-backed headline shows the current room temperature on the tile,
+  // but its detail popup should retain the thermostat's setpoint and HVAC controls.
   const bool climate = entityDomain(d.entity) == "climate" && !d.http.enabled;
 
+  s_modalScrim = makeScrim();
+
   const int cw = w - 40 < 380 ? w - 40 : 380;
-  int ch = graph ? (light ? 304 : 284) : light ? 236 : 196;
+  int ch = weather ? std::min(h - 24, 306) : graph ? (light ? 304 : 284) : light ? 236 : 196;
   // Climate: +/- row (52), info line, mode chips when it has several modes.
   int nModes = 0;
   if (climate && haKnown)
     for (int i = 0, n = he.hvacModes.length(); i < n; i++) nModes += i == 0 || he.hvacModes[i] == ',';
   if (climate) ch = 74 + 52 + 8 + lv_font_get_line_height(&deck_font_14) + 10 +
                     (nModes > 1 ? 46 : 0) + 10 + 44 + 16;
-  fxCardOpenBegin(tileIdx, {(int16_t)((w - cw) / 2), (int16_t)((h - ch) / 2), (int16_t)cw, (int16_t)ch}, 22);
-
-  s_modalScrim = makeScrim(false);  // filled below, while the animation runs
   lv_obj_t* c = lv_obj_create(lv_layer_top());
   s_modalCard = c;
   lv_obj_remove_style_all(c);
@@ -649,6 +655,7 @@ void openModal(int tileIdx) {
   lv_obj_set_pos(name, 72, 15);
   lv_obj_t* ent = lv_label_create(c);
   lv_label_set_text(ent, d.entity.length() ? d.entity.c_str() : "No entity");
+  if (weather && !d.showEntityId) lv_obj_add_flag(ent, LV_OBJ_FLAG_HIDDEN);
   lv_obj_set_style_text_color(ent, lv_color_hex(C_DIM), 0);
   lv_label_set_long_mode(ent, LV_LABEL_LONG_MODE_DOTS);
   lv_obj_set_size(ent, cw - 88, lv_font_get_line_height(&deck_font_14));
@@ -661,6 +668,29 @@ void openModal(int tileIdx) {
   lv_obj_set_pos(s_modalState, 16, 74);
 
   s_modalSlider = nullptr;
+  if (weather) {
+    // Condition on its own line, observations in two balanced columns.
+    // Both fit above Close even on the 320px-high landscape layout.
+    s_modalWeatherCondition = lv_label_create(c);
+    lv_obj_set_pos(s_modalWeatherCondition, 16, 108);
+    lv_obj_set_size(s_modalWeatherCondition, cw - 32, lv_font_get_line_height(&deck_font_14));
+    lv_obj_set_style_text_font(s_modalWeatherCondition, &deck_font_14, 0);
+    lv_label_set_long_mode(s_modalWeatherCondition, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_remove_flag(s_modalWeatherCondition, LV_OBJ_FLAG_CLICKABLE);
+
+    const int gap = 8;
+    const int colWidth = (cw - 32 - gap) / 2;
+    for (int i = 0; i < 2; ++i) {
+      lv_obj_t* label = lv_label_create(c);
+      lv_obj_set_pos(label, 16 + i * (colWidth + gap), 134);
+      lv_obj_set_size(label, colWidth, std::max(32, ch - 134 - 66));
+      lv_obj_set_style_text_font(label, &deck_font_14, 0);
+      lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
+      lv_obj_remove_flag(label, LV_OBJ_FLAG_CLICKABLE);
+      if (i == 0) s_modalWeatherInfo = label;
+      else s_modalWeatherRight = label;
+    }
+  }
   if (climate) climateBuild(c, cw, 74, accent, haKnown ? &he : nullptr);
   if (light && !climate) {
     lv_obj_t* sl = lv_slider_create(c);
@@ -728,7 +758,6 @@ void openModal(int tileIdx) {
   refreshModal();
   s_modalBuilding = false;
   fxCardOpen(c, tileIdx);
-  coverFill();
   // The history reply lands on core 0; HA waits for the animation started above.
   if (s_modalChart) refreshModal();
 }
@@ -746,7 +775,7 @@ void onConfirmTimeout(lv_timer_t*) {
   closeModal();
 }
 
-// "Turn off Printer?" card for tiles with "confirm". Cancel, the scrim, the
+// Confirmation card for tiles with "confirm". Cancel, the scrim, the
 // timeout or a state change close it without running anything.
 void openConfirm(int tileIdx, bool hold) {
   closeModal();
@@ -837,193 +866,6 @@ void openConfirm(int tileIdx, bool hold) {
   s_confirmTimer = lv_timer_create(onConfirmTimeout, CONFIRM_TIMEOUT_MS, nullptr);
   lv_timer_set_repeat_count(s_confirmTimer, 1);
   setModalOpen(true);
-}
-
-// Printer errors: print_error first, then the HMS codes worst first. A tap
-// anywhere closes it.
-void onErrorsClose(lv_event_t*) { closeModal(); }
-
-void openPrinterErrors(const String& title, const PrinterState& s) {
-  closeModal();
-  cleanPage();
-  const int w = logicalW(), h = logicalH();
-  s_modalScrim = makeScrim();
-  const int cw = w - 32 < 440 ? w - 32 : 440;
-  const int ch = h - 40 < 340 ? h - 40 : 340;
-  lv_obj_t* c = lv_obj_create(lv_layer_top());
-  s_modalCard = c;
-  lv_obj_remove_style_all(c);
-  lv_obj_set_size(c, cw, ch);
-  lv_obj_center(c);
-  lv_obj_set_style_bg_color(c, lv_color_hex(C_PANEL), 0);
-  lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
-  lv_obj_set_style_radius(c, 22, 0);
-  if (s_theme == THEME_GLASS &&
-      (s_modalGlass = frostedCopy((w - cw) / 2, (h - ch) / 2, cw, ch, 22)))
-    frostStyle(c, s_modalGlass);
-  lv_obj_set_style_text_color(c, lv_color_hex(C_TEXT), 0);
-  lv_obj_set_style_pad_all(c, 16, 0);
-  lv_obj_set_style_pad_row(c, 10, 0);
-  lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_scroll_dir(c, LV_DIR_VER);
-  lv_obj_add_flag(c, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(c, onErrorsClose, LV_EVENT_CLICKED, nullptr);
-
-  lv_obj_t* name = lv_label_create(c);
-  lv_label_set_text(name, title.c_str());
-  lv_obj_set_style_text_font(name, &deck_font_20, 0);
-  lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
-  lv_obj_set_width(name, lv_pct(100));
-
-  auto entry = [&](uint8_t sev, const String& head, const char* code, const String& text) {
-    const uint32_t color = hmsSeverityColor(sev);
-    lv_obj_t* box = lv_obj_create(c);
-    lv_obj_remove_style_all(box);
-    lv_obj_remove_flag(box, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
-    lv_obj_add_flag(box, LV_OBJ_FLAG_EVENT_BUBBLE);
-    lv_obj_set_size(box, lv_pct(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_left(box, 10, 0);
-    lv_obj_set_style_pad_row(box, 2, 0);
-    lv_obj_set_style_border_side(box, LV_BORDER_SIDE_LEFT, 0);
-    lv_obj_set_style_border_width(box, 3, 0);
-    lv_obj_set_style_border_color(box, lv_color_hex(color), 0);
-    lv_obj_t* hl = lv_label_create(box);
-    lv_label_set_text(hl, head.c_str());
-    lv_obj_set_style_text_font(hl, &deck_font_14, 0);
-    lv_obj_set_style_text_color(hl, lv_color_hex(color), 0);
-    lv_obj_t* tl = lv_label_create(box);
-    lv_label_set_text(tl, text.c_str());
-    lv_obj_set_style_text_font(tl, &deck_font_14, 0);
-    lv_obj_set_width(tl, lv_pct(100));
-    lv_label_set_long_mode(tl, LV_LABEL_LONG_MODE_WRAP);
-    lv_obj_t* cl = lv_label_create(box);
-    lv_label_set_text(cl, code);
-    lv_obj_set_style_text_font(cl, &deck_font_12, 0);
-    lv_obj_set_style_text_opa(cl, LV_OPA_60, 0);
-  };
-  char code[32];
-  if (s.printError && !printErrorIsCancel(s.printError)) {
-    printErrorFormatCode(s.printError, code, sizeof(code));
-    const char* t = printErrorText(s.printError);
-    entry(1, "Print error", code, t ? t : "No description published for this code");
-  }
-  for (uint8_t i = 0; i < s.hmsCount; i++) {
-    const PrinterHms& e = s.hms[i];
-    const uint8_t sev = hmsSeverity(e.code);
-    hmsFormatCode(e.attr, e.code, code, sizeof(code));
-    const char* t = hmsText(e.attr, e.code);
-    String head = String(hmsSeverityLabel(sev)) + " - " + hmsModuleLabel(e.attr);
-    if (e.quiet) head += " (handled)";
-    entry(sev >= 1 && sev <= 3 ? sev : 0, head, code, t ? t : "No description published for this code");
-  }
-  if (s.hmsTotal > s.hmsCount) {
-    lv_obj_t* more = lv_label_create(c);
-    lv_label_set_text_fmt(more, "+%u more on the printer", (unsigned)(s.hmsTotal - s.hmsCount));
-    lv_obj_set_style_text_font(more, &deck_font_12, 0);
-    lv_obj_set_style_text_opa(more, LV_OPA_60, 0);
-  }
-  setModalOpen(true);
-}
-
-// The pairing card: Allow / Deny for a companion's request, or the code an
-// older companion asked for, until answered, cancelled or timed out
-// (pc_metrics owns the state).
-lv_obj_t* s_pairCard = nullptr;
-lv_obj_t* s_pairScrim = nullptr;
-uint32_t s_pairChecked = 0;
-String s_pairName, s_pairCode;
-
-void pairClose() {
-  if (s_pairCard) lv_obj_delete(s_pairCard);
-  if (s_pairScrim) lv_obj_delete(s_pairScrim);
-  s_pairCard = s_pairScrim = nullptr;
-  s_pairName = s_pairCode = "";
-  setModalOpen(s_modalCard != nullptr);
-}
-
-void onPairCancel(lv_event_t*) {
-  pcPairCancel();
-  lv_async_call([](void*) { pairClose(); }, nullptr);  // runs in the button's own event
-}
-
-void onPairAllow(lv_event_t*) {
-  pcPairAllow();
-  lv_async_call([](void*) { pairClose(); }, nullptr);
-}
-
-void pairSync() {
-  const uint32_t now = millis();
-  if (now - s_pairChecked < 250) return;
-  s_pairChecked = now;
-  String name, code;
-  const bool pending = pcPairPending(name, code);
-  if (!pending) {
-    if (s_pairCard) pairClose();
-    return;
-  }
-  if (s_pairCard && name == s_pairName && code == s_pairCode) return;
-  if (s_pairCard) pairClose();
-  s_pairName = name;
-  s_pairCode = code;
-  const int w = logicalW(), h = logicalH();
-  s_pairScrim = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(s_pairScrim);
-  lv_obj_set_size(s_pairScrim, w, h);
-  lv_obj_set_style_bg_color(s_pairScrim, lv_color_black(), 0);
-  lv_obj_set_style_bg_opa(s_pairScrim, LV_OPA_50, 0);
-  lv_obj_add_flag(s_pairScrim, LV_OBJ_FLAG_CLICKABLE);
-  const int cw = w - 40 < 340 ? w - 40 : 340;
-  lv_obj_t* c = lv_obj_create(lv_layer_top());
-  s_pairCard = c;
-  lv_obj_remove_style_all(c);
-  lv_obj_set_size(c, cw, 196);
-  lv_obj_center(c);
-  lv_obj_set_style_bg_color(c, lv_color_hex(C_PANEL), 0);
-  lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
-  lv_obj_set_style_radius(c, 22, 0);
-  lv_obj_set_style_text_color(c, lv_color_hex(C_TEXT), 0);
-  lv_obj_add_flag(c, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_remove_flag(c, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_t* t = lv_label_create(c);
-  lv_label_set_text_fmt(t, "Pair %s", name.c_str());
-  lv_obj_set_style_text_font(t, &deck_font_20, 0);
-  lv_label_set_long_mode(t, LV_LABEL_LONG_MODE_DOTS);
-  lv_obj_set_width(t, cw - 32);
-  lv_obj_set_pos(t, 16, 14);
-  if (!code.length()) {
-    // Tap mode: the companion waits for this answer.
-    lv_obj_t* q = lv_label_create(c);
-    lv_label_set_text_fmt(q, "Let this deck control %s: media, volume, lock, power and hotkeys?", name.c_str());
-    lv_label_set_long_mode(q, LV_LABEL_LONG_MODE_WRAP);
-    lv_obj_set_width(q, cw - 32);
-    lv_obj_set_style_text_color(q, lv_color_hex(C_DIM), 0);
-    lv_obj_set_pos(q, 16, 52);
-    const int bw = (cw - 40) / 2;
-    lv_obj_t* deny = qpButton(c, 16, 196 - 16 - 44, bw, "Deny", false);
-    lv_obj_set_height(deny, 44);
-    lv_obj_add_event_cb(deny, onPairCancel, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* allow = qpButton(c, 24 + bw, 196 - 16 - 44, bw, "Allow", false);
-    lv_obj_set_height(allow, 44);
-    lv_obj_add_state(allow, LV_STATE_CHECKED);  // the accent look
-    lv_obj_add_event_cb(allow, onPairAllow, LV_EVENT_CLICKED, nullptr);
-    setModalOpen(true);
-    return;
-  }
-  lv_obj_t* k = lv_label_create(c);
-  String spaced = code.substring(0, 3) + " " + code.substring(3);
-  lv_label_set_text(k, spaced.c_str());
-  lv_obj_set_style_text_font(k, &deck_font_28, 0);
-  lv_obj_set_style_text_letter_space(k, 4, 0);
-  lv_obj_align(k, LV_ALIGN_TOP_MID, 0, 50);
-  lv_obj_t* hint = lv_label_create(c);
-  lv_label_set_text(hint, "Enter this code in TouchDeck Companion");
-  lv_obj_set_style_text_color(hint, lv_color_hex(C_DIM), 0);
-  lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 94);
-  lv_obj_t* cancel = qpButton(c, 16, 196 - 16 - 44, cw - 32, "Cancel", false);
-  lv_obj_set_height(cancel, 44);
-  lv_obj_add_event_cb(cancel, onPairCancel, LV_EVENT_CLICKED, nullptr);
-  setModalOpen(true);  // no swipes under it
 }
 
 }  // namespace deckui

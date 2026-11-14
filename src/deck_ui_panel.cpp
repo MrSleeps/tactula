@@ -10,8 +10,8 @@ namespace deckui {
 // rounded corners; the compositor skips those rows.
 constexpr int QP_H = 196;
 constexpr int QP_LIP = 20;
-constexpr uint32_t C_SCREEN_ACCENT = 0xF6C56B;
-constexpr uint32_t C_LIGHT_ACCENT = 0xFFB35C;
+constexpr uint32_t C_SCREEN_ACCENT = 0x927DFF;
+constexpr uint32_t C_LIGHT_ACCENT = 0x48A5FF;
 
 // Top bar (page name, WiFi, clock) shown; owner setting, NVS "deckui"/"hdr".
 bool s_header = true;
@@ -33,7 +33,8 @@ uint8_t& lightLevelRef() {
 
 void qpSyncValues() {
   if (!s_qp.box) return;
-  lv_label_set_text(s_qp.screenLbl, nightWakeActive() || nightBrightnessActive() ? "Screen (night)" : "Screen");
+  const bool night = nightBrightnessActive();
+  lv_label_set_text(s_qp.screenLbl, nightWakeActive() ? "Screen (night wake)" : night ? "Screen (night)" : "Screen");
   lv_slider_set_value(s_qp.screenSlider, screenLevelRef(), LV_ANIM_OFF);
   lv_label_set_text_fmt(s_qp.screenVal, "%d%%", (screenLevelRef() * 100 + 127) / 255);
   lv_label_set_text(s_qp.lightLbl, ledNightActive() ? "Light (night)" : "Light");
@@ -60,20 +61,16 @@ void setChip(lv_obj_t* chip, const String& text, bool good) {
   qpMarkStale();
 }
 
-// Link status, every 2 s. RSSI moves in 5 dB steps and only once the signal
-// leaves the shown step: each change re-takes the panel image (~150 ms).
+// Link status, every 2 s. RSSI is rounded so a jittery signal does not keep
+// invalidating the panel image.
 void qpUpdateStatus(bool force) {
   if (!s_qp.box) return;
   const uint32_t now = millis();
   if (!force && now - s_qp.lastStatus < 2000) return;
   s_qp.lastStatus = now;
   const bool wifi = WiFi.status() == WL_CONNECTED;
-  const int raw = wifi ? WiFi.RSSI() : 0;
-  if (!s_qp.rssi || abs(raw - s_qp.rssi) > 5) s_qp.rssi = (raw / 5) * 5;
-  const int rssi = s_qp.rssi;
+  const int rssi = wifi ? (WiFi.RSSI() / 5) * 5 : 0;
   setChip(s_qp.wifi, wifi ? String(LV_SYMBOL_WIFI " ") + rssi + " dBm" : String(LV_SYMBOL_WIFI " offline"), wifi);
-  const int pcs = pcOnlineCount();
-  setChip(s_qp.pc, pcs > 1 ? String(pcs) + " PCs online" : pcs ? String("PC online") : String("PC offline"), pcs > 0);
   const HaLink hl = haLink();
   setChip(s_qp.ha, String("HA ") + haLinkName(hl), hl == HA_CONNECTED);
   setChip(s_qp.ip, wifi ? WiFi.localIP().toString() : String("-"), wifi);
@@ -168,7 +165,7 @@ lv_obj_t* qpButton(lv_obj_t* parent, int x, int y, int w, const char* text, bool
   lv_obj_set_style_radius(b, 14, 0);
   lv_obj_set_style_shadow_width(b, 0, 0);
   lv_obj_set_style_bg_color(b, lv_color_hex(C_BUTTON), 0);
-  lv_obj_set_style_bg_color(b, lv_color_hex(0xB3A6FF), LV_STATE_CHECKED);
+  lv_obj_set_style_bg_color(b, lv_color_hex(0x927DFF), LV_STATE_CHECKED);
   lv_obj_set_style_text_color(b, lv_color_hex(C_TEXT), 0);
   lv_obj_set_style_text_color(b, lv_color_hex(C_TEXT_ON), LV_STATE_CHECKED);
   if (checkable) lv_obj_add_flag(b, LV_OBJ_FLAG_CHECKABLE);
@@ -356,7 +353,6 @@ void buildQuickPanel() {
   lv_obj_set_style_pad_row(chips, 6, 0);
   lv_obj_remove_flag(chips, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
   s_qp.wifi = qpChip(chips);
-  s_qp.pc = qpChip(chips);
   s_qp.ha = qpChip(chips);
   s_qp.ip = qpChip(chips);
 

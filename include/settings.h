@@ -25,7 +25,6 @@ struct LedSettings {
   uint8_t nightEnabled;     // use nightBrightness inside the LED's own night interval
   uint8_t nightBrightness;  // 0..255, 0 switches the LED fully off at night
   uint8_t followDisplay;    // dark whenever the panel itself is dark
-  uint8_t offlineOff;       // dark while the PC companion is offline
   uint16_t nightStartMinute;  // minute of day, 0..1439; v2, v1 shared the backlight's
   uint16_t nightEndMinute;    // minute of day, 0..1439
 };
@@ -41,7 +40,7 @@ struct DisplaySettings {
   uint8_t  theme;             // THEME_MIDNIGHT, THEME_DAYLIGHT or THEME_GLASS
   uint8_t  glassTint;         // Glass: tile tint opacity %, 0..90
   uint8_t  glassBlur;         // Glass: blur radius px, 0..24 (0 = clear glass)
-  uint8_t  glassDim;          // Glass: wallpaper darkened by %, 0..60
+  uint8_t  glassDim;          // Glass: wallpaper black overlay %, 0..80 (sharp + blurred)
   uint8_t  glassOn;           // Glass: accent fill of an "on" tile, opacity %, 20..100
   uint8_t  wallEvery;         // Wallpaper interval in minutes, 0 = off
   uint8_t  wallOrder;         // 0 = in order, 1 = shuffle
@@ -54,14 +53,13 @@ struct DisplaySettings {
   uint8_t  dailyCount;        // Daily pictures per orientation, 1..DAILY_MAX_COUNT
   bool     glassAutoText;     // Glass: text colour and tint follow the picture per tile
   bool     smoothCharts;      // PC metric charts glide between packets
-  bool     printerFx;         // printer tiles: heat / frost, turning spool, print head
   uint8_t  tileFx;            // Tile animations: 0 classic, 1 calm, 2 water, 3 glass, 4 heavy, 5 custom
   // Custom (tileFx 5): one effect per moment, numbered as in the web selects.
   uint8_t  fxTouch, fxToggle, fxPage, fxCard;
 };
 
 // Screen sleep (portal Screen page); NVS scalars. Present = an entity
-// "on"/"home", (pc) any PC online, or (printing) a printer with a job.
+// "on"/"home" or any paired PC online.
 constexpr size_t MAX_PRESENCE_ENTITIES = 4;
 struct PresenceSettings {
   uint16_t sleepMin = 0;  // 0 = never sleeps
@@ -70,30 +68,10 @@ struct PresenceSettings {
   uint8_t frameEvery = 5;
   bool frameClock = true;
   bool frameAnim = true;
-  bool pc = false;
-  bool printing = false;
   bool nightWake = false;        // presence lifts the night schedule to nightWakeLevel
   uint8_t nightWakeLevel = 128;  // 0..255
   String entities[MAX_PRESENCE_ENTITIES];  // "" = unused slot
 };
-
-// Portal Advanced page; NVS scalars.
-struct AdvancedSettings {
-  bool printers;  // Bambu printers over LAN; off hides their pages and tiles, config kept
-};
-
-// Printers page: printer errors, the bed cooled alert and print energy cost; NVS scalars.
-struct PrinterSettings {
-  bool errors = true;      // badge, error card and alerts for HMS / print_error
-  bool errorsAll = false;  // common codes too, not only fatal and serious
-  bool errorWake = true;   // a new error wakes the deck and shows the printer page
-  bool follow = false;     // a print start shows the printer page, back once the bed has cooled
-  bool coolAlert = true;   // after a print, say when the bed has cooled
-  uint8_t coolTemp = 35;   // C
-  float kwhPrice = 0;      // per kWh, 0 = energy without a cost
-  char currency[8] = "";
-};
-constexpr uint8_t PRN_COOL_MIN = 20, PRN_COOL_MAX = 80;
 
 // Vibration motor module on a GPIO (portal Hardware page); NVS scalars.
 struct HapticSettings {
@@ -109,23 +87,11 @@ constexpr uint8_t HAPTIC_MAX_MS = 200;
 // NS4168 speaker (portal Hardware page); NVS scalars. A file name is a WAV in
 // audioDir(), "" = the built-in sound.
 constexpr size_t AUDIO_FILE_LEN = 40;
-constexpr uint16_t AUDIO_WAKE_MAX_MS = 1000;
-constexpr uint32_t AUDIO_KEEP_ON_MIN_MS = 500;
-constexpr uint32_t AUDIO_KEEP_ON_MAX_MS = 600000;
-
 struct AudioSettings {
   bool enabled = false;
   uint8_t volume = 70;     // 0..100
   bool nightMute = true;   // silent while the screen's night schedule is active
   bool click = false;      // tile taps
-  bool finished = true;    // print finished
-  bool error = true;       // new printer error
-  bool cooled = true;      // bed cooled after a print
-  uint16_t wakeMs = BOARD_AUDIO_WAKE_MS;       // amp + codec settle after power-up
-  uint32_t keepOnMs = BOARD_AUDIO_KEEP_ON_MS;  // idle time before the amp is cut
-  char fileFinished[AUDIO_FILE_LEN] = "";
-  char fileError[AUDIO_FILE_LEN] = "";
-  char fileCooled[AUDIO_FILE_LEN] = "";
 };
 
 constexpr uint8_t THEME_MIDNIGHT = 0;
@@ -145,7 +111,7 @@ struct NetworkSettings {
   bool use24h;            // top bar clock: 24h (default) or 12h
   uint8_t dateFormat;     // unused
   bool mdnsEnabled;       // advertise <hostname>.local over mDNS
-  char hostname[32];      // sanitized [a-z0-9-], default "touchdeck"
+  char hostname[32];      // sanitized [a-z0-9-], default "tactula-<MAC4>"
 };
 
 extern char wifiSSID[33];
@@ -153,19 +119,11 @@ extern char wifiPass[65];
 extern uint8_t brightness;
 extern DisplaySettings dispSettings;
 extern NetworkSettings netSettings;
-// Where the clock comes from: network time (NTP) or Home Assistant, for decks
-// on a network that reaches only Home Assistant. NVS key "tsrc", outside the
-// "net" blob, whose layout is shared with StatNode.
-constexpr uint8_t TIME_SRC_NTP = 0;
-constexpr uint8_t TIME_SRC_HA = 1;
-extern uint8_t timeSource;
 extern BacklightSettings backlightSettings;
 extern LedSettings ledSettings;
-extern AdvancedSettings advSettings;
 extern PresenceSettings presenceSettings;
 extern HapticSettings hapticSettings;
 extern AudioSettings audioSettings;
-extern PrinterSettings printerSettings;
 
 bool validDailyMax(int count);
 bool validWallEvery(int minutes);
@@ -179,7 +137,8 @@ void defaultBacklightSettings(BacklightSettings& bs);
 void defaultLedSettings(LedSettings& ls);
 
 // Normalize a string into a valid mDNS/DNS label: lowercase, keep only
-// [a-z0-9-], strip leading/trailing hyphens. Falls back to "touchdeck".
+// [a-z0-9-], strip leading/trailing hyphens; ensure the name starts with
+// "tactula" (e.g. "office" -> "tactula-office").
 void sanitizeHostname(const char* in, char* out, size_t outSize);
 
 #endif // SETTINGS_H

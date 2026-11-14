@@ -16,7 +16,7 @@ std::vector<uint32_t> glassKey(Page& p) {
       dispSettings.glassOn, dispSettings.glassAutoText, GLASS_BORDER_COLOR, GLASS_BORDER_OPA,
       GLASS_BORDER_WIDTH};
   const uint32_t count = lv_obj_get_child_count(p.grid);
-  key.reserve(key.size() + 1 + count * 7);
+  key.reserve(key.size() + 1 + count * 9);
   key.push_back(count);
   lv_area_t rc;
   lv_obj_get_coords(p.root, &rc);
@@ -31,6 +31,12 @@ std::vector<uint32_t> glassKey(Page& p) {
     const TileRt* r = tileOf(t);
     key.push_back(r ? tileBg(*r->def) : C_TILE);
     key.push_back(r ? (uint32_t)tileTint(*r->def) : dispSettings.glassTint);
+    key.push_back(r && (r->def->type == TILE_CLOCK ||
+          (r->def->type == TILE_SENSOR &&
+           (r->def->style == METRIC_HEADLINE || r->def->style == METRIC_WEATHER))) &&
+          !r->def->clockBox ? 0u : 1u);
+    // Toggling this flag changes whether the off tint is baked or overlaid.
+    key.push_back(r && r->def->type == TILE_TOGGLE ? 1u : 0u);
   }
   return key;
 }
@@ -38,7 +44,7 @@ std::vector<uint32_t> glassKey(Page& p) {
 // Glass auto text: light text needs the glass at or below AUTO_LIGHT_MAX luma,
 // dark text at or above AUTO_DARK_MIN (about 3:1 contrast either way).
 constexpr int AUTO_LIGHT_MAX = 132, AUTO_DARK_MIN = 107;
-constexpr uint32_t AUTO_DARK_TEXT = 0x1D2129, AUTO_DARK_TITLE = 0x161A20, AUTO_DARK_CLOCK = 0x3A404C;
+constexpr uint32_t AUTO_DARK_TEXT = 0x242940, AUTO_DARK_TITLE = 0x242940, AUTO_DARK_CLOCK = 0x3A4560;
 
 int luma(int r, int g, int b) { return (r * 299 + g * 587 + b * 114) / 1000; }
 int luma(uint32_t c) { return luma(c >> 16 & 0xFF, c >> 8 & 0xFF, c & 0xFF); }
@@ -52,7 +58,7 @@ void lumaRange(const lv_image_dsc_t* img, lv_area_t a, int& lo, int& hi) {
   a.y1 = max<int32_t>(a.y1, 0);
   a.x2 = min<int32_t>(a.x2, w - 1);
   a.y2 = min<int32_t>(a.y2, h - 1);
-  uint32_t hist[256] = {};  // a large tile has over 65k samples
+  uint16_t hist[256] = {};
   uint32_t n = 0;
   const bool rgb565 = img->header.cf == LV_COLOR_FORMAT_RGB565;
   for (int y = a.y1; y <= a.y2; y += 2) {
@@ -83,7 +89,7 @@ struct AutoPick {
 };
 
 // Light text if it reads, else dark text, else glass darkened until light
-// text reads. Printer tiles and tiles with their own text colour stay light.
+// text reads. Tiles with their own text colour stay light.
 AutoPick autoPick(const TileRt* r, const lv_area_t& a) {
   const int base = r ? tileTint(*r->def) : dispSettings.glassTint;
   AutoPick pk = {(lv_opa_t)(base * 255 / 100), C_TEXT, false};
@@ -94,13 +100,12 @@ AutoPick autoPick(const TileRt* r, const lv_area_t& a) {
   auto glassed = [&](int v) { return (v * (100 - base) + tint * base) / 100; };
   pk.set = true;
   if (glassed(hi) <= AUTO_LIGHT_MAX) return pk;
-  if (r->def->type != TILE_PRINTER && glassed(lo) >= AUTO_DARK_MIN) {
+  if (glassed(lo) >= AUTO_DARK_MIN) {
     pk.text = AUTO_DARK_TEXT;
     return pk;
   }
   if (tint > AUTO_LIGHT_MAX) {
     // A light tint ("bgColor"): more glass brightens it toward dark text.
-    if (r->def->type == TILE_PRINTER) return pk;
     const int pct = min(95, ((AUTO_DARK_MIN - lo) * 100 + (tint - lo) - 1) / (tint - lo));
     pk.text = AUTO_DARK_TEXT;
     pk.opa = (lv_opa_t)(max(pct, base) * 255 / 100);
@@ -118,6 +123,12 @@ TileRt* tileOf(lv_obj_t* o) {
 }
 
 void applyAutoPick(TileRt& r, const AutoPick& pk) {
+  // For toggles, the OFF tint is applied by LVGL (not baked into the page).
+  // Match its opacity to the glass auto-text adjustment for this tile.
+  if (r.def->type == TILE_TOGGLE) {
+    lv_obj_set_style_bg_opa(r.obj, pk.opa, 0);
+    lv_obj_set_style_bg_opa(r.obj, pk.opa, LV_STATE_PRESSED);
+  }
   if (!pk.set && !r.hasAuto) return;
   r.hasAuto = pk.set;
   r.autoText = pk.text;
@@ -127,7 +138,6 @@ void applyAutoPick(TileRt& r, const AutoPick& pk) {
                               LV_STATE_CHECKED);
   if (r.sub && r.def->type == TILE_SENSOR && !r.threshold)
     lv_obj_set_style_text_color(r.sub, lv_color_hex(text), 0);
-  if (r.sub && r.def->type == TILE_METRIC && !r.warn) lv_obj_set_style_text_color(r.sub, lv_color_hex(text), 0);
 }
 
 // The top bar sits on the sharp picture, no glass.
@@ -152,7 +162,7 @@ void autoTextPage(Page& p) {
   for (uint32_t i = 0; i < lv_obj_get_child_count(p.grid); i++) {
     lv_obj_t* t = lv_obj_get_child(p.grid, i);
     TileRt* r = tileOf(t);
-    if (!r || r->off) continue;
+    if (!r) continue;
     lv_area_t tc;
     lv_obj_get_coords(t, &tc);
     lv_area_move(&tc, -rc.x1, -rc.y1);
@@ -164,8 +174,7 @@ void autoTextPage(Page& p) {
 // Glass: the page background is baked once the tiles are laid out: the
 // wallpaper, and under each tile the blurred wallpaper cut to its rounded
 // rect with the tint and a hairline. A page render is then one image copy
-// instead of per-tile blending. only: just this part of the page (tiles came
-// or went there), the rest of a finished bake stays.
+// instead of per-tile blending.
 bool bakeGlass(Page& p, const lv_area_t* only) {
   const bool part = only && p.glass && !p.glassKey.empty();
   p.glassKey.clear();  // a partial bake must never be reused
@@ -203,6 +212,10 @@ bool bakeGlass(Page& p, const lv_area_t* only) {
     lv_area_move(&tc, -rc.x1, -rc.y1);
     if (tc.x2 < xa || tc.x1 > xb || tc.y2 < ya || tc.y1 > yb) continue;
     TileRt* tr = tileOf(t);
+    // Standalone clocks, headline and weather tiles draw on sharp wallpaper.
+    if (tr && !tr->def->clockBox && (tr->def->type == TILE_CLOCK ||
+        (tr->def->type == TILE_SENSOR &&
+         (tr->def->style == METRIC_HEADLINE || tr->def->style == METRIC_WEATHER)))) continue;
     const AutoPick pk = autoPick(tr, tc);
     if (tr) applyAutoPick(*tr, pk);
     opa[i] = pk.opa;
@@ -220,6 +233,9 @@ bool bakeGlass(Page& p, const lv_area_t* only) {
       lv_obj_get_coords(t, &tc);
       lv_area_move(&tc, -rc.x1, -rc.y1 - y0);
       TileRt* tr = tileOf(t);
+      if (tr && !tr->def->clockBox && (tr->def->type == TILE_CLOCK ||
+          (tr->def->type == TILE_SENSOR &&
+           (tr->def->style == METRIC_HEADLINE || tr->def->style == METRIC_WEATHER)))) continue;
       if (tc.y2 < 0 || tc.y1 >= rows || tc.x2 < xa || tc.x1 > xb || lv_obj_has_flag(t, LV_OBJ_FLAG_HIDDEN)) continue;
       const lv_area_t clip = {LV_MAX(tc.x1, xa), LV_MAX(tc.y1, 0), LV_MIN(tc.x2, xb), LV_MIN(tc.y2, rows - 1)};
       const int r = lv_obj_get_style_radius(t, LV_PART_MAIN);
@@ -235,7 +251,8 @@ bool bakeGlass(Page& p, const lv_area_t* only) {
       lv_draw_rect_dsc_init(&rd);
       rd.radius = r;
       rd.bg_color = lv_color_hex(tr ? tileBg(*tr->def) : C_TILE);
-      rd.bg_opa = opa[i];
+      // Toggle tint remains an LVGL overlay rather than baked into glass.
+      rd.bg_opa = tr && tr->def->type == TILE_TOGGLE ? LV_OPA_TRANSP : opa[i];
       rd.border_color = lv_color_hex(GLASS_BORDER_COLOR);
       rd.border_opa = GLASS_BORDER_OPA;
       rd.border_width = GLASS_BORDER_WIDTH;

@@ -10,9 +10,9 @@
 #include <esp_heap_caps.h>
 
 namespace {
-const char* const OBJECTS[] = {"screen", "page", "night", "touch", "message", "led", "rssi", "ip", "restart"};
-const char* const COMPONENTS[] = {"light", "select", "switch", "binary_sensor", "notify", "light", "sensor", "sensor", "button"};
-const char* const NAMES[] = {"Screen", "Page", "Night", "Touch", "Message", "LED", "RSSI", "IP", "Restart"};
+const char* const OBJECTS[] = {"screen", "page", "night", "touch", "message", "led", "rssi", "ip", "restart", "night_brightness"};
+const char* const COMPONENTS[] = {"light", "select", "switch", "binary_sensor", "notify", "light", "sensor", "sensor", "button", "number"};
+const char* const NAMES[] = {"Screen", "Page", "Night", "Touch", "Message", "LED", "RSSI", "IP", "Restart", "Night Brightness"};
 struct Command { MqttObject object; String payload; uint32_t generation; };
 MqttSettings s_settings, s_workerSettings;
 MqttSnapshot s_snapshot;
@@ -109,9 +109,12 @@ bool discovery(PubSubClient& mqtt, const MqttSettings& cfg, const MqttSnapshot& 
     doc["availability_topic"] = base + "/status";
     JsonObject device = doc["device"].to<JsonObject>();
     device["identifiers"].to<JsonArray>().add("touchdeck_" + s_id);
-    device["name"] = snap.hostname;
+    // Device model/name are stable product branding; hostname is still used
+    // for network reachability and the unique MQTT device ID differentiates decks.
+    device["name"] = cfg.deviceName.length() ? cfg.deviceName : String(PRODUCT_NAME);
     device["manufacturer"] = "Guition";
-    device["model"] = "JC3248W535 TouchDeck";
+    // Preserve discovery identifiers and topics to avoid duplicate HA entities.
+    device["model"] = "tactula JC3248W535";
     device["sw_version"] = FW_VERSION;
     device["configuration_url"] = "http://" + snap.ip + "/";
     if (i != MQ_MESSAGE && i != MQ_RESTART) doc["state_topic"] = base + "/" + OBJECTS[i] + "/state";
@@ -123,6 +126,15 @@ bool discovery(PubSubClient& mqtt, const MqttSettings& cfg, const MqttSnapshot& 
     } else if (i == MQ_PAGE) {
       JsonArray options = doc["options"].to<JsonArray>();
       for (const String& name : snap.pages) options.add(name);
+    } else if (i == MQ_NIGHT_BRIGHTNESS) {
+      // Night mode itself is toggled by the separate switch. This number
+      // configures the stored level, independently of any local schedule.
+      doc["min"] = 0;
+      doc["max"] = 100;
+      doc["step"] = 1;
+      doc["mode"] = "slider";
+      doc["unit_of_measurement"] = "%";
+      doc["icon"] = "mdi:brightness-percent";
     } else if (i == MQ_TOUCH) {
       doc["device_class"] = "occupancy";
     } else if (i == MQ_RSSI) {
@@ -148,8 +160,6 @@ bool discovery(PubSubClient& mqtt, const MqttSettings& cfg, const MqttSnapshot& 
 bool sameDiscovery(const MqttSnapshot& a, const MqttSnapshot& b) {
   return a.pages == b.pages && a.led == b.led && a.hostname == b.hostname && a.ip == b.ip;
 }
-
-volatile bool s_paused = false;
 
 void task(void*) {
   WiFiClient socket;
@@ -227,19 +237,6 @@ void task(void*) {
       vTaskDelay(pdMS_TO_TICKS(100));
       continue;
     }
-    if (s_paused) {
-      if (mqtt.connected()) {
-        mqtt.publish(availability.c_str(), "offline", true);
-        mqtt.disconnect();
-      }
-      socket.stop();
-      wasConnected = false;
-      retryAt = 0;
-      replay = configs = true;
-      status("connecting", "Paused for the daily download");
-      vTaskDelay(pdMS_TO_TICKS(250));
-      continue;
-    }
     if (WiFi.status() != WL_CONNECTED) {
       socket.stop();
       wasConnected = false;
@@ -310,6 +307,13 @@ void task(void*) {
 const MqttSettings& mqttSettings() { return s_settings; }
 
 bool mqttNormalize(MqttSettings& cfg, String& error) {
+  cfg.deviceName.trim();
+  if (!cfg.deviceName.length()) cfg.deviceName = PRODUCT_NAME;
+  if (cfg.deviceName.length() > 48) { error = "Home Assistant device name must be 48 characters or fewer"; return false; }
+  for (size_t i = 0; i < cfg.deviceName.length(); ++i) {
+    const uint8_t c = cfg.deviceName[i];
+    if (c < 32 || c == 127) { error = "Device name cannot include control characters"; return false; }
+  }
   cfg.host.trim();
   if (cfg.host.startsWith("mqtt://")) cfg.host.remove(0, 7);
   const int colon = cfg.host.indexOf(':');
@@ -344,8 +348,6 @@ bool mqttNormalize(MqttSettings& cfg, String& error) {
   return true;
 }
 
-void mqttPause(bool pause) { s_paused = pause; }
-
 void mqttBegin() {
   Preferences prefs;
   if (prefs.begin("deckmqtt", true)) {
@@ -355,6 +357,7 @@ void mqttBegin() {
     s_settings.user = prefs.getString("user", "");
     s_settings.pass = prefs.getString("pass", "");
     s_settings.prefix = prefs.getString("prefix", "homeassistant");
+    s_settings.deviceName = prefs.getString("name", PRODUCT_NAME);
     prefs.end();
   }
   String error;
@@ -381,7 +384,8 @@ bool mqttSaveSettings(const MqttSettings& settings) {
   };
   bool ok = prefs.putBool("en", next.enabled) && putText("host", next.host) &&
             prefs.putUShort("port", next.port) && putText("user", next.user) &&
-            putText("pass", next.pass) && putText("prefix", next.prefix);
+            putText("pass", next.pass) && putText("prefix", next.prefix) &&
+            putText("name", next.deviceName);
   prefs.end();
   if (!ok) return false;
   s_settings = next;
@@ -403,6 +407,7 @@ void mqttConfigJson(JsonObject out, bool includeHasPass) {
   out["port"] = s_settings.port;
   out["user"] = s_settings.user;
   out["prefix"] = s_settings.prefix;
+  out["deviceName"] = s_settings.deviceName;
   if (includeHasPass) out["has_pass"] = s_settings.pass.length() > 0;
 }
 

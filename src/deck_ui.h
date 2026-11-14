@@ -21,8 +21,6 @@ void deckTick();
 void deckToast(const char* text);
 // Wake the screen and restart the presence sleep timer (loop task only).
 void deckPresenceWake();
-// Printer settings changed: re-apply the printer tiles (loop task only).
-void deckPrinterSettingsChanged();
 // presenceSettings changed: follow the new entities, restart the timer.
 void deckPresenceApply();
 // HA entity the LED's day level follows (deck.json "led"), "" = none.
@@ -34,6 +32,9 @@ void deckPresenceJson(JsonObject out);
 // Photo frame bench hooks, loop task only.
 bool deckFrameCommand(const String& op);
 void deckFrameJson(JsonObject out);
+// Notify the deck that a bedroom PNG was added, replaced or removed.
+// The refresh is deferred until touch/swipe is idle, preserving the current page.
+void deckBedroomIconsChanged();
 // Render pending LVGL changes now, from inside a long web handler (OTA).
 void deckRefreshNow();
 // Rotation changed in the portal: re-layout everything at the new size.
@@ -47,13 +48,13 @@ void deckReloadWallpaper(bool fileChanged);
 // Bench hook (/api/deck/bench): render the shown page into its page image n
 // times and time it.
 bool deckBenchRender(int n, uint32_t& avgUs, uint32_t& maxUs);
-// Visualizer spike counters as JSON; reset starts a new window.
-// Bench timing (GET /api/deck/perf): panel counters since the last read and the
-// loop passes slower than minUs, split by part. Rows are kept after a first read.
-void deckPerfJson(String& out, uint32_t minUs);
-extern uint32_t deckPerfWebUs, deckPerfPcUs;  // set by loop() before deckTick
 // Portal save: validate, store /deck.json and rebuild the pages in place.
 bool deckApplyConfig(const String& text, String& err);
+#if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
+// Printer config changed in NVS: rebuild only the runtime page collection,
+// without writing to or replacing the user's stored deck.json.
+void deckRefreshPrinterPage();
+#endif
 // Portal upload: load the MDI font stored at uploaded, keep it as the icon
 // font and rebuild the pages with it. A bad file is deleted, the old font stays.
 bool deckInstallIcons(const char* uploaded, String& err);
@@ -61,13 +62,6 @@ bool deckInstallIcons(const char* uploaded, String& err);
 void deckReleaseIcons();
 bool deckInstallBrand(const char* font, const char* names, String& err);
 bool deckRemoveBrand(String& err);
-// Printers for the portal: config, whether secrets are stored, live status.
-String deckPrintersJson();
-// Re-read the printers' secrets after the portal stored new ones.
-void deckPrintersReapply();
-// Advanced page switch: printers off drops their connections and hides their
-// pages and tiles (deck.json and secrets stay); rebuilds the pages.
-void deckSetPrinters(bool on);
 // Top bar (page name, WiFi, clock) on the tiles pages; persisted.
 void deckSetHeader(bool on);
 bool deckHeaderVisible();

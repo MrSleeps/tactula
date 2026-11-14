@@ -45,6 +45,61 @@
     return data;
   }
 
+  // Native browser HTTP Basic Auth; no cookies or custom login flow.
+  async function loadAuthStatus() {
+    try {
+      const info = await getJson("/api/auth");
+      $("authState").textContent = info.enabled
+        ? "Password protection is enabled."
+        : "Password protection is disabled (default).";
+      $("authSet").textContent = info.enabled ? "Change password" : "Enable authentication";
+      $("authDisable").classList.toggle("hidden", !info.enabled);
+    } catch (e) {
+      showToast("Could not load security settings: " + e.message, true);
+    }
+  }
+
+  $("authSet").addEventListener("click", async () => {
+    const password = $("authPassword").value;
+    if (password.length < 8 || password.length > 64) {
+      showToast("Password must be 8 to 64 characters.", true);
+      return;
+    }
+    $("authSet").disabled = true;
+    try {
+      await getJson("/api/auth", {
+        method: "POST",
+        body: new URLSearchParams({ action: "set", password }),
+      });
+      $("authPassword").value = "";
+      // A full-page navigation reliably triggers the browser's native Basic
+      // Auth prompt after enabling or changing the password.
+      location.reload();
+    } catch (e) {
+      showToast(e.message, true);
+    } finally {
+      $("authSet").disabled = false;
+    }
+  });
+
+  $("authDisable").addEventListener("click", async () => {
+    if (!confirm("Disable password protection for the Tactula web portal?")) return;
+    $("authDisable").disabled = true;
+    try {
+      await getJson("/api/auth", {
+        method: "POST",
+        body: new URLSearchParams({ action: "disable" }),
+      });
+      $("authPassword").value = "";
+      await loadAuthStatus();
+      showToast("Authentication disabled.");
+    } catch (e) {
+      showToast(e.message, true);
+    } finally {
+      $("authDisable").disabled = false;
+    }
+  });
+
   function applyTheme() {
     const mode = document.documentElement.dataset.mode || "dark",
       accent = document.documentElement.dataset.accent || "purple";
@@ -103,6 +158,7 @@
       refreshPrinter();
     }
     if (name === "maintenance") { loadBedroomIcons(); loadFlashStorage(); }
+    if (name === "security") loadAuthStatus();
     qa(".page").forEach((p) => p.classList.toggle("active", p.dataset.page === name));
     if (name === "overview") refreshOverviewBambuConnection();
     qa(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.nav === name));
@@ -754,6 +810,7 @@
       $("fwChecksEnabled").checked = !!data.checksEnabled;
       $("fwShowBadge").checked = !!data.showBadge;
       $("fwAutoDownload").checked = !!data.autoDownload;
+      $("fwAllowBeta").checked = !!data.allowBeta;
       const fwAction = $("fwDownloadNow");
       fwAction.dataset.action = data.staged ? "confirm" : "download";
       fwAction.textContent = data.staged ? "Install firmware" : "Download verified OTA";
@@ -764,7 +821,7 @@
           ? "Verified image staged. Select Install firmware to open the confirmation on the touchscreen."
           : data.available ? "Download is ready; installation still requires a touchscreen confirmation." : "";
       $("fwUpdateStatus").textContent = data.checking
-        ? "Checking the firmware release feed..."
+        ? "Checking the " + (data.allowBeta ? "beta" : "stable") + " firmware release feed..."
         : data.available
           ? "Update available: " + data.latest + " (installed: " + data.current + ")"
           : data.error
@@ -778,7 +835,8 @@
     const body = new URLSearchParams({
       checksEnabled: $("fwChecksEnabled").checked ? "1" : "0",
       showBadge: $("fwShowBadge").checked ? "1" : "0",
-      autoDownload: $("fwAutoDownload").checked ? "1" : "0"
+      autoDownload: $("fwAutoDownload").checked ? "1" : "0",
+      allowBeta: $("fwAllowBeta").checked ? "1" : "0"
     });
     try {
       await getJson("/api/firmware/updates/preferences", {
@@ -792,6 +850,7 @@
   $("fwChecksEnabled").addEventListener("change", saveFirmwareUpdatePreferences);
   $("fwShowBadge").addEventListener("change", saveFirmwareUpdatePreferences);
   $("fwAutoDownload").addEventListener("change", saveFirmwareUpdatePreferences);
+  $("fwAllowBeta").addEventListener("change", saveFirmwareUpdatePreferences);
   $("fwDownloadNow").addEventListener("click", async () => {
     const button = $("fwDownloadNow");
     const install = button.dataset.action === "confirm";

@@ -330,7 +330,7 @@ void saveSettings() {
 bool factoryResetSettings() {
   // Every NVS namespace the firmware writes: settings, HA link, deck UI and MQTT.
   static const char* const kSpaces[] = {NVS_NAMESPACE, NVS_NAMESPACE_LEGACY,
-    "deckpc", "deckha", "deckui", "deckmqtt", "officebambu"};
+    "deckpc", "deckha", "deckui", "deckmqtt", "officebambu", "tactula-auth"};
   bool ok = true;
   for (const char* ns : kSpaces) {
     if (!prefs.begin(ns, false)) {

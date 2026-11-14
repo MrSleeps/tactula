@@ -143,6 +143,8 @@
             </div>
             <div class="nav-group">
               <div class="nav-label">Device</div>
+              <button type="button" class="nav-item" data-nav="security">Security</button
+              >
               <button type="button" class="nav-item" data-nav="network">Network</button
               ><button type="button" class="nav-item" data-nav="maintenance">Maintenance</button>
             </div>
@@ -175,6 +177,31 @@
 
         <main class="content">
           <div class="content-inner">
+            <section class="page" data-page="security">
+              <div class="page-header">
+                <h1 class="page-h1">Security</h1>
+                <p class="page-lede">Optional password protection for the local web portal.</p>
+              </div>
+              <div class="card">
+                <h2 class="card-title">HTTP Basic Authentication</h2>
+                <p class="field-hint" id="authState" role="status">Checking authentication...</p>
+                <p class="field-hint">Username: <strong>admin</strong> (fixed).</p>
+                <div class="field">
+                  <label class="field-label" for="authPassword">New password</label>
+                  <input type="password" id="authPassword" minlength="8" maxlength="64"
+                         autocomplete="new-password" placeholder="8 to 64 characters" />
+                  <p class="field-hint">Set a password to enable authentication, or enter a new one to change it.</p>
+                </div>
+                <div class="maintenance-actions">
+                  <button type="button" class="btn primary" id="authSet">Enable authentication</button>
+                  <button type="button" class="btn btn-danger hidden" id="authDisable">Disable authentication</button>
+                </div>
+                <p class="field-hint">Your browser displays the standard sign-in prompt.
+                  The username is always admin. This uses HTTP, not HTTPS: enable it only on a trusted network,
+                  and do not expose this web server directly to the internet.</p>
+              </div>
+            </section>
+
             <section class="page active" data-page="overview">
               <div class="page-header">
                 <h1 class="page-h1">Overview</h1>
@@ -1466,6 +1493,10 @@
                 </div>
                 <div class="field">
                   <label class="field-label"><input type="checkbox" id="fwAutoDownload" /> Automatically download verified firmware to the inactive OTA partition</label>
+                </div>
+                <div class="field">
+                  <label class="field-label"><input type="checkbox" id="fwAllowBeta" /> Allow beta releases (early-access testing)</label>
+                  <p class="field-hint">Off by default. Beta devices use the separately verified beta feed and continue receiving newer stable releases. Beta versions may contain bugs; installation always requires confirmation on the touchscreen.</p>
                 </div>
                 <div class="fw-update-feedback">
                   <p class="fw-update-summary" id="fwUpdateStatus" role="status">Checking update settings...</p>

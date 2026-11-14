@@ -3,6 +3,7 @@
 // bounded chunks so the full page is never assembled in heap.
 #include "web_server.h"
 #include "settings.h"
+#include "deck_auth.h"
 #include "wifi_manager.h"
 #include "display_ui.h"
 #include "led.h"
@@ -2576,6 +2577,8 @@ static void handleUpdateStatus() {
   doc["showBadge"] = st.showBadge;
   doc["checking"] = st.checking;
   doc["autoDownload"] = st.autoDownload;
+  doc["allowBeta"] = st.allowBeta;
+  doc["channel"] = st.allowBeta ? "beta" : "stable";
   doc["downloading"] = st.downloading;
   doc["staged"] = st.staged;
   doc["downloadedBytes"] = st.downloadedBytes;
@@ -2618,113 +2621,192 @@ static void handleUpdateConfirmOnDevice() {
 }
 
 static void handleUpdatePreferences() {
-  if (!server.hasArg("checksEnabled") || !server.hasArg("showBadge") || !server.hasArg("autoDownload")) {
+  if (!server.hasArg("checksEnabled") || !server.hasArg("showBadge") ||
+      !server.hasArg("autoDownload") || !server.hasArg("allowBeta")) {
     server.send(400, "application/json", "{\"error\":\"Missing preferences\"}");
     return;
   }
   const bool enabled = server.arg("checksEnabled") == "1";
   const bool badge = server.arg("showBadge") == "1";
   const bool autoDownload = server.arg("autoDownload") == "1";
-  firmwareUpdate::setPreferences(enabled, badge, autoDownload);
+  const bool beta = server.arg("allowBeta") == "1";
+  // Never change release channel while the OTA download is active.
+  if (firmwareUpdate::snapshot().downloading) {
+    server.send(409, "application/json",
+                "{\"error\":\"Cannot change update preferences during a download\"}");
+    return;
+  }
+  firmwareUpdate::setPreferences(enabled, badge, autoDownload, beta);
   server.send(200, "application/json", "{\"ok\":true}");
 }
 
+// Keep the portal, JSON API, screen preview, and upload callbacks behind one
+// small authentication gate. Auth is OFF until a password has been configured.
+static bool portalAuthorized(bool challenge = true) {
+  if (!deckAuth::enabled() ||
+      deckAuth::verifyBasicHeader(server.header("Authorization"))) return true;
+  if (challenge) server.requestAuthentication(BASIC_AUTH, "tactula");
+  return false;
+}
+
+static void authOn(const char* path, HTTPMethod method,
+                   WebServer::THandlerFunction handler) {
+  server.on(path, method, [handler]() {
+    if (portalAuthorized()) handler();
+  });
+}
+
+static void authOn(const char* path, HTTPMethod method,
+                   WebServer::THandlerFunction handler,
+                   WebServer::THandlerFunction uploader) {
+  server.on(path, method,
+            [handler]() { if (portalAuthorized()) handler(); },
+            // Authenticate once when the multipart upload starts; repeating
+            // PBKDF2 for every file chunk would stall the ESP32 display.
+            [uploader, allowed = false]() mutable {
+              HTTPUpload& up = server.upload();
+              if (up.status == UPLOAD_FILE_START) allowed = portalAuthorized(false);
+              if (allowed) uploader();
+              if (up.status == UPLOAD_FILE_END ||
+                  up.status == UPLOAD_FILE_ABORTED) allowed = false;
+            });
+}
+
+static void handleAuthStatus() {
+  JsonDocument doc;
+  doc["enabled"] = deckAuth::enabled();
+  doc["username"] = "admin";
+  String output;
+  serializeJson(doc, output);
+  server.sendHeader("Cache-Control", "no-store");
+  server.send(200, "application/json", output);
+}
+
+static void handleAuthSave() {
+  if (server.arg("action") == "disable") {
+    if (!deckAuth::disable()) {
+      sendJsonMessage(500, false, "Could not disable authentication.");
+      return;
+    }
+    sendJsonMessage(200, true, "Authentication disabled.");
+    return;
+  }
+  if (server.arg("action") != "set") {
+    sendJsonMessage(400, false, "Unknown authentication action.");
+    return;
+  }
+  const String password = server.arg("password");
+  if (password.length() < 8 || password.length() > 64) {
+    sendJsonMessage(400, false, "Password must be 8 to 64 characters.");
+    return;
+  }
+  if (!deckAuth::setPassword(password)) {
+    sendJsonMessage(500, false, "Could not save the password.");
+    return;
+  }
+  sendJsonMessage(200, true, "Authentication enabled. Browser login required.");
+}
+
 void initWebServer() {
+  deckAuth::begin();
   server.on("/generate_204", HTTP_GET, handleCaptiveDetect);
   server.on("/gen_204", HTTP_GET, handleCaptiveDetect);
   server.on("/connecttest.txt", HTTP_GET, handleCaptiveDetect);
   server.on("/hotspot-detect.html", HTTP_GET, handleCaptiveDetect);
   server.on("/canonical.html", HTTP_GET, handleCaptiveDetect);
 
-  server.on("/", HTTP_GET, handleRoot);
-  server.on("/portal.css", HTTP_GET, handlePortalCss);
-  server.on("/portal-layout.css", HTTP_GET, handlePortalLayoutCss);
-  server.on("/portal.js", HTTP_GET, handlePortalJs);
-  server.on("/save/wifi", HTTP_POST, handleSaveWifiLegacy);
-  server.on("/save/display", HTTP_POST, handleSaveDisplay);
-  server.on("/save/sd", HTTP_POST, handleSaveSd);
-  server.on("/api/sd/format", HTTP_POST, handleSdFormat);
-  server.on("/save/wallpapers", HTTP_POST, handleSaveWallpapers);
-  server.on("/save/light", HTTP_POST, handleSaveLight);
-  server.on("/save/hardware", HTTP_POST, handleSaveHardware);
-  server.on("/save/advanced", HTTP_POST, handleSaveAdvanced);
-  server.on("/led/preview", HTTP_POST, handleLedPreview);
-  server.on("/haptic/test", HTTP_POST, handleHapticTest);
-  server.on("/api/audio", HTTP_GET, handleAudioGet);
-  server.on("/api/audio/test", HTTP_POST, handleAudioTest);
-  server.on("/api/audio/stop", HTTP_POST, handleAudioStop);
-  server.on("/api/audio/upload", HTTP_POST, handleAudioUploadFinish, handleAudioUpload);
-  server.on("/api/audio/delete", HTTP_POST, handleAudioDelete);
-  server.on("/save/clock", HTTP_POST, handleSaveClock);
-  server.on("/save/network", HTTP_POST, handleSaveNetwork);
+  authOn("/api/auth", HTTP_GET, handleAuthStatus);
+  authOn("/api/auth", HTTP_POST, handleAuthSave);
+  authOn("/", HTTP_GET, handleRoot);
+  authOn("/portal.css", HTTP_GET, handlePortalCss);
+  authOn("/portal-layout.css", HTTP_GET, handlePortalLayoutCss);
+  authOn("/portal.js", HTTP_GET, handlePortalJs);
+  authOn("/save/wifi", HTTP_POST, handleSaveWifiLegacy);
+  authOn("/save/display", HTTP_POST, handleSaveDisplay);
+  authOn("/save/sd", HTTP_POST, handleSaveSd);
+  authOn("/api/sd/format", HTTP_POST, handleSdFormat);
+  authOn("/save/wallpapers", HTTP_POST, handleSaveWallpapers);
+  authOn("/save/light", HTTP_POST, handleSaveLight);
+  authOn("/save/hardware", HTTP_POST, handleSaveHardware);
+  authOn("/save/advanced", HTTP_POST, handleSaveAdvanced);
+  authOn("/led/preview", HTTP_POST, handleLedPreview);
+  authOn("/haptic/test", HTTP_POST, handleHapticTest);
+  authOn("/api/audio", HTTP_GET, handleAudioGet);
+  authOn("/api/audio/test", HTTP_POST, handleAudioTest);
+  authOn("/api/audio/stop", HTTP_POST, handleAudioStop);
+  authOn("/api/audio/upload", HTTP_POST, handleAudioUploadFinish, handleAudioUpload);
+  authOn("/api/audio/delete", HTTP_POST, handleAudioDelete);
+  authOn("/save/clock", HTTP_POST, handleSaveClock);
+  authOn("/save/network", HTTP_POST, handleSaveNetwork);
 #if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
-  server.on("/api/office/bambu", HTTP_GET, handleOfficePrinterStatus);
-  server.on("/api/office/bambu", HTTP_POST, handleOfficePrinterSave);
-  server.on("/api/office/bambu/light", HTTP_POST, handleOfficePrinterLight);
-  server.on("/api/office/bambu/discover", HTTP_GET, handleOfficePrinterDiscover);
+  authOn("/api/office/bambu", HTTP_GET, handleOfficePrinterStatus);
+  authOn("/api/office/bambu", HTTP_POST, handleOfficePrinterSave);
+  authOn("/api/office/bambu/light", HTTP_POST, handleOfficePrinterLight);
+  authOn("/api/office/bambu/discover", HTTP_GET, handleOfficePrinterDiscover);
 #endif
-  server.on("/api/firmware/updates", HTTP_GET, handleUpdateStatus);
-  server.on("/api/firmware/updates/check", HTTP_POST, handleUpdateCheck);
-  server.on("/api/firmware/updates/download", HTTP_POST, handleUpdateDownload);
-  server.on("/api/firmware/updates/confirm-on-device", HTTP_POST, handleUpdateConfirmOnDevice);
-  server.on("/api/firmware/updates/preferences", HTTP_POST, handleUpdatePreferences);
-  server.on("/api/config", HTTP_GET, handleApiConfig);
-  server.on("/api/config/export", HTTP_GET, handleConfigExport);
-  server.on("/api/config/import", HTTP_POST, handleConfigImport);
-  server.on("/api/factory-reset", HTTP_POST, handleFactoryReset);  server.on("/api/status", HTTP_GET, handleApiStatus);
-  server.on("/screen_live.bmp", HTTP_GET, handleLiveScreenshot);
-  server.on("/api/deck/swipe", HTTP_POST, handleDeckSwipe);
-  server.on("/api/deck/panel", HTTP_POST, handleDeckPanel);
-  server.on("/api/deck/card", HTTP_POST, handleDeckCard);
-  server.on("/api/deck/tap", HTTP_POST, handleDeckTap);
-  server.on("/api/deck/http-test", HTTP_POST, handleHttpTestPost);
-  server.on("/api/deck/http-test", HTTP_GET, handleHttpTestGet);
-  server.on("/api/deck/confirm", HTTP_POST, handleDeckConfirm);
-  server.on("/api/deck/slide", HTTP_POST, handleDeckSlide);
-  server.on("/api/deck/edit", HTTP_POST, handleDeckEdit);
-  server.on("/api/deck/screen", HTTP_POST, handleDeckScreen);
-  server.on("/deck", HTTP_GET, handleDeckPage);
-  server.on("/tactula-mark.svg", HTTP_GET, handleTactulaMark);
-  server.on("/deck.js", HTTP_GET, handleDeckJs);
-  server.on("/api/deck/icons", HTTP_GET, handleIconsStatus);
-  server.on("/api/deck/icons/remove", HTTP_POST, handleIconsRemove);
-  server.on("/api/deck/brand", HTTP_GET, handleBrandStatus);
-  server.on("/api/deck/brand", HTTP_POST, handleBrandFinish, handleBrandUpload);
-  server.on("/api/deck/brand/remove", HTTP_POST, handleBrandRemove);
-  server.on("/api/bedroom/icons", HTTP_GET, handleBedroomIconList);
-  server.on("/api/bedroom/icons/file", HTTP_GET, handleBedroomIconFile);
-  server.on("/api/bedroom/icons/upload", HTTP_POST, handleBedroomIconFinish, handleBedroomIconUpload);
-  server.on("/api/bedroom/icons/delete", HTTP_POST, handleBedroomIconDelete);
-  server.on("/cbi.otf", HTTP_GET, []() { handleBrandFile(true); });
-  server.on("/cbi.names", HTTP_GET, []() { handleBrandFile(false); });
-  server.on("/api/deck/wallpaper", HTTP_GET, handleWallStatus);
-  server.on("/api/deck/walls", HTTP_GET, handleWallsStatus);
-  server.on("/api/deck/walls/file", HTTP_GET, handleWallsFile);
-  server.on("/api/deck/walls", HTTP_POST, handleWallFinish, handleWallUpload);
-  server.on("/api/deck/walls/delete", HTTP_POST, handleWallsDelete);
-  server.on("/api/deck/walls/show", HTTP_POST, handleWallsShow);
-  server.on("/api/deck/walls/next", HTTP_POST, handleWallsNext);
-  server.on("/api/deck/daily", HTTP_GET, handleDailyStatus);
-  server.on("/api/deck/daily/run", HTTP_POST, handleDailyRun);
-  server.on("/api/deck/wallpaper/remove", HTTP_POST, handleWallRemove);
-  server.on("/api/deck/bench", HTTP_POST, handleDeckBench);
-  server.on("/api/deck/frame", HTTP_GET, handleFrameGet);
-  server.on("/api/deck/frame", HTTP_POST, handleFramePost);
-  server.on("/api/deck/prefs", HTTP_POST, handleDeckPrefs);
-  server.on("/api/deck/icons", HTTP_POST, handleIconsFinish, handleIconsUpload);
-  server.on("/mdi.ttf", HTTP_GET, handleIconsFont);
-  server.on("/api/storage", HTTP_GET, handleFlashStorageStatus);
-  server.on("/api/storage/initialize", HTTP_POST, handleFlashStorageInitialize);
-  server.on("/api/deck", HTTP_GET, handleDeckGet);
-  server.on("/api/deck", HTTP_POST, handleDeckPost);
-  server.on("/api/ha/status", HTTP_GET, handleHaStatus);
-  server.on("/api/ha/config", HTTP_POST, handleHaConfig);
-  server.on("/api/ha/forget", HTTP_POST, handleHaForget);
-  server.on("/api/ha/entities", HTTP_GET, handleHaEntities);
-  server.on("/ota/upload", HTTP_POST, handleOtaFinish, handleOtaUpload);
+  authOn("/api/firmware/updates", HTTP_GET, handleUpdateStatus);
+  authOn("/api/firmware/updates/check", HTTP_POST, handleUpdateCheck);
+  authOn("/api/firmware/updates/download", HTTP_POST, handleUpdateDownload);
+  authOn("/api/firmware/updates/confirm-on-device", HTTP_POST, handleUpdateConfirmOnDevice);
+  authOn("/api/firmware/updates/preferences", HTTP_POST, handleUpdatePreferences);
+  authOn("/api/config", HTTP_GET, handleApiConfig);
+  authOn("/api/config/export", HTTP_GET, handleConfigExport);
+  authOn("/api/config/import", HTTP_POST, handleConfigImport);
+  authOn("/api/factory-reset", HTTP_POST, handleFactoryReset);
+  authOn("/api/status", HTTP_GET, handleApiStatus);
+  authOn("/screen_live.bmp", HTTP_GET, handleLiveScreenshot);
+  authOn("/api/deck/swipe", HTTP_POST, handleDeckSwipe);
+  authOn("/api/deck/panel", HTTP_POST, handleDeckPanel);
+  authOn("/api/deck/card", HTTP_POST, handleDeckCard);
+  authOn("/api/deck/tap", HTTP_POST, handleDeckTap);
+  authOn("/api/deck/http-test", HTTP_POST, handleHttpTestPost);
+  authOn("/api/deck/http-test", HTTP_GET, handleHttpTestGet);
+  authOn("/api/deck/confirm", HTTP_POST, handleDeckConfirm);
+  authOn("/api/deck/slide", HTTP_POST, handleDeckSlide);
+  authOn("/api/deck/edit", HTTP_POST, handleDeckEdit);
+  authOn("/api/deck/screen", HTTP_POST, handleDeckScreen);
+  authOn("/deck", HTTP_GET, handleDeckPage);
+  authOn("/tactula-mark.svg", HTTP_GET, handleTactulaMark);
+  authOn("/deck.js", HTTP_GET, handleDeckJs);
+  authOn("/api/deck/icons", HTTP_GET, handleIconsStatus);
+  authOn("/api/deck/icons/remove", HTTP_POST, handleIconsRemove);
+  authOn("/api/deck/brand", HTTP_GET, handleBrandStatus);
+  authOn("/api/deck/brand", HTTP_POST, handleBrandFinish, handleBrandUpload);
+  authOn("/api/deck/brand/remove", HTTP_POST, handleBrandRemove);
+  authOn("/api/bedroom/icons", HTTP_GET, handleBedroomIconList);
+  authOn("/api/bedroom/icons/file", HTTP_GET, handleBedroomIconFile);
+  authOn("/api/bedroom/icons/upload", HTTP_POST, handleBedroomIconFinish, handleBedroomIconUpload);
+  authOn("/api/bedroom/icons/delete", HTTP_POST, handleBedroomIconDelete);
+  authOn("/cbi.otf", HTTP_GET, []() { handleBrandFile(true); });
+  authOn("/cbi.names", HTTP_GET, []() { handleBrandFile(false); });
+  authOn("/api/deck/wallpaper", HTTP_GET, handleWallStatus);
+  authOn("/api/deck/walls", HTTP_GET, handleWallsStatus);
+  authOn("/api/deck/walls/file", HTTP_GET, handleWallsFile);
+  authOn("/api/deck/walls", HTTP_POST, handleWallFinish, handleWallUpload);
+  authOn("/api/deck/walls/delete", HTTP_POST, handleWallsDelete);
+  authOn("/api/deck/walls/show", HTTP_POST, handleWallsShow);
+  authOn("/api/deck/walls/next", HTTP_POST, handleWallsNext);
+  authOn("/api/deck/daily", HTTP_GET, handleDailyStatus);
+  authOn("/api/deck/daily/run", HTTP_POST, handleDailyRun);
+  authOn("/api/deck/wallpaper/remove", HTTP_POST, handleWallRemove);
+  authOn("/api/deck/bench", HTTP_POST, handleDeckBench);
+  authOn("/api/deck/frame", HTTP_GET, handleFrameGet);
+  authOn("/api/deck/frame", HTTP_POST, handleFramePost);
+  authOn("/api/deck/prefs", HTTP_POST, handleDeckPrefs);
+  authOn("/api/deck/icons", HTTP_POST, handleIconsFinish, handleIconsUpload);
+  authOn("/mdi.ttf", HTTP_GET, handleIconsFont);
+  authOn("/api/storage", HTTP_GET, handleFlashStorageStatus);
+  authOn("/api/storage/initialize", HTTP_POST, handleFlashStorageInitialize);
+  authOn("/api/deck", HTTP_GET, handleDeckGet);
+  authOn("/api/deck", HTTP_POST, handleDeckPost);
+  authOn("/api/ha/status", HTTP_GET, handleHaStatus);
+  authOn("/api/ha/config", HTTP_POST, handleHaConfig);
+  authOn("/api/ha/forget", HTTP_POST, handleHaForget);
+  authOn("/api/ha/entities", HTTP_GET, handleHaEntities);
+  authOn("/ota/upload", HTTP_POST, handleOtaFinish, handleOtaUpload);
 
-  const char* headers[] = { "X-MD5", "Content-Type" };
-  server.collectHeaders(headers, 2);
+  const char* headers[] = { "X-MD5", "Content-Type", "Authorization" };
+  server.collectHeaders(headers, 3);
 
   server.onNotFound(handleNotFound);
   server.begin();

@@ -97,8 +97,10 @@ constexpr const char* ROOT_CA =
     "zzuqQhFkoJ2UOQIReVx7Hfpkue4WQrO/isIJxOzksU0CMQDpKmFHjFJKS04YcPbW\n"
     "RNZu9YO6bVi9JNlWSOrvxKJGgYhqOkbRqZtNyWHa0V1Xahg=\n"
     "-----END CERTIFICATE-----\n";
-constexpr const char* MANIFEST_URL =
+constexpr const char* STABLE_MANIFEST_URL =
     "https://firmware.mrsleeps.uk/tactula/releases/current.json";
+constexpr const char* BETA_MANIFEST_URL =
+    "https://firmware.mrsleeps.uk/tactula/releases/beta.json";
 constexpr uint32_t INTERVAL_MS = 6UL * 60 * 60 * 1000;
 constexpr uint32_t RETRY_MS = 30UL * 60 * 1000;
 constexpr uint32_t START_DELAY_MS = 45000;
@@ -134,21 +136,72 @@ void setError(const char* msg, bool preserveVerified = false) {
   portEXIT_CRITICAL(&mux);
 }
 
-bool parseVersion(const char* input, int (&numbers)[3]) {
-  if (!input || *input == 'v') { if (!input) return false; ++input; }
-  int offset = 0, used = 0;
-  if (sscanf(input, "%d.%d.%d%n", &numbers[0], &numbers[1], &numbers[2], &used) != 3 ||
-      used == 0 || input[used] != 0) return false;
-  for (int n : numbers) if (n < 0 || n > 100000) return false;
+struct ParsedVersion {
+  int core[3] = {};
+  const char* suffix = nullptr; // nullptr means stable release
+};
+bool parseVersion(const char* input, ParsedVersion& out) {
+  if (!input) return false;
+  if (*input == 'v') ++input;
+  int used = 0;
+  if (sscanf(input, "%d.%d.%d%n", &out.core[0], &out.core[1],
+             &out.core[2], &used) != 3 || used == 0) return false;
+  for (int n : out.core) if (n < 0 || n > 100000) return false;
+  if (input[used] == 0) return true;
+  if (input[used] != '-' || !input[used + 1]) return false;
+  out.suffix = input + used + 1;
+  bool afterDot = false;
+  for (const char* p = out.suffix; *p; ++p) {
+    const char c = *p;
+    if (c == '.') {
+      if (p == out.suffix || afterDot || !p[1]) return false;
+      afterDot = true;
+    } else if ((c >= '0' && c <= '9') ||
+               (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '-') {
+      afterDot = false;
+    } else return false;
+  }
   return true;
 }
-bool newer(const char* version) {
-  int remote[3], current[3];
-  if (!parseVersion(version, remote) || !parseVersion(FW_VERSION, current)) return false;
-  for (int i = 0; i < 3; ++i) {
-    if (remote[i] != current[i]) return remote[i] > current[i];
+int compareSuffix(const char* left, const char* right) {
+  // SemVer prerelease identifiers compare numerically when both numeric;
+  // otherwise lexicographically. A shorter matching prefix is older.
+  while (true) {
+    const char* le = left;
+    const char* re = right;
+    while (*le && *le != '.') ++le;
+    while (*re && *re != '.') ++re;
+    size_t ln = le - left, rn = re - right;
+    bool lnum = ln > 0, rnum = rn > 0;
+    for (size_t i = 0; i < ln; ++i) if (left[i] < '0' || left[i] > '9') lnum = false;
+    for (size_t i = 0; i < rn; ++i) if (right[i] < '0' || right[i] > '9') rnum = false;
+    int result = 0;
+    if (lnum && rnum) {
+      // Numeric identifiers are bounded by the firmware version buffer.
+      while (ln > 1 && *left == '0') { ++left; --ln; }
+      while (rn > 1 && *right == '0') { ++right; --rn; }
+      if (ln != rn) result = ln < rn ? -1 : 1;
+      else result = strncmp(left, right, ln);
+    } else if (lnum != rnum) result = lnum ? -1 : 1;
+    else {
+      result = strncmp(left, right, std::min(ln, rn));
+      if (!result && ln != rn) result = ln < rn ? -1 : 1;
+    }
+    if (result) return result;
+    if (!*le || !*re) return (*le == *re) ? 0 : (*le ? 1 : -1);
+    left = le + 1;
+    right = re + 1;
   }
-  return false;
+}
+bool newer(const char* version) {
+  ParsedVersion remote, current;
+  if (!parseVersion(version, remote) || !parseVersion(FW_VERSION, current)) return false;
+  for (int i = 0; i < 3; ++i)
+    if (remote.core[i] != current.core[i]) return remote.core[i] > current.core[i];
+  if (!remote.suffix && current.suffix) return true; // stable beats its beta
+  if (remote.suffix && !current.suffix) return false;
+  if (!remote.suffix && !current.suffix) return false;
+  return compareSuffix(remote.suffix, current.suffix) > 0;
 }
 bool validHash(const char* s) {
   if (!s || strlen(s) != 64) return false;
@@ -158,6 +211,10 @@ bool validHash(const char* s) {
 }
 
 void checkTask(void*) {
+  // Snapshot the opted-in channel at the start of the HTTPS request.
+  portENTER_CRITICAL(&mux);
+  const bool useBeta = status.allowBeta;
+  portEXIT_CRITICAL(&mux);
   // Require clock sync for X.509 certificate validity.
   if (time(nullptr) < 1700000000) {
     setError("Waiting for time synchronisation", true);
@@ -184,7 +241,7 @@ void checkTask(void*) {
   http.useHTTP10(true);  // Static manifest: require nonchunked Content-Length.
   http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
   http.setUserAgent("Tactula-Update-Check/2.0");
-  const bool begun = http.begin(client, MANIFEST_URL);
+  const bool begun = http.begin(client, useBeta ? BETA_MANIFEST_URL : STABLE_MANIFEST_URL);
   const int httpStatus = begun ? http.GET() : -1;
   if (!begun || httpStatus != HTTP_CODE_OK) {
     char diagnostic[112] = {};
@@ -256,6 +313,17 @@ void checkTask(void*) {
     vTaskDelete(nullptr);
     return;
   }
+  // A preference change while TLS was active invalidates this response.
+  portENTER_CRITICAL(&mux);
+  const bool channelChanged = status.allowBeta != useBeta;
+  if (channelChanged) {
+    status.checking = false;
+    running = false;
+    requested = status.checksEnabled;
+  }
+  portEXIT_CRITICAL(&mux);
+  if (channelChanged) { vTaskDelete(nullptr); return; }
+
   if (!newer(version)) {
     portENTER_CRITICAL(&mux);
     status.available = false;
@@ -306,6 +374,14 @@ void checkTask(void*) {
     return;
   }
   portENTER_CRITICAL(&mux);
+  if (status.allowBeta != useBeta) {
+    status.checking = false;
+    running = false;
+    requested = status.checksEnabled;
+    portEXIT_CRITICAL(&mux);
+    vTaskDelete(nullptr);
+    return;
+  }
   status.available = true;
   // A release change invalidates any previously staged image.
   if (strcmp(status.version, version) != 0) {
@@ -337,6 +413,7 @@ void begin() {
   status.checksEnabled = prefs.getBool("checks", true);
   status.showBadge = prefs.getBool("badge", true);
   status.autoDownload = prefs.getBool("autodl", false);
+  status.allowBeta = prefs.getBool("beta", false);
   prefs.end();
 #if defined(TACTULA_DEV_UPDATE_SIMULATION) && TACTULA_DEV_UPDATE_SIMULATION
   // Development-only visual fixture. Honour persisted badge/check toggles.
@@ -352,18 +429,38 @@ State snapshot() {
   portEXIT_CRITICAL(&mux);
   return result;
 }
-void setPreferences(bool checksEnabled, bool showBadge, bool autoDownload) {
+void setPreferences(bool checksEnabled, bool showBadge, bool autoDownload, bool allowBeta) {
   Preferences prefs;
   prefs.begin("tactula_upd", false);
   prefs.putBool("checks", checksEnabled);
   prefs.putBool("badge", showBadge);
   prefs.putBool("autodl", autoDownload);
+  prefs.putBool("beta", allowBeta);
   prefs.end();
   portENTER_CRITICAL(&mux);
+  const bool channelChanged = status.allowBeta != allowBeta;
   status.checksEnabled = checksEnabled;
   status.showBadge = showBadge;
   status.autoDownload = autoDownload;
-  if (autoDownload && status.available && !status.staged) downloadRequested = true;
+  status.allowBeta = allowBeta;
+  if (channelChanged) {
+    // Do not offer or install firmware staged from the previous channel.
+    status.available = false;
+    status.staged = false;
+    status.promptOnStage = false;
+    status.version[0] = 0;
+    status.error[0] = 0;
+    stagedPartition = nullptr;
+    touchConfirmationRequested = false;
+    installRequested = false;
+    downloadRequested = false;
+    manualDownloadRequested = false;
+    approvedDigest[0] = 0;
+    approvedPath[0] = 0;
+    approvedSize = 0;
+  } else if (autoDownload && status.available && !status.staged) {
+    downloadRequested = true;
+  }
   if (!checksEnabled) {
     status.available = false;
     status.version[0] = 0;
@@ -580,7 +677,13 @@ void tick() {
     portEXIT_CRITICAL(&mux);
   }
   if (start) {
-    if (xTaskCreate(checkTask, "update_check", 8192, nullptr, 1, nullptr) != pdPASS) {
+    // HTTPS/TLS handshakes are CPU-heavy. An unpinned FreeRTOS task can run
+    // on the same core as Arduino's loop(), stalling LVGL/touch processing.
+    // Reserve core 1 for the physical UI; run update discovery on core 0
+    // alongside Wi-Fi's higher-priority tasks instead. No behaviour change
+    // to verification, update timing or user-confirmed installation.
+    if (xTaskCreatePinnedToCore(checkTask, "update_check", 8192, nullptr,
+                                tskIDLE_PRIORITY + 1, nullptr, 0) != pdPASS) {
       setError("No memory for update check");
     }
   }

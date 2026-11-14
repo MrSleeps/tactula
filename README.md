@@ -20,6 +20,8 @@ This has been modified to fit my needs so you may or may not like what I've done
 
 ## Hardware
 
+As per Keralots documentation and original build.
+
 [Guition JC3248W535](https://aliexpress.com/item/1005007566315926.html): AXS15231B panel over QSPI, AXS15231B touch on I2C. Nothing to wire. 3D printed case: [MakerWorld model 3463113](https://makerworld.com/models/3463113). USB-C cable I use: [AliExpress](https://aliexpress.com/item/1005007148475800.html).
 
 | | |
@@ -29,6 +31,7 @@ This has been modified to fit my needs so you may or may not like what I've done
 Optional: a single-colour status LED on a free GPIO ([wiring](GUIDE.md#wiring-the-led)), a [vibration motor](GUIDE.md#vibration-motor) for tile taps and a microSD card for wallpapers and brand icons.
 
 ## Screenshots
+These are totally ripped from Keralots documentation!
 
 Short video of the original touchdeck in use: [YouTube video by Keralots](https://youtube.com/shorts/eh1_8pJR3-M).
 
@@ -44,6 +47,8 @@ Historical screenshots captured from the device (`/screen_live.bmp`), Glass them
 | Home lab: Proxmox and pfSense | Quick panel |
 
 ## Animations
+
+Again, these are from Keralots documentation!
 
 Recorded frame by frame from the display. Pick a set under **Display > Animations** (Classic, Calm, Water, Glass, Heavy, or Custom to choose each effect).
 

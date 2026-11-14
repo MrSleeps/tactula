@@ -16,8 +16,6 @@ This has been modified to fit my needs so you may or may not like what I've done
 
 **Full feature guide:** [GUIDE.md](GUIDE.md).
 
-**Brand:** tactula uses its own purple-to-blue panel mark, a navy/violet web portal inspired by the media downloader design, and unique `tactula-XXXX` Wi-Fi setup and DHCP hostnames. Internal NVS/MQTT compatibility identifiers remain intentionally unchanged.
-
 ## Hardware
 
 As per Keralots documentation and original build.

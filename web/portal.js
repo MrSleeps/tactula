@@ -45,6 +45,18 @@
     return data;
   }
 
+  // Firmware changes are detected through the existing 2-second status poll.
+  // Allow 30 seconds for OTA reboot, then reload only while the API is online.
+  let observedFirmwareVersion = null;
+  let previousUptime = null;
+  let awaitingOtaRestart = false;
+  let otaReloadNotBefore = 0;
+  function waitForOtaRestart() {
+    if (awaitingOtaRestart) return;
+    awaitingOtaRestart = true;
+    otaReloadNotBefore = Date.now() + 30000;
+  }
+
   // Native browser HTTP Basic Auth; no cookies or custom login flow.
   async function loadAuthStatus() {
     try {
@@ -705,6 +717,17 @@
   async function pollStatus() {
     try {
       const s = await getJson("/api/status?t=" + Date.now());
+      const version = typeof s.version === "string" ? s.version : null;
+      if ((observedFirmwareVersion !== null && version && version !== observedFirmwareVersion) ||
+          (previousUptime !== null && Number(s.uptime_seconds) + 5 < previousUptime))
+        waitForOtaRestart();
+      if (Number.isFinite(Number(s.uptime_seconds))) previousUptime = Number(s.uptime_seconds);
+      else if (observedFirmwareVersion === null && version) observedFirmwareVersion = version;
+      if (awaitingOtaRestart && Date.now() >= otaReloadNotBefore) {
+        // The successful status response proves the device is responding.
+        location.reload();
+        return;
+      }
       $("srLed").classList.remove("offline");
       $("srTitle").textContent = s.ap_mode ? "setup access point" : "device online";
       $("srIp").textContent = s.ip || "--";
@@ -910,8 +933,9 @@
       } catch (e) {}
       if (xhr.status >= 200 && xhr.status < 300) {
         $("otaBar").style.width = "100%";
-        $("otaText").textContent = "Update complete. Device is restarting.";
+        $("otaText").textContent = "Update complete. Device is restarting. This page will refresh when it is back online.";
         showToast(data.message || "Firmware installed", false);
+        waitForOtaRestart();
       } else {
         $("otaText").textContent = data.message || "Update failed";
         showToast($("otaText").textContent, true);

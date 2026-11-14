@@ -346,7 +346,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         if (!tv["lightColor"].is<const char*>() && (tv["lightIcon"] | false))
           t.lightColorMode = 1;
       }
-      if ((t.type == TILE_CLOCK || t.type == TILE_SENSOR) && tv["box"].is<bool>())
+      if ((t.type == TILE_CLOCK || t.type == TILE_SENSOR || t.type == TILE_TOGGLE) && tv["box"].is<bool>())
         t.clockBox = tv["box"].as<bool>();
       if (t.type == TILE_SENSOR && tv["showEntityId"].is<bool>())
         t.showEntityId = tv["showEntityId"].as<bool>();

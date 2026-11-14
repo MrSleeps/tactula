@@ -639,6 +639,14 @@
       return '<div class="dk-more"><p class="field-hint wide">Inline thermostat: the setpoint, plus/minus and supported HVAC modes appear directly on the page. Use a 2x2 tile (or larger) for comfortable controls. The tile uses the selected Home Assistant climate entity.</p>' +
         whenField(t, i) + colorField(t, i) + "</div>";
     let h = "";
+    if (t.type === "toggle") {
+      h += '<div class="field">' +
+        lbl("Background", "Standalone shows the switch without a box or border; Boxed uses the current theme background.") +
+        '<select data-toggle-box="' + i + '">' +
+        opt("0", "Standalone (no box or border)", t.box === false) +
+        opt("1", "Boxed (background and border)", t.box !== false) +
+        "</select></div>";
+    }
     if (t.type === "sensor") {
       h +=
         '<div class="field">' +
@@ -2471,6 +2479,13 @@
     el.querySelectorAll("[data-weather-entity]").forEach((x) => {
       x.onchange = () => {
         p.tiles[+x.dataset.weatherEntity].showEntityId = x.value === "1";
+        setDirty(true);
+        renderPage();
+      };
+    });
+    el.querySelectorAll("[data-toggle-box]").forEach((x) => {
+      x.onchange = () => {
+        p.tiles[+x.dataset.toggleBox].box = x.value === "1";
         setDirty(true);
         renderPage();
       };

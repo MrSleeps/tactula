@@ -33,7 +33,8 @@ std::vector<uint32_t> glassKey(Page& p) {
     key.push_back(r ? (uint32_t)tileTint(*r->def) : dispSettings.glassTint);
     key.push_back(r && (r->def->type == TILE_CLOCK ||
           (r->def->type == TILE_SENSOR &&
-           (r->def->style == METRIC_HEADLINE || r->def->style == METRIC_WEATHER))) &&
+           (r->def->style == METRIC_HEADLINE || r->def->style == METRIC_WEATHER)) ||
+          r->def->type == TILE_TOGGLE) &&
           !r->def->clockBox ? 0u : 1u);
     // Toggling this flag changes whether the off tint is baked or overlaid.
     key.push_back(r && r->def->type == TILE_TOGGLE ? 1u : 0u);
@@ -215,7 +216,8 @@ bool bakeGlass(Page& p, const lv_area_t* only) {
     // Standalone clocks, headline and weather tiles draw on sharp wallpaper.
     if (tr && !tr->def->clockBox && (tr->def->type == TILE_CLOCK ||
         (tr->def->type == TILE_SENSOR &&
-         (tr->def->style == METRIC_HEADLINE || tr->def->style == METRIC_WEATHER)))) continue;
+         (tr->def->style == METRIC_HEADLINE || tr->def->style == METRIC_WEATHER)) ||
+        tr->def->type == TILE_TOGGLE)) continue;
     const AutoPick pk = autoPick(tr, tc);
     if (tr) applyAutoPick(*tr, pk);
     opa[i] = pk.opa;
@@ -235,7 +237,8 @@ bool bakeGlass(Page& p, const lv_area_t* only) {
       TileRt* tr = tileOf(t);
       if (tr && !tr->def->clockBox && (tr->def->type == TILE_CLOCK ||
           (tr->def->type == TILE_SENSOR &&
-           (tr->def->style == METRIC_HEADLINE || tr->def->style == METRIC_WEATHER)))) continue;
+           (tr->def->style == METRIC_HEADLINE || tr->def->style == METRIC_WEATHER)) ||
+        tr->def->type == TILE_TOGGLE)) continue;
       if (tc.y2 < 0 || tc.y1 >= rows || tc.x2 < xa || tc.x1 > xb || lv_obj_has_flag(t, LV_OBJ_FLAG_HIDDEN)) continue;
       const lv_area_t clip = {LV_MAX(tc.x1, xa), LV_MAX(tc.y1, 0), LV_MIN(tc.x2, xb), LV_MIN(tc.y2, rows - 1)};
       const int r = lv_obj_get_style_radius(t, LV_PART_MAIN);

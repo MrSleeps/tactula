@@ -392,9 +392,14 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   // Glass-theme backgrounds are also omitted from bakeGlass().
   if ((def.type == TILE_CLOCK ||
        (def.type == TILE_SENSOR &&
-        (def.style == METRIC_HEADLINE || def.style == METRIC_WEATHER))) && !def.clockBox) {
+        (def.style == METRIC_HEADLINE || def.style == METRIC_WEATHER)) ||
+       def.type == TILE_TOGGLE) && !def.clockBox) {
     lv_obj_set_style_bg_opa(t, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_opa(t, LV_OPA_TRANSP, LV_STATE_CHECKED);
+    lv_obj_set_style_bg_opa(t, LV_OPA_TRANSP, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(t, LV_OPA_TRANSP, LV_STATE_PRESSED | LV_STATE_CHECKED);
     lv_obj_set_style_border_width(t, 0, 0);
+    lv_obj_set_style_border_width(t, 0, LV_STATE_CHECKED);
     lv_obj_set_style_shadow_width(t, 0, 0);
   }
 

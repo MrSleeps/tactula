@@ -159,16 +159,19 @@ void fitPngIcon(TileRt& r) {
   const int h = lv_obj_get_height(r.obj);
   if (w <= 0 || h <= 0) return;
   const int pad = std::min(w, h) >= 80 ? 9 : std::min(w, h) >= 56 ? 7 : 5;
-  const bool nav = r.def->type == TILE_NAV;
-  const int labelH = nav ? 0 : w - 2 * pad < 90 ? 15 : 18;
+  const bool artworkOnly = r.def->type == TILE_NAV || r.def->noName;
+  const int labelH = artworkOnly ? 0 : w - 2 * pad < 90 ? 15 : 18;
+  const int reserved = artworkOnly ? 0 : labelH + 8;
   const int availableW = std::max(1, w - 2 * pad - 2);
-  const int availableH = std::max(1, h - 2 * pad - (nav ? 2 : labelH + 8));
-  const uint32_t scale = std::min<uint32_t>(256, std::min<uint32_t>(
+  const int availableH = std::max(1, h - 2 * pad - reserved - 2);
+  // Hidden labels give logos the entire inner tile. Allow modest upscaling
+  // of small source PNGs (up to 2x), without stretching their aspect ratio.
+  const uint32_t maxScale = artworkOnly ? 512 : 256;
+  const uint32_t scale = std::min<uint32_t>(maxScale, std::min<uint32_t>(
       (uint32_t)availableW * 256 / r.pngWidth,
       (uint32_t)availableH * 256 / r.pngHeight));
   lv_image_set_scale(r.pngIcon, std::max<uint32_t>(1, scale));
-  // Offset by half the label reservation to centre in the area above it.
-  lv_obj_align(r.pngIcon, LV_ALIGN_CENTER, 0, nav ? 0 : -(labelH + 8) / 2);
+  lv_obj_align(r.pngIcon, LV_ALIGN_CENTER, 0, -reserved / 2);
 }
 
 void updatePngIcon(TileRt& r, bool on) {

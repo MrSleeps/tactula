@@ -111,6 +111,7 @@ bool downloadRequested = false;
 bool manualDownloadRequested = false;
 bool downloadRunning = false;
 bool installRequested = false;
+bool touchConfirmationRequested = false;
 char approvedDigest[65] = {};
 char approvedPath[160] = {};
 uint32_t approvedSize = 0;
@@ -309,6 +310,7 @@ void checkTask(void*) {
   // A release change invalidates any previously staged image.
   if (strcmp(status.version, version) != 0) {
     status.staged = false;
+    touchConfirmationRequested = false;
     status.promptOnStage = false;
     stagedPartition = nullptr;
   }
@@ -389,6 +391,26 @@ void requestDownload() {
 
 // Only called from a local LVGL touch event. The web API intentionally exposes
 // no install endpoint; the verified image is not activated from the network.
+bool requestTouchConfirmation() {
+  portENTER_CRITICAL(&mux);
+  const bool ready = status.staged && !status.downloading &&
+                     stagedPartition != nullptr;
+  if (ready) touchConfirmationRequested = true;
+  portEXIT_CRITICAL(&mux);
+  return ready;
+}
+
+bool takeTouchConfirmationRequest() {
+  portENTER_CRITICAL(&mux);
+  const bool ready = touchConfirmationRequested &&
+                     status.staged && !status.downloading &&
+                     stagedPartition != nullptr;
+  touchConfirmationRequested = false;
+  portEXIT_CRITICAL(&mux);
+  return ready;
+}
+
+// Only the physical LVGL confirmation may invoke the installation request.
 bool installStagedFromTouch() {
 #if defined(TACTULA_DEV_UPDATE_SIMULATION) && TACTULA_DEV_UPDATE_SIMULATION
   return false;
@@ -413,6 +435,7 @@ void downloadTask(void*) {
     portENTER_CRITICAL(&mux);
     status.downloading = false;
     status.staged = false;
+    touchConfirmationRequested = false;
     status.promptOnStage = false;
     stagedPartition = nullptr;
     snprintf(status.error, sizeof(status.error), "%s", reason);

@@ -26,6 +26,10 @@ void setPreferences(bool checksEnabled, bool showBadge, bool autoDownload);
 // Only fetches trusted HTTPS bytes from the local mirror and verifies against
 // digest/size discovered from GitHub. Never selects a new boot partition.
 void requestDownload();
+// Web UI can only request a physical-screen confirmation, never activate OTA.
+bool requestTouchConfirmation();
+// Consumed by the LVGL main loop; only returns true for a staged image.
+bool takeTouchConfirmationRequest();
 // A physical confirmation on the LVGL device is required to install a staged
 // image. No remote API may call this method.
 bool installStagedFromTouch();

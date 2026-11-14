@@ -59,6 +59,7 @@ struct Page {
 // One tile on screen. LVGL user data holds the index into s_tiles.
 struct TileRt {
   const TileDef* def;
+  bool off = false;   // Built but hidden when condition fails or no grid cell is available.
   int page;
   lv_obj_t* obj;
   lv_obj_t* name;
@@ -416,7 +417,7 @@ void fxCardClose(lv_obj_t* card, int tileIdx);
 // deck_ui_glass.cpp
 std::vector<uint32_t> glassKey(Page& p);
 void autoTextPage(Page& p);
-bool bakeGlass(Page& p);
+bool bakeGlass(Page& p, const lv_area_t* only = nullptr);
 
 // deck_ui_edit.cpp
 extern EditState s_ed;

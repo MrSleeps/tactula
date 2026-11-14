@@ -323,7 +323,10 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       t.entity = (const char*)(tv["entity"] | "");
       t.label = (const char*)(tv["label"] | "");
       t.label.trim();
-      t.noName = tv["label"].is<const char*>() && !t.label.length();
+      // A dedicated preference avoids the confusing space-in-name workaround.
+      // Existing configurations with an explicit empty label keep working.
+      t.noName = (tv["hideName"] | false) ||
+                 (tv["label"].is<const char*>() && !t.label.length());
       t.sub = (const char*)(tv["sub"] | "");
       t.icon = (const char*)(tv["icon"] | "");
       if (t.type == TILE_ACTION || t.type == TILE_TOGGLE || t.type == TILE_SLIDER ||
@@ -424,6 +427,9 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         continue;  // inline thermostat has its own controls, not tile tap actions
       }
       if (t.type == TILE_CLOCK) {
+        const char* dateMode = tv["date"] | "";
+        t.clockDate = !strcmp(dateMode, "always");
+        t.clockDateNever = !strcmp(dateMode, "never");
         p.tiles.push_back(t);
         continue;
       }

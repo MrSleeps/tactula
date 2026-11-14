@@ -548,13 +548,18 @@ void bambuSync() {
     }
     for (int i = 0; i < s_count; ++i) {
       Page& page = s_pages[i];
-      if (!page.def || page.def->id != "office_printer" || !page.title) continue;
+      if (!page.def || !page.title ||
+          (page.def->id != "office_printer" && page.def->id != "office_ams")) continue;
       const String manualName = deck::officeBambuDisplayName();
       const String lanName = deck::officeBambuLiveName();
-      const String title = sensorName.length() ? sensorName :
+      const String printerName = sensorName.length() ? sensorName :
           lanName.length() ? lanName :
-          manualName.length() ? manualName :
-          page.def->name.length() ? page.def->name : page.def->id;
+          manualName.length() ? manualName : "";
+      // AMS belongs to the same printer; retain the page distinction while
+      // using exactly the same source/priority as its main printer header.
+      const String title = printerName.length()
+          ? printerName + (page.def->id == "office_ams" ? " AMS" : "")
+          : page.def->name.length() ? page.def->name : page.def->id;
       if (strcmp(lv_label_get_text(page.title), title.c_str())) {
         lv_label_set_text(page.title, title.c_str());
         page.stale = true;
@@ -572,9 +577,12 @@ void bambuSync() {
     if (lanName.length()) {
       for (int i = 0; i < s_count; ++i) {
         Page& page = s_pages[i];
-        if (!page.def || page.def->id != "office_printer" || !page.title) continue;
-        if (strcmp(lv_label_get_text(page.title), lanName.c_str())) {
-          lv_label_set_text(page.title, lanName.c_str());
+        if (!page.def || !page.title ||
+            (page.def->id != "office_printer" && page.def->id != "office_ams")) continue;
+        const String title = lanName +
+            (page.def->id == "office_ams" ? " AMS" : "");
+        if (strcmp(lv_label_get_text(page.title), title.c_str())) {
+          lv_label_set_text(page.title, title.c_str());
           page.stale = true;
         }
       }

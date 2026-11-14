@@ -7,6 +7,7 @@
 struct MqttSettings {
   bool enabled = false;
   String host, user, pass;
+  String deviceName = "tactula";  // Home Assistant display name only, never identity/topic.
   uint16_t port = 1883;
   String prefix = "homeassistant";
 };

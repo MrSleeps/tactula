@@ -704,11 +704,14 @@ static void handleConfigImport() {
     const char* host = nullptr;
     const char* user = nullptr;
     const char* prefix = nullptr;
+    const char* deviceName = nullptr;
     if (mqtt.isNull() || !readBackupBool(mqtt, "enabled", nextMqtt.enabled, error, "mqtt.enabled") ||
         !readBackupString(mqtt, "host", 80, host, error, "mqtt.host") ||
         !readBackupInteger(mqtt, "port", 1, 65535, integer, error, "mqtt.port") ||
         !readBackupString(mqtt, "user", 127, user, error, "mqtt.user") ||
-        !readBackupString(mqtt, "prefix", 127, prefix, error, "mqtt.prefix")) {
+        !readBackupString(mqtt, "prefix", 127, prefix, error, "mqtt.prefix") ||
+        (!mqtt["deviceName"].isNull() &&
+         !readBackupString(mqtt, "deviceName", 48, deviceName, error, "mqtt.deviceName"))) {
       sendJsonMessage(400, false, error.length() ? error.c_str() : "Invalid MQTT settings");
       return;
     }
@@ -716,6 +719,7 @@ static void handleConfigImport() {
     nextMqtt.port = (uint16_t)integer;
     nextMqtt.user = user;
     nextMqtt.prefix = prefix;
+    nextMqtt.deviceName = deviceName ? deviceName : String(PRODUCT_NAME);
     if (!mqttNormalize(nextMqtt, error)) {
       sendJsonMessage(400, false, error.c_str());
       return;
@@ -883,6 +887,7 @@ static void handleSaveAdvanced() {
   next.port = (uint16_t)port.toInt();
   next.user = server.arg("mqttUser");
   next.prefix = server.arg("mqttPrefix");
+  next.deviceName = server.arg("mqttDeviceName");
   if (server.hasArg("mqttClearPass")) next.pass = "";
   else if (server.arg("mqttPass").length()) next.pass = server.arg("mqttPass");
   String error;
@@ -1606,6 +1611,29 @@ static void handleIconsFinish() {
   iconError = "";
   if (err.length()) {
     sendJsonMessage(400, false, err.c_str());
+    return;
+  }
+  handleIconsStatus();
+}
+
+// Remove the MDI font without deleting any tile configuration. Release LVGL
+// glyph/font references before deleting the LittleFS file; rebuild the pages
+// with the normal built-in icon fallbacks afterwards.
+static void handleIconsRemove() {
+  if (!deck::deckFsReady()) {
+    sendJsonMessage(503, false, "Internal flash storage unavailable");
+    return;
+  }
+  const String path = deck::iconsPath();
+  if (!LittleFS.exists(path)) {
+    handleIconsStatus();
+    return;
+  }
+  deckReleaseIcons();
+  if (!LittleFS.remove(path)) {
+    String error;
+    deck::iconsLoad(path.c_str(), error);
+    sendJsonMessage(500, false, "Could not remove the MDI font");
     return;
   }
   handleIconsStatus();
@@ -2577,6 +2605,18 @@ static void handleUpdateDownload() {
   server.send(202, "application/json", "{\"ok\":true,\"message\":\"Verified download requested\"}");
 }
 
+// The unauthenticated LAN portal may ask the person to confirm on the device,
+// but cannot activate an OTA partition or initiate a reboot.
+static void handleUpdateConfirmOnDevice() {
+  if (otaInProgress || !firmwareUpdate::requestTouchConfirmation()) {
+    server.send(409, "application/json",
+                "{\"error\":\"No verified firmware is staged for confirmation\"}");
+    return;
+  }
+  server.send(202, "application/json",
+              "{\"ok\":true,\"message\":\"Confirm installation on the touchscreen\"}");
+}
+
 static void handleUpdatePreferences() {
   if (!server.hasArg("checksEnabled") || !server.hasArg("showBadge") || !server.hasArg("autoDownload")) {
     server.send(400, "application/json", "{\"error\":\"Missing preferences\"}");
@@ -2626,6 +2666,7 @@ void initWebServer() {
   server.on("/api/firmware/updates", HTTP_GET, handleUpdateStatus);
   server.on("/api/firmware/updates/check", HTTP_POST, handleUpdateCheck);
   server.on("/api/firmware/updates/download", HTTP_POST, handleUpdateDownload);
+  server.on("/api/firmware/updates/confirm-on-device", HTTP_POST, handleUpdateConfirmOnDevice);
   server.on("/api/firmware/updates/preferences", HTTP_POST, handleUpdatePreferences);
   server.on("/api/config", HTTP_GET, handleApiConfig);
   server.on("/api/config/export", HTTP_GET, handleConfigExport);
@@ -2646,6 +2687,7 @@ void initWebServer() {
   server.on("/tactula-mark.svg", HTTP_GET, handleTactulaMark);
   server.on("/deck.js", HTTP_GET, handleDeckJs);
   server.on("/api/deck/icons", HTTP_GET, handleIconsStatus);
+  server.on("/api/deck/icons/remove", HTTP_POST, handleIconsRemove);
   server.on("/api/deck/brand", HTTP_GET, handleBrandStatus);
   server.on("/api/deck/brand", HTTP_POST, handleBrandFinish, handleBrandUpload);
   server.on("/api/deck/brand/remove", HTTP_POST, handleBrandRemove);

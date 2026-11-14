@@ -179,7 +179,7 @@
               <div class="page-header">
                 <h1 class="page-h1">Overview</h1>
                 <p class="page-lede">
-                  Live device screen, Home Assistant connection and firmware diagnostics.
+                  Live device screen, connection statuses and firmware diagnostics.
                 </p>
               </div>
               <div class="overview-grid">
@@ -200,8 +200,23 @@
                   </div>
                 </div>
                 <div class="card">
-                  <div class="card-head"><h2 class="card-title">Home Assistant</h2></div>
-                  <dl class="facts"><div><dt>Connection</dt><dd id="factHa">--</dd></div></dl>
+                  <div class="card-head"><h2 class="card-title">All connections</h2></div>
+                  <div class="connections-list" aria-label="Connection status">
+                    <div class="connection-item">
+                      <span class="connection-label">Home Assistant</span>
+                      <span class="connection-value" id="factHa" role="status">Checking...</span>
+                    </div>
+                    <div class="connection-item">
+                      <span class="connection-label">MQTT broker</span>
+                      <span class="connection-value" id="factMqtt" role="status">Checking...</span>
+                      <span class="connection-detail" id="factMqttDetail"></span>
+                    </div>
+                    <div class="connection-item hidden" id="factBambuRow">
+                      <span class="connection-label" id="factBambuLabel">Bambu LAN</span>
+                      <span class="connection-value" id="factBambu" role="status">Checking...</span>
+                      <span class="connection-detail" id="factBambuDetail"></span>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div class="card">
@@ -1265,6 +1280,12 @@
                     ><input type="checkbox" id="mqttEnabled" name="mqttEnabled" /><span class="check-box"></span
                     ><span class="check-text"><strong>Connect to an MQTT broker</strong></span></label
                   >
+                  <div class="field">
+                    <label class="field-label" for="mqttDeviceName">Device name in Home Assistant</label>
+                    <input type="text" id="mqttDeviceName" name="mqttDeviceName" maxlength="48"
+                      value="tactula" placeholder="Office Touchscreen" />
+                    <p class="field-hint">For example, Office Touchscreen or Bedroom Touchscreen. Changes the device's display name without changing its MQTT identity or entity IDs.</p>
+                  </div>
                   <div class="grid-2">
                     <div class="field">
                       <label class="field-label" for="mqttHost">Broker</label>
@@ -1295,7 +1316,7 @@
                   </div>
                   <p class="maintenance-copy">Status: <span id="mqttStatus">off</span></p>
                   <p class="maintenance-copy">
-                    tactula appears in Home Assistant under Settings &gt; Devices &gt; MQTT.
+                    Your chosen device name appears in Home Assistant under Settings &gt; Devices &gt; MQTT.
                     Needs the MQTT integration and a broker such as the Mosquitto add-on.
                   </p>
                   <div class="maintenance-actions" style="margin-top:18px">
@@ -1446,15 +1467,17 @@
                 <div class="field">
                   <label class="field-label"><input type="checkbox" id="fwAutoDownload" /> Automatically download verified firmware to the inactive OTA partition</label>
                 </div>
-                <p class="field-hint" id="fwUpdateStatus" role="status">Checking update settings...</p>
-                <p class="field-hint" id="fwDownloadStatus" role="status"></p>
-                <div class="maintenance-actions">
+                <div class="fw-update-feedback">
+                  <p class="fw-update-summary" id="fwUpdateStatus" role="status">Checking update settings...</p>
+                  <p class="fw-update-detail" id="fwDownloadStatus" role="status"></p>
+                </div>
+                <div class="maintenance-actions fw-update-actions">
                   <button type="button" class="btn btn-accent" id="fwCheckNow">Check now</button>
                   <button type="button" class="btn" id="fwDownloadNow" disabled>Download verified OTA</button>
-                  <a href="https://firmware.mrsleeps.uk/tactula/" target="_blank" rel="noopener">Download verified firmware</a>
+                  <a class="btn" href="https://firmware.mrsleeps.uk/tactula/" target="_blank" rel="noopener noreferrer">Firmware downloads</a>
                 </div>
                 <div class="note">
-                  <span class="note-k">Security</span><span>The download is verified against a SHA-256 digest obtained from the official GitHub release over HTTPS. The device never activates a downloaded image without on-screen confirmation. Fully unattended installation requires signed releases and additional protections.</span>
+                  <span class="note-k">Security</span><span>The download is verified over HTTPS against the SHA-256 digest in the website manifest, which is generated from verified official GitHub release assets. The device never activates a downloaded image without on-screen confirmation. Fully unattended installation requires signed releases and additional protections.</span>
                 </div>
               </div>
               <div class="card">

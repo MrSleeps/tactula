@@ -125,7 +125,7 @@ void fitButton(TileRt& r, int cw, int ch) {
     // This is a dedicated image tile. The normal MDI chip is deliberately
     // hidden; it is positioned at the top-left and must not constrain the PNG.
     showObj(r.chip, false);
-    showObj(r.name, true);
+    showObj(r.name, !r.def->noName);
     showObj(r.sub, false);
     const lv_font_t* font = cw < 90 ? &deck_font_12 : &deck_font_14;
     fitName(r.name, font, 1);
@@ -133,6 +133,30 @@ void fitButton(TileRt& r, int cw, int ch) {
     lv_obj_set_width(r.name, cw);
     lv_obj_align(r.name, LV_ALIGN_BOTTOM_MID, 0, 0);
     fitPngIcon(r);
+    return;
+  }
+  if (r.def->noName) {
+    // With no caption, an MDI/brand icon should fill the inner area just
+    // like a PNG. Keep all existing tile tap and toggle behaviour unchanged.
+    showObj(r.name, false);
+    showObj(r.sub, false);
+    if (iconOff(r)) {
+      showObj(r.chip, false);
+      return;
+    }
+    showObj(r.chip, true);
+    const int size = std::max(16, std::min(cw, ch));
+    const int px = size >= 72 ? 40 : size >= 48 ? 28 : size >= 30 ? 20 : 16;
+    lv_obj_set_size(r.chip, size, size);
+    lv_obj_set_style_bg_opa(r.chip, r.def->iconPlain ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
+    if (r.iconPx != px) {
+      r.iconPx = px;
+      HaEntity e;
+      const bool known = r.def->entity.length() && haGetEntity(r.def->entity, e);
+      r.iconCp = showIcon(r.icon, *r.def, known ? &e : nullptr, r.on, px, 0);
+    }
+    lv_obj_center(r.chip);
+    lv_obj_center(r.icon);
     return;
   }
   struct Opt {
@@ -730,7 +754,31 @@ void fitWeather(TileRt& r, int cw, int ch) {
                readingTop + std::max(0, (readingH - rowH) / 2));
 }
 
-// Clock: responsive time row and date, centered within the tile.
+// Digit ink in a line box: rows of air above it and its height. The clock
+// fonts are digits only and have no air; text fonts do.
+static void digitInk(const lv_font_t* f, int& top, int& h) {
+  lv_font_glyph_dsc_t g = {};
+  if (!lv_font_get_glyph_dsc(f, &g, '0', 0)) {
+    top = lineH(f) / 8;
+    h = lineH(f) * 3 / 4;
+    return;
+  }
+  top = lineH(f) - f->base_line - (g.ofs_y + g.box_h);
+  h = g.box_h;
+}
+
+// Date ink: from the digit tops down to the descenders (Sep, Aug, May).
+static void dateInk(const lv_font_t* f, int& top, int& h) {
+  digitInk(f, top, h);
+  lv_font_glyph_dsc_t g = {};
+  const int bot = lv_font_get_glyph_dsc(f, &g, 'p', 0) ? lineH(f) - f->base_line - g.ofs_y : lineH(f);
+  h = LV_MAX(h, bot - top);
+}
+
+// Clock: the largest time that fits, the date under it when there is room
+// (a one step smaller time is worth it for the date). "date": "always" takes
+// a tighter gap first, then any smaller time. Fit and centring go by the ink,
+// not by the line boxes.
 void fitClock(TileRt& r, int cw, int ch) {
   static const lv_font_t* const kTime[] = {&deck_font_clock_72, &deck_font_clock_56, &lv_font_montserrat_40,
                                            &deck_font_28, &deck_font_20, &deck_font_14};
@@ -738,17 +786,54 @@ void fitClock(TileRt& r, int cw, int ch) {
   const lv_font_t* df = ch >= 120 ? &deck_font_20 : &deck_font_14;
   const bool ampm = !netSettings.use24h;
   auto unitFont = [](const lv_font_t* f) { return lineH(f) >= 48 ? &deck_font_20 : &deck_font_14; };
+  int dTop, dH;
+  dateInk(df, dTop, dH);
+  const int gap = lv_obj_get_style_pad_row(r.obj, LV_PART_MAIN);  // theme gap between time and date
+  constexpr int MIN_GAP = 5;  // ink rows between digits and date when "always" tightens it
+  int cut = 0;                // rows taken off the gap
+  // Ink rows from the top of the column; the date line sits L/8 up into the time's.
+  auto dateY = [&](const lv_font_t* f) { return lineH(f) - lineH(f) / 8 + gap - cut; };
+  auto inkSpan = [&](const lv_font_t* f, bool withDate, int& top, int& bot) {
+    int h;
+    digitInk(f, top, h);
+    bot = withDate ? dateY(f) + dTop + dH : top + h;
+  };
   int best = N - 1, dated = -1;
   for (int i = N - 1; i >= 0; i--) {
     const lv_font_t* f = kTime[i];
-    // Digits have no accents or descenders: a quarter of the line box is air.
-    const int w = textW("00:00", f) + (ampm ? 4 + textW("PM", unitFont(f)) : 0), h = lineH(f) * 3 / 4;
-    if (w > cw || h > ch) continue;
+    const int w = textW("00:00", f) + (ampm ? 4 + textW("PM", unitFont(f)) : 0);
+    int top, bot;
+    inkSpan(f, false, top, bot);
+    if (w > cw || bot - top > ch) continue;
     best = i;
-    if (h + lineH(df) <= ch) dated = i;
+    inkSpan(f, true, top, bot);
+    if (bot - top <= ch) dated = i;
   }
-  const bool date = dated >= 0 && dated <= best + 1;
+  // Fonts from best down already fit the width and, without the date, the height.
+  if (r.def->clockDate) {
+    const int last = dated < 0 ? N : dated;
+    for (int i = best; i < last; i++) {
+      const lv_font_t* f = kTime[i];
+      int top, bot, h;
+      inkSpan(f, true, top, bot);
+      digitInk(f, top, h);
+      const int over = bot - top - ch, room = dateY(f) + dTop - (top + h) - MIN_GAP;
+      if (over <= room) {
+        cut = LV_MAX(0, over);
+        dated = i;
+        break;
+      }
+    }
+  }
+  const bool date = !r.def->clockDateNever && dated >= 0 && (dated <= best + 1 || r.def->clockDate);
   const lv_font_t* f = kTime[date ? dated : best];
+  // Flex centres the boxes; move them so the ink is centred instead.
+  int top, bot;
+  inkSpan(f, date, top, bot);
+  const int boxH = date ? dateY(f) + lineH(df) : lineH(f);
+  const int shift = boxH / 2 - (top + bot) / 2;
+  lv_obj_set_style_translate_y(lv_obj_get_parent(r.unit), shift, 0);
+  lv_obj_set_style_translate_y(r.name, shift, 0);
   setFont(r.sub, f);
   setFont(r.colon, f);
   setFont(r.mins, f);
@@ -759,9 +844,10 @@ void fitClock(TileRt& r, int cw, int ch) {
   setFont(r.unit, unitFont(f));
   lv_obj_set_style_pad_bottom(r.unit, (lineH(f) - lineH(unitFont(f))) / 5, 0);  // share the baseline
   setFont(r.name, df);
-  lv_obj_set_style_margin_top(r.name, -lineH(f) / 8, 0);
+  lv_obj_set_style_margin_top(r.name, -lineH(f) / 8 - cut, 0);
   showObj(r.name, date);
 }
+
 
 // Navigation has no state, label or secondary line on the display. Give the
 // full inner rectangle to the chosen MDI/brand icon or uploaded PNG.

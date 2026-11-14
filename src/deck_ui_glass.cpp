@@ -22,6 +22,7 @@ std::vector<uint32_t> glassKey(Page& p) {
   lv_obj_get_coords(p.root, &rc);
   for (uint32_t i = 0; i < count; i++) {
     lv_obj_t* t = lv_obj_get_child(p.grid, i);
+    if (lv_obj_has_flag(t, LV_OBJ_FLAG_HIDDEN)) continue;
     lv_area_t tc;
     lv_obj_get_coords(t, &tc);
     lv_area_move(&tc, -rc.x1, -rc.y1);
@@ -174,7 +175,8 @@ void autoTextPage(Page& p) {
 // wallpaper, and under each tile the blurred wallpaper cut to its rounded
 // rect with the tint and a hairline. A page render is then one image copy
 // instead of per-tile blending.
-bool bakeGlass(Page& p) {
+bool bakeGlass(Page& p, const lv_area_t* only) {
+  const bool part = only && p.glass && !p.glassKey.empty();
   p.glassKey.clear();  // a partial bake must never be reused
   const lv_image_dsc_t* sharp = wallSharp();
   const lv_image_dsc_t* blur = wallBlur();
@@ -182,80 +184,108 @@ bool bakeGlass(Page& p) {
   const int w = sharp->header.w, h = sharp->header.h;
   if (!p.glass) p.glass = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
   if (!p.glass) return false;
+  const int xa = part ? LV_MAX(only->x1, 0) : 0, xb = part ? LV_MIN(only->x2, w - 1) : w - 1;
+  const int ya = part ? LV_MAX(only->y1, 0) : 0, yb = part ? LV_MIN(only->y2, h - 1) : h - 1;
   lv_image_cache_drop(p.glass);
-  for (int y = 0; y < h; y++)
-    memcpy(p.glass->data + y * p.glass->header.stride, sharp->data + y * sharp->header.stride, w * 2);
+  for (int y = ya; y <= yb && xa <= xb; y++)
+    memcpy(p.glass->data + y * p.glass->header.stride + xa * 2, sharp->data + y * sharp->header.stride + xa * 2,
+           (xb - xa + 1) * 2);
   // The glass is drawn in ARGB8888 over nothing, then laid over the picture
   // and dithered to RGB565 once: blending in RGB565 left coloured bands.
-  lv_draw_buf_t* top = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_ARGB8888, 0);
+  // In bands: a screen sized ARGB8888 buffer needs 614 KB in one piece.
+  constexpr int BAND = 80;
+  lv_draw_buf_t* top = lv_draw_buf_create(w, BAND, LV_COLOR_FORMAT_ARGB8888, 0);
   if (!top) return false;
-  lv_draw_buf_clear(top, nullptr);
   std::vector<uint32_t> key = glassKey(p);
   lv_obj_t* cv = lv_canvas_create(p.root);
   lv_obj_add_flag(cv, LV_OBJ_FLAG_HIDDEN);
   lv_canvas_set_draw_buf(cv, top);
-  lv_layer_t layer;
-  lv_canvas_init_layer(cv, &layer);
-  const lv_area_t all = {0, 0, w - 1, h - 1};
   lv_area_t rc;
   lv_obj_get_coords(p.root, &rc);
-  for (uint32_t i = 0; i < lv_obj_get_child_count(p.grid); i++) {
+  const uint32_t count = lv_obj_get_child_count(p.grid);
+  std::vector<lv_opa_t> opa(count);
+  for (uint32_t i = 0; i < count; i++) {
     lv_obj_t* t = lv_obj_get_child(p.grid, i);
-    TileRt* tr = tileOf(t);
-    // Standalone clocks use the sharp page wallpaper directly. Skip both
-    // blurred image and tinted/bordered rectangle in the glass pre-render.
-    if (tr && !tr->def->clockBox && (tr->def->type == TILE_CLOCK ||
-        (tr->def->type == TILE_SENSOR &&
-         (tr->def->style == METRIC_HEADLINE || tr->def->style == METRIC_WEATHER)))) continue;
+    if (lv_obj_has_flag(t, LV_OBJ_FLAG_HIDDEN)) continue;
     lv_area_t tc;
     lv_obj_get_coords(t, &tc);
     lv_area_move(&tc, -rc.x1, -rc.y1);
-    const int r = lv_obj_get_style_radius(t, LV_PART_MAIN);
-    lv_draw_image_dsc_t id;
-    lv_draw_image_dsc_init(&id);
-    id.src = blur;
-    id.image_area = tc;  // the radius mask works on this area
-    id.clip_radius = r;
-    layer._clip_area = tc;
-    lv_draw_image(&layer, &id, &all);
-    layer._clip_area = all;
-    lv_draw_rect_dsc_t rd;
-    lv_draw_rect_dsc_init(&rd);
-    rd.radius = r;
+    if (tc.x2 < xa || tc.x1 > xb || tc.y2 < ya || tc.y1 > yb) continue;
+    TileRt* tr = tileOf(t);
+    // Standalone clocks, headline and weather tiles draw on sharp wallpaper.
+    if (tr && !tr->def->clockBox && (tr->def->type == TILE_CLOCK ||
+        (tr->def->type == TILE_SENSOR &&
+         (tr->def->style == METRIC_HEADLINE || tr->def->style == METRIC_WEATHER)))) continue;
     const AutoPick pk = autoPick(tr, tc);
     if (tr) applyAutoPick(*tr, pk);
-    rd.bg_color = lv_color_hex(tr ? tileBg(*tr->def) : C_TILE);
-    // The blur and border are baked, but a toggle's background tint isn't.
-    // Its mutually exclusive ON and OFF tints are drawn over this neutral
-    // glass at their independently configured opacity values.
-    rd.bg_opa = tr && tr->def->type == TILE_TOGGLE ? LV_OPA_TRANSP : pk.opa;
-    rd.border_color = lv_color_hex(GLASS_BORDER_COLOR);
-    rd.border_opa = GLASS_BORDER_OPA;
-    rd.border_width = GLASS_BORDER_WIDTH;
-    lv_draw_rect(&layer, &rd, &tc);
+    opa[i] = pk.opa;
   }
-  lv_canvas_finish_layer(cv, &layer);
-  lv_obj_delete(cv);
-  for (int y = 0; y < h; y++) {
-    const uint8_t* s = top->data + y * top->header.stride;  // B, G, R, A
-    uint16_t* d = (uint16_t*)(p.glass->data + y * p.glass->header.stride);
-    for (int x = 0; x < w; x++, s += 4) {
-      const int a = s[3];
-      if (!a) continue;
-      int r = s[2], g = s[1], b = s[0];
-      if (a < 255) {  // rounded edge: mix with the picture under it
-        const uint16_t q = d[x];
-        r = (r * a + ((q >> 8 & 0xF8) | q >> 13) * (255 - a) + 127) / 255;
-        g = (g * a + ((q >> 3 & 0xFC) | (q >> 9 & 0x03)) * (255 - a) + 127) / 255;
-        b = (b * a + ((q << 3 & 0xF8) | (q >> 2 & 0x07)) * (255 - a) + 127) / 255;
+  for (int y0 = ya; y0 <= yb && xa <= xb; y0 += BAND) {
+    const int rows = LV_MIN(BAND, yb + 1 - y0);
+    const lv_area_t band = {xa, 0, xb, rows - 1};
+    lv_draw_buf_clear(top, &band);
+    lv_layer_t layer;
+    lv_canvas_init_layer(cv, &layer);
+    const lv_area_t all = {0, -y0, w - 1, h - 1 - y0};  // the whole picture, seen from the band
+    for (uint32_t i = 0; i < count; i++) {
+      lv_obj_t* t = lv_obj_get_child(p.grid, i);
+      lv_area_t tc;
+      lv_obj_get_coords(t, &tc);
+      lv_area_move(&tc, -rc.x1, -rc.y1 - y0);
+      TileRt* tr = tileOf(t);
+      if (tr && !tr->def->clockBox && (tr->def->type == TILE_CLOCK ||
+          (tr->def->type == TILE_SENSOR &&
+           (tr->def->style == METRIC_HEADLINE || tr->def->style == METRIC_WEATHER)))) continue;
+      if (tc.y2 < 0 || tc.y1 >= rows || tc.x2 < xa || tc.x1 > xb || lv_obj_has_flag(t, LV_OBJ_FLAG_HIDDEN)) continue;
+      const lv_area_t clip = {LV_MAX(tc.x1, xa), LV_MAX(tc.y1, 0), LV_MIN(tc.x2, xb), LV_MIN(tc.y2, rows - 1)};
+      const int r = lv_obj_get_style_radius(t, LV_PART_MAIN);
+      lv_draw_image_dsc_t id;
+      lv_draw_image_dsc_init(&id);
+      id.src = blur;
+      id.image_area = tc;  // the radius mask works on this area
+      id.clip_radius = r;
+      layer._clip_area = clip;
+      lv_draw_image(&layer, &id, &all);
+      layer._clip_area = band;
+      lv_draw_rect_dsc_t rd;
+      lv_draw_rect_dsc_init(&rd);
+      rd.radius = r;
+      rd.bg_color = lv_color_hex(tr ? tileBg(*tr->def) : C_TILE);
+      // Toggle tint remains an LVGL overlay rather than baked into glass.
+      rd.bg_opa = tr && tr->def->type == TILE_TOGGLE ? LV_OPA_TRANSP : opa[i];
+      rd.border_color = lv_color_hex(GLASS_BORDER_COLOR);
+      rd.border_opa = GLASS_BORDER_OPA;
+      rd.border_width = GLASS_BORDER_WIDTH;
+      lv_draw_rect(&layer, &rd, &tc);
+    }
+    lv_canvas_finish_layer(cv, &layer);
+    for (int y = 0; y < rows; y++) {
+      const uint8_t* s = top->data + y * top->header.stride + xa * 4;  // B, G, R, A
+      uint16_t* d = (uint16_t*)(p.glass->data + (y0 + y) * p.glass->header.stride);
+      for (int x = xa; x <= xb; x++, s += 4) {
+        const int a = s[3];
+        if (!a) continue;
+        int r = s[2], g = s[1], b = s[0];
+        if (a < 255) {  // rounded edge: mix with the picture under it
+          const uint16_t q = d[x];
+          r = (r * a + ((q >> 8 & 0xF8) | q >> 13) * (255 - a) + 127) / 255;
+          g = (g * a + ((q >> 3 & 0xFC) | (q >> 9 & 0x03)) * (255 - a) + 127) / 255;
+          b = (b * a + ((q << 3 & 0xF8) | (q >> 2 & 0x07)) * (255 - a) + 127) / 255;
+        }
+        d[x] = wallDither565(r, g, b, x, y0 + y);
       }
-      d[x] = wallDither565(r, g, b, x, y);
     }
   }
+  lv_obj_delete(cv);
   lv_draw_buf_destroy(top);
-  autoHeader(p);
-  lv_obj_set_style_bg_image_src(p.root, p.glass, 0);
-  lv_obj_invalidate(p.root);
+  if (part) {
+    const lv_area_t a = {rc.x1 + xa, rc.y1 + ya, rc.x1 + xb, rc.y1 + yb};
+    lv_obj_invalidate_area(p.root, &a);
+  } else {
+    autoHeader(p);
+    lv_obj_set_style_bg_image_src(p.root, p.glass, 0);
+    lv_obj_invalidate(p.root);
+  }
   p.stale = true;
   p.glassKey.swap(key);
   return true;

@@ -111,7 +111,7 @@ bool discovery(PubSubClient& mqtt, const MqttSettings& cfg, const MqttSnapshot& 
     device["identifiers"].to<JsonArray>().add("touchdeck_" + s_id);
     // Device model/name are stable product branding; hostname is still used
     // for network reachability and the unique MQTT device ID differentiates decks.
-    device["name"] = PRODUCT_NAME;
+    device["name"] = cfg.deviceName.length() ? cfg.deviceName : String(PRODUCT_NAME);
     device["manufacturer"] = "Guition";
     // Preserve discovery identifiers and topics to avoid duplicate HA entities.
     device["model"] = "tactula JC3248W535";
@@ -307,6 +307,13 @@ void task(void*) {
 const MqttSettings& mqttSettings() { return s_settings; }
 
 bool mqttNormalize(MqttSettings& cfg, String& error) {
+  cfg.deviceName.trim();
+  if (!cfg.deviceName.length()) cfg.deviceName = PRODUCT_NAME;
+  if (cfg.deviceName.length() > 48) { error = "Home Assistant device name must be 48 characters or fewer"; return false; }
+  for (size_t i = 0; i < cfg.deviceName.length(); ++i) {
+    const uint8_t c = cfg.deviceName[i];
+    if (c < 32 || c == 127) { error = "Device name cannot include control characters"; return false; }
+  }
   cfg.host.trim();
   if (cfg.host.startsWith("mqtt://")) cfg.host.remove(0, 7);
   const int colon = cfg.host.indexOf(':');
@@ -350,6 +357,7 @@ void mqttBegin() {
     s_settings.user = prefs.getString("user", "");
     s_settings.pass = prefs.getString("pass", "");
     s_settings.prefix = prefs.getString("prefix", "homeassistant");
+    s_settings.deviceName = prefs.getString("name", PRODUCT_NAME);
     prefs.end();
   }
   String error;
@@ -376,7 +384,8 @@ bool mqttSaveSettings(const MqttSettings& settings) {
   };
   bool ok = prefs.putBool("en", next.enabled) && putText("host", next.host) &&
             prefs.putUShort("port", next.port) && putText("user", next.user) &&
-            putText("pass", next.pass) && putText("prefix", next.prefix);
+            putText("pass", next.pass) && putText("prefix", next.prefix) &&
+            putText("name", next.deviceName);
   prefs.end();
   if (!ok) return false;
   s_settings = next;
@@ -398,6 +407,7 @@ void mqttConfigJson(JsonObject out, bool includeHasPass) {
   out["port"] = s_settings.port;
   out["user"] = s_settings.user;
   out["prefix"] = s_settings.prefix;
+  out["deviceName"] = s_settings.deviceName;
   if (includeHasPass) out["has_pass"] = s_settings.pass.length() > 0;
 }
 

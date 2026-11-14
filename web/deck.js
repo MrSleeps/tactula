@@ -20,6 +20,13 @@
 .dk-tile.sel{border-color:var(--accent)}
 .dk-more{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px 12px;padding-top:10px;border-top:1px solid var(--line)}
 .dk-more .field{margin:0}.dk-sec,.dk-grp.flat>.field::before{font:600 11px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}.dk-sec{grid-column:1/-1}.dk-grp.flat{display:contents}.dk-grp.flat>.field::before{content:"\\a0";display:block;margin-bottom:8px}.dk-grp.flat>.field:first-child::before{content:var(--t)}.dk-grp.wide{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px 12px;min-width:0}.dk-more .field-label{display:flex;align-items:center;min-height:17px;margin-bottom:6px}.dk-more .field-label .tip-btn{width:15px;height:15px;margin-left:6px;font-size:10px}.dk-warn{margin-left:8px;color:var(--warn);font-weight:600;text-transform:none;letter-spacing:0}.dk-more .field-hint.tip{margin:0 0 6px}.dk-oib i{font:18px dkmdi, dkcbi;font-style:normal;line-height:1;margin-right:6px;vertical-align:-3px}.dk-more .wide{grid-column:1/-1}.dk-more select,.dk-more input,.dk-more textarea{max-width:none;padding:7px 10px;font-size:13px}
+.dk-more .dk-hide-name{display:flex;align-items:flex-start;gap:9px;padding:0;margin:0;border:0;min-width:0}
+.dk-more .dk-hide-name .check-box{width:16px;height:16px;border-radius:4px;margin-top:1px}
+.dk-more .dk-hide-name .check-text{display:block;min-width:0}
+.dk-more .dk-hide-name .check-text strong{display:block;font:10px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--faint)}
+.dk-more .dk-hide-name .ct-hint{font:12px/1.55 var(--sans);color:var(--dim);margin-top:6px}
+.dk-more .dk-hide-name input[type="checkbox"]{position:absolute;width:0;height:0;padding:0;opacity:0}
+.dk-more .dk-hide-name input:focus-visible + .check-box{outline:2px solid var(--accent);outline-offset:3px}
 .dk-sw{gap:6px;flex-wrap:wrap}.dk-sw input[type=color]{width:40px;height:30px;padding:2px;border:1px solid var(--line-2);border-radius:8px;background:var(--card);cursor:pointer}
 .dk-swb{width:24px;height:24px;padding:0;border:2px solid transparent;border-radius:50%;cursor:pointer}.dk-swb.on{border-color:var(--ink)}
 .dk-more textarea{width:100%;min-height:58px;font:12px var(--mono);background:var(--card);color:var(--ink);border:1px solid var(--line-2);border-radius:var(--r-md);resize:vertical}
@@ -51,6 +58,14 @@
 .dk-ibtn{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 4px;border:1px solid transparent;border-radius:var(--r-md);background:none;color:var(--ink);cursor:pointer;min-width:0}
 .dk-ibtn:hover{background:var(--card-2)}.dk-ibtn.on{border-color:var(--accent);background:var(--accent-soft)}
 .dk-ibtn i{font:28px dkmdi, dkcbi;font-style:normal;line-height:1}.dk-ibtn small{font:10px var(--mono);color:var(--dim);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Two-pane page editor on large desktops; all existing controls remain in the DOM. */
+@media(min-width:1500px){
+  .content-inner:has(> #deckSection.active){max-width:1560px}
+  #dkPage .dk-split{display:grid;grid-template-columns:minmax(0, min(48%, 700px)) minmax(0, 1fr);column-gap:24px;align-items:start}
+  #dkPage .dk-left{position:sticky;top:calc(var(--topbar-h, 56px) + 12px);min-width:0}
+  #dkPage .dk-right{min-width:0}
+  #dkPage .dk-left .dk-grid{max-width:700px;margin-top:0}
+}
 @media(max-width:560px){.dk-tile{grid-template-columns:36px minmax(0,1fr)}.dk-tact{grid-column:1/-1}.dk-save{margin:18px -16px -18px;padding:12px 16px}}
 `;
   const st = document.createElement("style");
@@ -60,12 +75,12 @@
   if (!sec) return;
   sec.innerHTML = `<div class="page-header"><h1 class="page-h1">Deck</h1><p class="page-lede">Build and edit your touchscreen pages and tiles. Configure the Home Assistant connection under Home Assistant in the sidebar.</p></div>
 <div class="card"><div class="card-head"><h2 class="card-title">Icons</h2><span class="tag" id="dkIcTag">-</span></div>
-<p class="field-hint">Material Design Icons, the set Home Assistant uses (mdi:...). The font file (about 1.3 MB) is stored on the device; "Install" downloads it in this browser and sends it to the device. Without it the deck shows a few built-in symbols.</p>
-<div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkIcNet">Install MDI 7.4.47</button><button type="button" class="btn" id="dkIcFile">Upload .ttf file</button><input type="file" id="dkIcInput" accept=".ttf" hidden></div>
+<p class="field-hint">Material Design Icons, the set Home Assistant uses (mdi:...). The font file (about 1.3 MB) is stored on the device; Installation or updates download the target font in your browser and send it to the device. Removing it leaves saved tile selections intact but icons from that pack will no longer render.</p>
+<div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkIcNet">Install MDI 7.4.47</button><button type="button" class="btn" id="dkIcRemove" disabled>Remove MDI</button><button type="button" class="btn" id="dkIcFile">Upload .ttf file</button><input type="file" id="dkIcInput" accept=".ttf" hidden></div>
 <div class="dk-status"><span class="dk-dot" id="dkIcDot"></span><span id="dkIcState">checking...</span></div>
 <div class="card-head" style="margin-top:18px;margin-bottom:10px"><h3 class="card-title">Brand icons</h3><span class="tag" id="dkBrTag">-</span></div>
-<p class="field-hint">Custom Brand Icons (phu:) by elax46, installed from <a href="https://github.com/elax46/custom-brand-icons" target="_blank" rel="noopener">their GitHub</a>, not bundled. Needs a mounted microSD card. Enable it in <a href="#" data-page="maintenance">Maintenance &gt; microSD card</a>. Install latest now downloads all icon chunks automatically. Upload .js also accepts a matching release index, one cbi-N.js chunk, or an older single-file Icon Finder subset.</p>
-<div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkBrNet" disabled>Install latest from GitHub</button><button type="button" class="btn" id="dkBrFile" disabled>Upload .js file</button><button type="button" class="btn" id="dkBrBrowse" disabled>Browse &amp; search</button><button type="button" class="btn" id="dkBrExport" disabled>Download names</button><button type="button" class="btn" id="dkBrRemove" disabled>Remove</button><input type="file" id="dkBrInput" accept=".js" hidden></div>
+<p class="field-hint">Custom Brand Icons (phu:) by elax46, installed from <a href="https://github.com/elax46/custom-brand-icons" target="_blank" rel="noopener">their GitHub</a>, not bundled. Needs a mounted microSD card. Enable it in <a href="#" data-page="maintenance">Maintenance &gt; microSD card</a>. Install latest now downloads all icon chunks automatically. Upload .js files accepts a release index with all its cbi-N.js chunks, individual chunks, or older single-file Icon Finder subsets.</p>
+<div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkBrNet" disabled>Install latest from GitHub</button><button type="button" class="btn" id="dkBrFile" disabled>Upload .js files</button><button type="button" class="btn" id="dkBrBrowse" disabled>Browse &amp; search</button><button type="button" class="btn" id="dkBrExport" disabled>Download names</button><button type="button" class="btn" id="dkBrRemove" disabled>Remove</button><input type="file" id="dkBrInput" accept=".js" multiple hidden></div>
 <div class="dk-status"><span class="dk-dot" id="dkBrDot"></span><span id="dkBrState">checking...</span></div></div>
 <div class="card"><div class="card-head"><h2 class="card-title">Pages and tiles</h2></div>
 <label class="check-row standalone" style="margin-bottom:14px"><input type="checkbox" id="dkHeader"><span class="check-box"></span><span class="check-text"><strong>Show the top bar</strong><span class="ct-hint">Page name, WiFi and clock above the tiles. Also switchable in the quick panel on the device.</span></span></label>
@@ -546,7 +561,9 @@
       '" title="Move up">&#8593;</button><button type="button" class="btn" data-x="' +
       i +
       '" title="Remove">&#215;</button></div>' +
-      (i === more ? '<div class="dk-more"><div class="field wide">' + lbl("Clock background", "Standalone shows only the time and date; Boxed uses the current theme background and border.") + '<select data-clock-box="' + i + '">' + opt("0", "Standalone (no box or border)", t.box === false) + opt("1", "Boxed (background and border)", t.box !== false) + '</select></div>' + colorField(t, i) + whenField(t, i) + "</div>" : "") +
+      (i === more ? '<div class="dk-more"><div class="field wide">' + lbl("Clock background", "Standalone shows only the time and date; Boxed uses the current theme background and border.") + '<select data-clock-box="' + i + '">' + opt("0", "Standalone (no box or border)", t.box === false) + opt("1", "Boxed (background and border)", t.box !== false) + '</select></div>' +
+      '<div class="field wide">' + lbl("Clock date", "Choose whether the date appears; Always may reduce the time size.") +
+      '<select data-clock-date="' + i + '">' + opt("", "Date if it fits", t.date !== "always" && t.date !== "never") + opt("always", "Date always", t.date === "always") + opt("never", "Date never", t.date === "never") + '</select></div>' + colorField(t, i) + whenField(t, i) + "</div>" : "") +
       "</div>"
     );
   }
@@ -816,8 +833,16 @@
         .map((o) => opt(o[0], o[1], cf === o[0]))
         .join("") +
       "</select></div>";
+    const hiddenName = t.hideName === true ||
+      (Object.hasOwn(t, "label") && t.label === "");
+    const nameOption = ['action', 'toggle', 'slider'].includes(t.type)
+      ? '<label class="check-row standalone wide dk-hide-name"><input type="checkbox" data-hide-name="' +
+        i + '"' + (hiddenName ? ' checked' : '') +
+        '><span class="check-box"></span><span class="check-text"><strong>Hide name</strong><span class="ct-hint">Show just the image or icon, centred and enlarged to use the tile.</span></span></label>'
+      : '';
     return (
       '<div class="dk-more">' +
+      nameOption +
       (sensorPart ? grp("Sensor", sensorPart, true) : "") +
       grp(t.type === "sensor" ? "Tap" : "Action", h, wideAct) +
       whenField(t, i) +
@@ -1642,6 +1667,9 @@
       (stackedAt(ps, cur) ? " checked" : "") +
       (cur === 0 ? " disabled" : "") +
       '><span class="check-box"></span><span class="check-text"><strong>Below the previous page</strong><span class="ct-hint">Stacked pages form one column: swipe up and down between them, left and right to the next column. Move left/right moves a column head with its column, or swaps a stacked page within its column.</span></span></label>';
+    // Large screens keep the page preview alongside the editable tile list.
+    // At smaller widths the same sections stack in their original order.
+    h += '<div class="dk-split"><div class="dk-left">';
     let g = "";
     for (let y = 0; y < r; y++)
       for (let x = 0; x < c; x++)
@@ -1680,7 +1708,7 @@
         ps.map((q, i) => (i === cur ? "" : opt(String(i), q.name || q.id, false))).join("") +
         '</select><button type="button" class="btn" id="dkMv">Move</button></div>';
     h +=
-      '<div class="dk-tiles">' +
+      '</div><div class="dk-right"><div class="dk-tiles">' +
       p.tiles
         .map((t, i) => {
           if (t.type === "bambu") return bambuRow(t, i);
@@ -1707,7 +1735,7 @@
             '</button><div class="dk-tmain"><input type="text" data-l="' +
             i +
             '" value="' +
-            esc(t.label === "" ? " " : t.label || "") +
+            esc(t.label || "") +
             '" placeholder="' +
             esc(nm) +
             '"><div class="dk-tsub">' +
@@ -1757,6 +1785,7 @@
             "</div>"
           );
         })
+        .map((html, i) => html.replace('<div class="dk-tile', '<div data-tile-row="' + i + '" class="dk-tile'))
         .join("") +
       "</div>";
     h +=
@@ -1767,8 +1796,19 @@
       ' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddClimate">+ Add climate controls</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddHaMedia">+ Add media controls</button><button type="button" class="btn" id="dkAddClock">+ Add clock</button><button type="button" class="btn" id="dkAddNav">+ Add navigation</button><button type="button" class="btn" id="dkAddTemperature">+ Add temperature</button><button type="button" class="btn" id="dkAddWeather">+ Add weather</button><button type="button" class="btn" id="dkAddHttpSensor">+ Add HTTP sensor</button>' +
       (bambuAvailable ? '<button type="button" class="btn" id="dkAddBambu">+ Add Bambu widget</button>' : '') +
       "</div>" +
-      '<p class="field-hint">Chart and Bar need a wide tile (2x1 on most grids, a 2x0.5 one fits them in a row between the name and the number, a narrower one shows the number), so picking one makes a 1x1 tile 2x1.</p>';
+      '<p class="field-hint">Chart and Bar need a wide tile (2x1 on most grids, a 2x0.5 one fits them in a row between the name and the number, a narrower one shows the number), so picking one makes a 1x1 tile 2x1.</p></div></div>';
     el.innerHTML = h;
+    // Upstream TouchDeck: clicking unused space in a tile's editor row
+    // selects that tile in the preview, without stealing input/control clicks.
+    el.querySelectorAll("[data-tile-row]").forEach((row) => {
+      row.addEventListener("click", (event) => {
+        if (event.target.closest("button, input, select, textarea, a, label, [contenteditable]")) return;
+        const i = Number(row.dataset.tileRow);
+        if (!Number.isInteger(i) || i < 0 || i >= p.tiles.length || sel === i) return;
+        sel = i;
+        renderPage();
+      });
+    });
     $("dkPName").oninput = (e) => {
       p.name = e.target.value;
       setDirty(true);
@@ -1864,13 +1904,25 @@
       setDirty(true);
       render();
     };
+    el.querySelectorAll("[data-hide-name]").forEach((x) => {
+      x.onchange = () => {
+        const t = p.tiles[+x.dataset.hideName];
+        t.hideName = x.checked;
+        // A legacy empty label also hides the name. Remove it when the
+        // checkbox is unchecked to restore the normal entity fallback.
+        if (!x.checked && t.label === "") delete t.label;
+        setDirty(true);
+        renderPage();
+      };
+    });
     el.querySelectorAll("[data-l]").forEach(
       (x) =>
         (x.oninput = (e) => {
           const t = p.tiles[+x.dataset.l];
           const v = e.target.value.trim();
-          /* Blank but not empty (a space): no name on the tile. */
-          if (v || e.target.value) t.label = v;
+          // Hide name is an independent, persisted preference. An empty
+          // name input simply means "use the entity's default label".
+          if (v) t.label = v;
           else delete t.label;
           setDirty(true);
         }),
@@ -1967,6 +2019,15 @@
     el.querySelectorAll("[data-clock-box]").forEach((x) => {
       x.onchange = () => {
         p.tiles[+x.dataset.clockBox].box = x.value === "1";
+        setDirty(true);
+        renderPage();
+      };
+    });
+    el.querySelectorAll("[data-clock-date]").forEach((x) => {
+      x.onchange = () => {
+        const tile = p.tiles[+x.dataset.clockDate];
+        if (x.value === "always" || x.value === "never") tile.date = x.value;
+        else delete tile.date;
         setDirty(true);
         renderPage();
       };
@@ -2576,6 +2637,17 @@
     else delete deck.led;
   }
   window.dkLedSync = ledSync;
+  // A visibility condition initially follows the tile's entity. If the user
+  // deliberately selected a different entity to control visibility, keep it.
+  function updateTileEntity(tile, id) {
+    const previous = tile.entity || "";
+    if (tile.when && typeof tile.when === "object" &&
+        tile.when.entity === previous) {
+      tile.when.entity = id;
+    }
+    tile.entity = id;
+  }
+
   function pick(id) {
     const p = pages()[cur];
     const type = autoType(domainOf(id));
@@ -2587,7 +2659,7 @@
     } else if (pickFor === -4) {
       if (domainOf(id) !== "media_player" || mediaEditIndex < 0 ||
           !p.tiles[mediaEditIndex] || p.tiles[mediaEditIndex].type !== "ha-media") return;
-      p.tiles[mediaEditIndex].entity = id;
+      updateTileEntity(p.tiles[mediaEditIndex], id);
       mediaEditIndex = -1;
     } else if (pickFor === -2) {
       if (domainOf(id) !== "climate") return;
@@ -2610,7 +2682,7 @@
       p.tiles.push(t);
     } else {
       const t = p.tiles[pickFor];
-      t.entity = id;
+      updateTileEntity(t, id);
       // Keep an existing temperature headline read-only when switching its
       // source between a sensor and a thermostat: do not turn it into a
       // thermostat control tile simply because the entity is climate.*.
@@ -2708,12 +2780,22 @@
       $("dkIcState").textContent = "font on the device, but the portal could not read it: " + e.message;
     }
   }
+  let mdiInstalled = false, mdiBusy = false;
+  function icButtons() {
+    $("dkIcNet").disabled = $("dkIcFile").disabled = mdiBusy;
+    $("dkIcRemove").disabled = mdiBusy || !mdiInstalled;
+  }
   function icStatus(s) {
+    mdiInstalled = !!s.loaded;
     $("dkIcDot").className = "dk-dot " + (s.loaded ? "ok" : "");
     $("dkIcState").textContent = s.loaded
       ? s.count + " icons, " + Math.round(s.size / 1024) + " KB"
       : "not installed";
     $("dkIcTag").textContent = s.loaded ? "installed" : "-";
+    // The device has no persisted MDI version: describe the target version,
+    // not an unverified claim about the currently installed font.
+    $("dkIcNet").textContent = s.loaded ? "Update / reinstall MDI 7.4.47" : "Install MDI 7.4.47";
+    icButtons();
   }
   async function icRefresh() {
     try {
@@ -2727,7 +2809,8 @@
   async function icInstall(blob) {
     $("dkIcDot").className = "dk-dot busy";
     $("dkIcState").textContent = "Sending to the device and installing (about 20 s)...";
-    $("dkIcNet").disabled = $("dkIcFile").disabled = true;
+    mdiBusy = true;
+    icButtons();
     try {
       const fd = new FormData();
       fd.append("font", blob, "mdi.ttf");
@@ -2737,9 +2820,11 @@
       if (s.loaded) await loadMdi(s.size);
     } catch (e) {
       $("dkIcDot").className = "dk-dot err";
-      $("dkIcState").textContent = "Not installed: " + e.message;
+      $("dkIcState").textContent = (mdiInstalled ? "Update failed; previous icons may still be present: " :
+        "Install failed: ") + e.message;
     } finally {
-      $("dkIcNet").disabled = $("dkIcFile").disabled = false;
+      mdiBusy = false;
+      icButtons();
     }
   }
   $("dkIcNet").onclick = async () => {
@@ -2752,6 +2837,43 @@
       $("dkIcDot").className = "dk-dot err";
       $("dkIcState").textContent =
         "Download failed (" + e.message + '). Get the file yourself and use "Upload .ttf file".';
+    }
+  };
+  function iconReferences(prefix) {
+    // This is an advisory count only: hidden pages and other references may
+    // also depend on a pack. Never delete or rewrite deck.json during remove.
+    if (!deck) return 0;
+    let count = 0;
+    for (const page of pages())
+      for (const tile of (page.tiles || []))
+        for (const key of ["icon", "onIcon", "offIcon"])
+          if (typeof tile[key] === "string" &&
+              (prefix === "mdi:" ?
+                (tile[key].startsWith("mdi:") || (!tile[key].includes(":") && !!tile[key])) :
+                tile[key].startsWith(prefix))) count++;
+    return count;
+  }
+  function confirmIconRemoval(kind, prefix) {
+    const refs = iconReferences(prefix);
+    return confirm("Remove " + kind + " icons from this device?\n\n" +
+      (refs ? "At least " + refs + " saved tile icon selection(s) may depend on this pack.\n" :
+        "Existing tile selections may depend on this pack.\n") +
+      "Those icons will disappear or fall back to built-in symbols until you reinstall the pack. " +
+      "Your saved pages and tile configuration will NOT be deleted.\n\nContinue?");
+  }
+  $("dkIcRemove").onclick = async () => {
+    if (mdiBusy || !mdiInstalled || !confirmIconRemoval("Material Design", "mdi:")) return;
+    mdiBusy = true; icButtons();
+    $("dkIcState").textContent = "Removing MDI icons...";
+    try {
+      const status = await api("/api/deck/icons/remove", { method: "POST" });
+      mdi = null; mdiNames = [];
+      icStatus(status);
+      if (deck) renderPage();
+    } catch (e) {
+      $("dkIcState").textContent = "Could not remove MDI icons: " + e.message;
+    } finally {
+      mdiBusy = false; icButtons();
     }
   };
   $("dkIcFile").onclick = () => $("dkIcInput").click();
@@ -2776,7 +2898,7 @@
     if (src.length > 12 * 1024 * 1024) throw new Error("The .js file is too big");
     const start = /\b(?:var|let|const)\s+icons\s*=\s*\{|\bexport\s+default\s*\{/.exec(src);
     if (!start) throw new Error("No icons object in this file");
-    const quoted = '"(?:[^"\\\\\\r\\n]|\\\\.)*"';
+    const quoted = '"(?:[^"\\\\\\r\n]|\\\\.)*"';
     const number = '-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?';
     const entry = new RegExp('(' + quoted + ')\\s*:\\s*(\\[\\s*' +
       (number + '\\s*,\\s*').repeat(4) + quoted + '\\s*\\])', 'y');
@@ -3032,6 +3154,7 @@
 
   function brButtons() {
     $("dkBrNet").disabled = $("dkBrFile").disabled = brBusy || !brState || !brState.sd;
+    $("dkBrNet").textContent = brState && brState.loaded ? "Update from GitHub" : "Install latest from GitHub";
     $("dkBrRemove").disabled = brBusy || !brState || !brState.sd || !brState.loaded;
     $("dkBrBrowse").disabled = $("dkBrExport").disabled = brBusy || !cbi || !cbiNames.length;
   }
@@ -3083,31 +3206,83 @@
       brProgress("Brand icons unavailable: " + e.message);
     } finally { brBusy = false; brButtons(); }
   }
-  async function brInstall(file) {
-    if (brBusy || !brState || !brState.sd) return;
+  // Offline bundles are checked against the loader before converting any icons.
+  // No network access is needed when the complete loader and chunks are selected.
+  function parseOfflineBrandFiles(entries) {
+    const indexes = entries.filter(e => e.pack);
+    if (indexes.length > 1) throw new Error("Select only one brand icon loader");
+    const loader = indexes.length ? indexes[0].pack : null;
+    const chunks = entries.filter(e => !e.pack);
+    if (!chunks.length) return null; // a loader on its own uses the existing pinned download path
+    const icons = new Map();
+    if (loader) {
+      const expected = loader.chunks.map(name => name.split("?")[0]);
+      const byName = new Map();
+      for (const item of chunks) {
+        if (!expected.includes(item.name) || byName.has(item.name))
+          throw new Error("Unexpected or duplicate chunk file: " + item.name);
+        byName.set(item.name, item);
+      }
+      const missing = expected.filter(name => !byName.has(name));
+      if (missing.length) throw new Error("Missing brand icon chunks: " + missing.join(", "));
+      for (let i = 0; i < expected.length; i++) {
+        const parsed = parseBrandSource(byName.get(expected[i]).src);
+        for (const [name, path] of parsed) {
+          if (loader.manifest[name] !== i || icons.has(name))
+            throw new Error("Chunk " + expected[i] + " does not match the loader");
+          icons.set(name, path);
+        }
+      }
+      if (icons.size !== loader.total)
+        throw new Error("Incomplete brand icon pack: got " + icons.size + " of " + loader.total);
+    } else {
+      // Old-style single-file exports and selected chunks can form smaller subsets.
+      for (const item of chunks) {
+        for (const [name, path] of parseBrandSource(item.src)) {
+          if (icons.has(name)) throw new Error("Duplicate brand icon: " + name);
+          icons.set(name, path);
+        }
+        if (icons.size > 20000) throw new Error("Too many icons");
+      }
+    }
+    return icons;
+  }
+
+  async function brInstall(files) {
+    if (brBusy || !brState || !brState.sd ||
+        (brState.loaded && !confirmIconRemoval("brand", "phu:"))) return;
     brBusy = true;
     brButtons();
     $("dkBrDot").className = "dk-dot busy";
     try {
       let icons, version = "file";
-      if (file) {
-        if (file.size > 12 * 1024 * 1024) throw new Error("The .js file is too big");
-        brProgress("Reading the .js file...");
-        const src = await file.text(), pack = parseBrandManifest(src);
-        if (pack) {
-          // An uploaded index has no accompanying chunk files. Find a pinned
-          // upstream release with the identical index before fetching them.
+      if (files && files.length) {
+        if (files.length > 129) throw new Error("Too many brand icon files");
+        brProgress("Reading brand icon .js files...");
+        const entries = [];
+        const fileNames = new Set();
+        for (const file of files) {
+          if (file.size > 12 * 1024 * 1024) throw new Error("File is too big: " + file.name);
+          if (!/^(?:custom-brand-icons|cbi-[0-9]+|[A-Za-z0-9_.-]+)[.]js$/.test(file.name))
+            throw new Error("Invalid .js filename: " + file.name);
+          if (fileNames.has(file.name)) throw new Error("Duplicate filename: " + file.name);
+          fileNames.add(file.name);
+          const src = await file.text();
+          entries.push({ name: file.name, src, pack: parseBrandManifest(src) });
+        }
+        icons = parseOfflineBrandFiles(entries);
+        if (!icons) {
+          const pack = entries[0].pack;
+          if (!pack || entries.length !== 1) throw new Error("No icon data in selected files");
           brProgress("Finding the matching release for the uploaded index...");
           const latest = await brandLatest();
           const upstream = parseBrandManifest(await fetchBrandDist(latest.tag, "custom-brand-icons.js"));
           if (!upstream || JSON.stringify(upstream.chunks) !== JSON.stringify(pack.chunks) ||
               JSON.stringify(upstream.manifest) !== JSON.stringify(pack.manifest))
-            throw new Error("The uploaded index doesn't match the latest release. Use Install latest, " +
-              "or upload a single cbi-0.js chunk for a smaller offline icon set.");
+            throw new Error("The uploaded index does not match the latest release. " +
+              "Select the index with all of its cbi-N.js files to install offline.");
           version = latest.version;
           icons = await downloadBrandChunks(pack, latest.tag);
-        } else {
-          icons = parseBrandSource(src);  // old single-file packs, or individual cbi-N.js chunks
         }
       } else {
         brProgress("Finding the latest GitHub release...");
@@ -3123,24 +3298,24 @@
       const fd = new FormData();
       fd.append("font", new Blob([data], { type: "font/otf" }), "cbi.otf");
       fd.append("names", new Blob([index], { type: "text/plain" }), "cbi.names");
-      const s = await api("/api/deck/brand", { method: "POST", body: fd });
+      const installed = await api("/api/deck/brand", { method: "POST", body: fd });
       clearBrand();
-      brStatus(s);
+      brStatus(installed);
       try {
-        await loadBrand(s.size);
+        await loadBrand(installed.size);
         if (skipped.length) brProgress($("dkBrState").textContent + " (skipped, too complex: " + skipped.join(", ") + ")");
       } catch (e) { brProgress("Installed, but the portal could not read the font: " + e.message); }
     } catch (e) {
       $("dkBrDot").className = "dk-dot err";
-      brProgress("Not installed: " + e.message + (file ? "" : '. Download custom-brand-icons.js and use "Upload .js file".'));
+      brProgress("Not installed: " + e.message);
     } finally { brBusy = false; brButtons(); }
   }
   $("dkBrNet").onclick = () => brInstall(null);
   $("dkBrFile").onclick = () => $("dkBrInput").click();
   $("dkBrInput").onchange = (e) => {
-    const file = e.target.files[0];
+    const files = [...e.target.files];
     e.target.value = "";
-    if (file) brInstall(file);
+    if (files.length) brInstall(files);
   };
   $("dkBrRemove").onclick = async () => {
     if (brBusy || !brState || !brState.sd) return;

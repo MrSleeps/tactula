@@ -146,6 +146,8 @@ struct TileDef {
   bool noName = false;  // "label": "" (or blank): show no name instead of HA's
   bool iconPlain = false;   // "iconStyle": "plain": no circle
   bool clockBox = true;    // Clock/headline/weather: "box": false removes fill and border.
+  bool clockDate = false;       // Clock: "date": "always" forces date to fit.
+  bool clockDateNever = false;  // Clock: "date": "never" hides the date.
   bool showEntityId = true; // Weather popup: show the Home Assistant entity ID under its title.
   String onIcon;            // toggle: the icon while on, "" = icon
   String statusEntity;      // optional HA status entity for visual state

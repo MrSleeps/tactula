@@ -104,6 +104,7 @@
     }
     if (name === "maintenance") { loadBedroomIcons(); loadFlashStorage(); }
     qa(".page").forEach((p) => p.classList.toggle("active", p.dataset.page === name));
+    if (name === "overview") refreshOverviewBambuConnection();
     qa(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.nav === name));
     const button = document.querySelector('.nav-item[data-nav="' + name + '"]');
     $("crumb").textContent = button ? button.textContent.replace(/\s+/g, " ").trim() : "tactula";
@@ -518,6 +519,7 @@
     $("mqttPass").placeholder = mqtt.has_pass ? "unchanged" : "";
     setCheck("mqttClearPass", false);
     setVal("mqttPrefix", mqtt.prefix || "homeassistant");
+    setVal("mqttDeviceName", mqtt.deviceName || "tactula");
     setVal("timeFormat", c.clock.use24h ? "24" : "12");
     setVal("timezone", c.clock.timezone || "");
     const tz = qa("#timezonePreset option").find((o) => o.value === (c.clock.timezone || ""));
@@ -600,6 +602,50 @@
   $("saveBtn").addEventListener("click", saveActive);
   $("revertBtn").addEventListener("click", loadConfig);
 
+  function connectionState(id, value, state, detailId, detail) {
+    const node = $(id);
+    node.textContent = value;
+    node.dataset.state = state;
+    if (detailId) $(detailId).textContent = detail || "";
+  }
+
+  // Poll the existing printer API only on Overview, every 15 seconds rather
+  // than with the 2-second general status poll: Bambu status includes AMS
+  // details and is substantially heavier than the normal /api/status reply.
+  let overviewBambuPolling = false;
+  let overviewBambuLan = false;
+  async function refreshOverviewBambuConnection() {
+    if (!printerAvailable || overviewBambuPolling ||
+        document.hidden ||
+        document.querySelector(".page.active")?.dataset.page !== "overview") return;
+    overviewBambuPolling = true;
+    try {
+      const p = await getJson("/api/office/bambu?t=" + Date.now());
+      overviewBambuLan = p.enabled === true && p.source === "lan";
+      $("factBambuRow").classList.toggle("hidden", !overviewBambuLan);
+      if (!overviewBambuLan) return; // HA-backed printer isn't a LAN connection
+      const name = p.display_name || "Bambu printer";
+      $("factBambuLabel").textContent = name + " (LAN)";
+      const state = p.status || "unknown";
+      const label = state === "online" ? "Connected" :
+        state === "connecting" ? "Connecting" :
+        state === "failed" ? "Connection failed" :
+        state === "off" ? "Offline" : "Unavailable";
+      connectionState("factBambu", label,
+        state === "online" ? "connected" :
+        state === "connecting" ? "pending" : "error",
+        "factBambuDetail", p.error || "");
+    } catch (error) {
+      // Do not claim the printer is disconnected merely because the web
+      // request failed; only show an error if it was a known LAN printer.
+      if (overviewBambuLan) connectionState("factBambu", "Status unavailable",
+        "error", "factBambuDetail", "Unable to retrieve printer status");
+    } finally {
+      overviewBambuPolling = false;
+    }
+  }
+  setInterval(refreshOverviewBambuConnection, 15000);
+
   async function pollStatus() {
     try {
       const s = await getJson("/api/status?t=" + Date.now());
@@ -607,9 +653,23 @@
       $("srTitle").textContent = s.ap_mode ? "setup access point" : "device online";
       $("srIp").textContent = s.ip || "--";
       $("srHost").textContent = (s.hostname || "tactula") + ".local";
-      $("factHa").textContent = s.ha_link || "--";
+      const ha = String(s.ha_link || "unknown");
+      connectionState("factHa", ha,
+        ha === "connected" ? "connected" :
+        ["connecting", "authenticating", "waiting for WiFi"].includes(ha) ? "pending" :
+        ha === "not set up" ? "neutral" : "error");
       const mqtt = s.mqtt || {};
-      $("mqttStatus").textContent = (mqtt.state || "off") + (mqtt.error ? " - " + mqtt.error : "");
+      const mqttState = mqtt.state || "off";
+      connectionState("factMqtt", mqttState === "off" ? "Disabled" :
+        mqttState === "connected" ? "Connected" :
+        mqttState === "connecting" ? "Connecting" :
+        mqttState === "error" ? "Connection failed" : mqttState,
+        mqttState === "connected" ? "connected" :
+        mqttState === "connecting" ? "pending" :
+        mqttState === "off" ? "neutral" : "error",
+        "factMqttDetail", mqttState === "off" ? "MQTT discovery is disabled" :
+          mqtt.error || mqtt.broker || "");
+      $("mqttStatus").textContent = mqttState + (mqtt.error ? " - " + mqtt.error : "");
       const mem = s.memory || {}, internal = mem.internal || {}, psram = mem.psram || {};
       // A missing status field is unknown, not 0 KB (e.g. older firmware).
       const ramBytes = (value) => typeof value === "number" && Number.isFinite(value)
@@ -654,6 +714,10 @@
     } catch (e) {
       $("srLed").classList.add("offline");
       $("srTitle").textContent = "device unavailable";
+      connectionState("factHa", "Unavailable", "error");
+      connectionState("factMqtt", "Unavailable", "error", "factMqttDetail", "");
+      if (overviewBambuLan) connectionState("factBambu", "Unavailable", "error",
+        "factBambuDetail", "");
     }
   }
 
@@ -690,11 +754,14 @@
       $("fwChecksEnabled").checked = !!data.checksEnabled;
       $("fwShowBadge").checked = !!data.showBadge;
       $("fwAutoDownload").checked = !!data.autoDownload;
-      $("fwDownloadNow").disabled = !data.available || data.downloading || data.staged;
+      const fwAction = $("fwDownloadNow");
+      fwAction.dataset.action = data.staged ? "confirm" : "download";
+      fwAction.textContent = data.staged ? "Install firmware" : "Download verified OTA";
+      fwAction.disabled = data.downloading || (!data.staged && !data.available);
       $("fwDownloadStatus").textContent = data.downloading
         ? "Downloading and verifying: " + fmtBytes(data.downloadedBytes) + " / " + fmtBytes(data.totalBytes)
         : data.staged
-          ? "Verified image staged. Confirm installation on the touchscreen itself."
+          ? "Verified image staged. Select Install firmware to open the confirmation on the touchscreen."
           : data.available ? "Download is ready; installation still requires a touchscreen confirmation." : "";
       $("fwUpdateStatus").textContent = data.checking
         ? "Checking the firmware release feed..."
@@ -726,12 +793,23 @@
   $("fwShowBadge").addEventListener("change", saveFirmwareUpdatePreferences);
   $("fwAutoDownload").addEventListener("change", saveFirmwareUpdatePreferences);
   $("fwDownloadNow").addEventListener("click", async () => {
+    const button = $("fwDownloadNow");
+    const install = button.dataset.action === "confirm";
     try {
-      await getJson("/api/firmware/updates/download", { method: "POST" });
-      $("fwDownloadStatus").textContent = "Downloading verified firmware...";
-      $("fwDownloadNow").disabled = true;
+      await getJson(install
+        ? "/api/firmware/updates/confirm-on-device"
+        : "/api/firmware/updates/download", { method: "POST" });
+      $("fwDownloadStatus").textContent = install
+        ? "Installation requested. Confirm Install and restart on the physical touchscreen."
+        : "Downloading verified firmware...";
+      button.disabled = true;
+      // The request itself cannot reboot or install from the web UI.
+      // A refresh restores the button if confirmation is postponed.
+      if (install) await refreshFirmwareUpdateStatus();
     } catch (error) {
-      showToast("Unable to begin firmware download: " + error.message, true);
+      showToast((install ? "Unable to request touchscreen confirmation: " :
+        "Unable to begin firmware download: ") + error.message, true);
+      await refreshFirmwareUpdateStatus();
     }
   });
   $("fwCheckNow").addEventListener("click", async () => {
@@ -1535,6 +1613,7 @@
       $("prCode").value = "";
       $("prMessage").textContent = "Printer settings saved";
       await refreshPrinter();
+      refreshOverviewBambuConnection();
     } catch (e) {
       $("prMessage").textContent = "Not saved: " + e.message;
     } finally {

@@ -196,10 +196,16 @@ static void approveFirmwareFromTouch(lv_event_t*) {
   closeFirmwareConfirm(nullptr);
   if (!approved) Serial.println("Update: staged image no longer ready");
 }
+static void downloadFirmwareFromTouch(lv_event_t*) {
+  // Queue a verified OTA download; the firmware is never installed without
+  // a second physical confirmation after staging and validation.
+  firmwareUpdate::requestDownload();
+  closeFirmwareConfirm(nullptr);
+}
 static void openFirmwareConfirmation(lv_event_t*) {
   if (s_firmwareConfirm) return;
   const auto st = firmwareUpdate::snapshot();
-  if (!st.staged) return;
+  if (!st.available && !st.staged && !st.downloading) return;
   lv_obj_t* layer = lv_layer_top();
   s_firmwareConfirm = lv_obj_create(layer);
   lv_obj_set_size(s_firmwareConfirm, min<int>(logicalW() - 20, 340), LV_SIZE_CONTENT);
@@ -212,10 +218,17 @@ static void openFirmwareConfirmation(lv_event_t*) {
   lv_obj_set_flex_flow(s_firmwareConfirm, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(s_firmwareConfirm, 12, 0);
   lv_obj_t* title = lv_label_create(s_firmwareConfirm);
-  lv_label_set_text(title, "Install verified update?");
+  lv_label_set_text(title, st.staged ? "Install verified update?" :
+                    st.downloading ? "Firmware downloading" :
+                    "Firmware update available");
   lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
   lv_obj_t* version = lv_label_create(s_firmwareConfirm);
-  lv_label_set_text_fmt(version, "%s ready. The screen will restart.", st.version);
+  if (st.staged)
+    lv_label_set_text_fmt(version, "%s ready. The screen will restart.", st.version);
+  else if (st.downloading)
+    lv_label_set_text_fmt(version, "Downloading %s. Return here when ready.", st.version);
+  else
+    lv_label_set_text_fmt(version, "%s available. Download and verify it first.", st.version);
   lv_label_set_long_mode(version, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(version, LV_PCT(100));
   lv_obj_set_style_text_color(version, lv_color_hex(C_DIM), 0);
@@ -225,12 +238,16 @@ static void openFirmwareConfirmation(lv_event_t*) {
   lv_label_set_text(cancelText, "Not now");
   lv_obj_center(cancelText);
   lv_obj_add_event_cb(cancel, closeFirmwareConfirm, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* install = lv_button_create(s_firmwareConfirm);
-  lv_obj_set_width(install, LV_PCT(100));
-  lv_obj_t* installText = lv_label_create(install);
-  lv_label_set_text(installText, "Install and restart");
-  lv_obj_center(installText);
-  lv_obj_add_event_cb(install, approveFirmwareFromTouch, LV_EVENT_CLICKED, nullptr);
+  if (!st.downloading) {
+    lv_obj_t* action = lv_button_create(s_firmwareConfirm);
+    lv_obj_set_width(action, LV_PCT(100));
+    lv_obj_t* actionText = lv_label_create(action);
+    lv_label_set_text(actionText, st.staged ? "Install and restart" : "Download update");
+    lv_obj_center(actionText);
+    lv_obj_add_event_cb(action,
+                        st.staged ? approveFirmwareFromTouch : downloadFirmwareFromTouch,
+                        LV_EVENT_CLICKED, nullptr);
+  }
 }
 
 // Shows or hides a tiles page's top bar; the grid takes the freed height.
@@ -254,7 +271,7 @@ void layoutHeader(Page& p) {
   else lv_obj_add_flag(p.clock, LV_OBJ_FLAG_HIDDEN);
   // Reclaim the clock's space for the Wi-Fi indicator on clock-tile pages.
   lv_obj_align(p.wifi, LV_ALIGN_TOP_RIGHT, p.hasClockTile ? -12 : -62, 8);
-  if (p.updateBadge) lv_obj_align(p.updateBadge, LV_ALIGN_TOP_RIGHT, p.hasClockTile ? -43 : -93, 8);
+  if (p.updateBadge) lv_obj_align(p.updateBadge, LV_ALIGN_TOP_RIGHT, p.hasClockTile ? -31 : -81, 0);
   const int top = s_header ? HEADER_H : 0;
   lv_obj_set_pos(p.grid, 0, top);
   lv_obj_set_size(p.grid, w, h - top);
@@ -331,12 +348,20 @@ void addTilesPage(const PageDef& def) {
   lv_label_set_text(p.wifi, LV_SYMBOL_WIFI);
   lv_obj_set_style_text_color(p.wifi, lv_color_hex(C_DIM), 0);
   lv_obj_align(p.wifi, LV_ALIGN_TOP_RIGHT, -62, 8);
-  p.updateBadge = lv_label_create(p.root);
-  lv_label_set_text(p.updateBadge, LV_SYMBOL_DOWNLOAD);
-  lv_obj_set_style_text_color(p.updateBadge, lv_color_hex(C_OK), 0);
-  lv_obj_align(p.updateBadge, LV_ALIGN_TOP_RIGHT, -93, 8);
+  // A small LVGL label is difficult to hit on the 3.5-inch panel.
+  // Use a real 36x36 touch target with a centred download glyph.
+  p.updateBadge = lv_button_create(p.root);
+  lv_obj_set_size(p.updateBadge, 36, 36);
+  lv_obj_set_style_bg_opa(p.updateBadge, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_shadow_width(p.updateBadge, 0, 0);
+  lv_obj_set_style_border_width(p.updateBadge, 0, 0);
+  lv_obj_set_style_pad_all(p.updateBadge, 0, 0);
+  lv_obj_t* updateGlyph = lv_label_create(p.updateBadge);
+  lv_label_set_text(updateGlyph, LV_SYMBOL_DOWNLOAD);
+  lv_obj_set_style_text_color(updateGlyph, lv_color_hex(C_OK), 0);
+  lv_obj_center(updateGlyph);
+  lv_obj_align(p.updateBadge, LV_ALIGN_TOP_RIGHT, -81, 0);
   lv_obj_add_flag(p.updateBadge, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(p.updateBadge, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(p.updateBadge, openFirmwareConfirmation, LV_EVENT_CLICKED, nullptr);
 
   // Two tracks per cell: tiles sit and span in half cells. Static descriptor
@@ -375,16 +400,85 @@ void addTilesPage(const PageDef& def) {
   lv_obj_add_flag(grid, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(grid, onGridHold, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)page);
 
+  // Build even conditionally hidden tiles. They keep stable LVGL callbacks
+  // and can be rearranged without destroying every page on a when flip.
   for (size_t i = 0; i < cells.size(); i++) {
     const Cell& c = cells[i];
-    if (c.placed) makeTile(grid, def.tiles[i], page, c.x, c.y, c.w, c.h);
-    else if (!c.off) Serial.printf("Deck: page '%s' has no room for tile '%s'\n",
+    if (!c.placed && !c.off) Serial.printf("Deck: page '%s' has no room for tile '%s'\n",
                        def.id.c_str(), def.tiles[i].id.c_str());
+    makeTile(grid, def.tiles[i], page, c.placed ? c.x : 0, c.placed ? c.y : 0, c.w, c.h);
+    if (!c.placed) {
+      s_tiles.back().off = true;
+      lv_obj_add_flag(s_tiles.back().obj, LV_OBJ_FLAG_HIDDEN);
+    }
   }
 
   p.snap = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
   p.stale = true;
   s_count++;
+}
+
+// Update just the affected page's tile grid; retain every tile's LVGL state.
+void placePage(int page) {
+  Page& p = s_pages[page];
+  const PageDef& def = *p.def;
+  std::vector<Cell> cells;
+  placeTiles(def, logicalW() > logicalH() ? ORIENT_LANDSCAPE : ORIENT_PORTRAIT, cells);
+  struct Was { TileRt* r; bool off; lv_area_t area; };
+  std::vector<Was> was;
+  bool clockVisible = false;
+  for (size_t i = 0; i < cells.size(); ++i)
+    if (cells[i].placed && def.tiles[i].type == TILE_CLOCK) clockVisible = true;
+  lv_obj_update_layout(p.root);
+  for (TileRt& r : s_tiles) {
+    if (r.page != page) continue;
+    const size_t index = r.def - def.tiles.data();
+    if (index >= cells.size()) continue;
+    const Cell& c = cells[index];
+    lv_obj_t* tile = r.obj;
+    was.push_back({&r, r.off, {}});
+    lv_obj_get_coords(tile, &was.back().area);
+    if (c.placed && (lv_obj_get_style_grid_cell_column_pos(tile, LV_PART_MAIN) != c.x ||
+                     lv_obj_get_style_grid_cell_row_pos(tile, LV_PART_MAIN) != c.y ||
+                     lv_obj_get_style_grid_cell_column_span(tile, LV_PART_MAIN) != c.w ||
+                     lv_obj_get_style_grid_cell_row_span(tile, LV_PART_MAIN) != c.h))
+      lv_obj_set_grid_cell(tile, LV_GRID_ALIGN_STRETCH, c.x, c.w, LV_GRID_ALIGN_STRETCH, c.y, c.h);
+    if (r.off == !c.placed) continue;
+    r.off = !c.placed;
+    if (c.placed) lv_obj_remove_flag(tile, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(tile, LV_OBJ_FLAG_HIDDEN);
+  }
+  const bool clockChanged = p.hasClockTile != clockVisible;
+  if (clockChanged) {
+    p.hasClockTile = clockVisible;
+    layoutHeader(p);
+  }
+  lv_obj_update_layout(p.root);
+  lv_area_t rc, changed = {LV_COORD_MAX, LV_COORD_MAX, LV_COORD_MIN, LV_COORD_MIN};
+  lv_obj_get_coords(p.root, &rc);
+  auto add = [&](const lv_area_t& a) {
+    changed.x1 = LV_MIN(changed.x1, a.x1 - rc.x1);
+    changed.y1 = LV_MIN(changed.y1, a.y1 - rc.y1);
+    changed.x2 = LV_MAX(changed.x2, a.x2 - rc.x1);
+    changed.y2 = LV_MAX(changed.y2, a.y2 - rc.y1);
+  };
+  for (const Was& prev : was) {
+    lv_area_t now;
+    lv_obj_get_coords(prev.r->obj, &now);
+    const bool same = now.x1 == prev.area.x1 && now.y1 == prev.area.y1 &&
+                      now.x2 == prev.area.x2 && now.y2 == prev.area.y2;
+    if (prev.off == prev.r->off && (prev.off || same)) continue;
+    if (!prev.off) add(prev.area);
+    if (!prev.r->off) add(now);
+  }
+  if (changed.x1 > changed.x2) {
+    if (clockChanged) p.stale = true;
+    return;
+  }
+  // Re-bake only where tiles moved. A missing glass buffer falls back to full bake.
+  if (s_theme == THEME_GLASS && wallBlur()) bakeGlass(p, &changed);
+  p.stale = true;
+  s_zonesDirty = true;
 }
 
 void buildPages() {
@@ -705,6 +799,10 @@ void updateHeaders() {
   if (now - s_lastClockCheck < 1000) return;
   s_lastClockCheck = now;
   const auto updateState = firmwareUpdate::snapshot();
+  // Requests from the local web UI only bring the existing LVGL physical
+  // confirmation to the foreground; they never install or reboot remotely.
+  if (firmwareUpdate::takeTouchConfirmationRequest())
+    openFirmwareConfirmation(nullptr);
   // Staging happens asynchronously in the updater task. Show the physical
   // install confirmation once as soon as the image is verified, even if the
   // optional header update badge (or the whole header) is disabled.
@@ -792,7 +890,7 @@ void autoNavTick() {
 }
 
 
-// A "when" tile or page whose condition flipped rebuilds the pages. A page
+// A page condition rebuilds all pages; tile conditions re-place one page. A page
 // that goes while shown is left first (back where an "auto" switch came from).
 void whenSync() {
   whenTrack();
@@ -816,13 +914,20 @@ void whenSync() {
     Serial.printf("Deck: page '%s' %s\n", pd.id.c_str(), pd.shown ? "hides" : "shows");
     flip = true;
   }
-  for (const PageDef& pd : s_cfg.pages)
-    for (const TileDef& t : pd.tiles)
-      if (!flip && t.when.kind != WHEN_ALWAYS && whenWanted(t) != t.shown) {
+  if (!flip) {
+    for (PageDef& pd : s_cfg.pages) {
+      bool moved = false;
+      for (TileDef& t : pd.tiles) {
+        if (t.when.kind == WHEN_ALWAYS || whenWanted(t) == t.shown) continue;
         Serial.printf("Deck: tile '%s' %s\n", t.id.c_str(), t.shown ? "hides" : "shows");
-        flip = true;
+        t.shown = !t.shown;
+        moved = true;
       }
-  if (!flip) return;
+      const int page = moved ? pageIndexOf(pd.id) : -1;
+      if (page >= 0) placePage(page);
+    }
+    return;
+  }
   rebuildPages();
   if (autoTo.length()) {
     s_autoFrom = cur;

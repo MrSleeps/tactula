@@ -1252,3 +1252,72 @@ input[type="range"]::-webkit-slider-thumb {
 .pr-ams-unit > strong { display:block; color:var(--ink); margin-bottom:8px; }
 .pr-ams-slot { display:flex; align-items:center; gap:9px; padding:5px 0; font-size:13px; }
 .pr-ams-dot { width:17px; height:17px; flex:0 0 17px; border:1px solid var(--line-2); border-radius:50%; }
+
+/* Firmware Maintenance: update version and progress must be distinct lines,
+   with enough breathing room for lengthy staged-installation messages. */
+.fw-update-feedback {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0 16px;
+}
+.fw-update-summary {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 700;
+}
+.fw-update-detail {
+  margin: 0;
+  min-height: 0;
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.fw-update-detail:empty { display: none; }
+.fw-update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  margin: 0 0 18px;
+}
+.fw-update-actions .btn { justify-content: center; text-decoration: none; }
+
+/* Overview: a responsive connection list, with distinct status and error text. */
+.connections-list {
+  display: grid;
+  gap: 10px;
+}
+.connection-item {
+  display: grid;
+  gap: 5px;
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  background: var(--card-2);
+  border-radius: var(--r-md);
+  min-width: 0;
+}
+.connection-item.hidden { display: none; }
+.connection-label {
+  font: 10px var(--mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.connection-value {
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+.connection-value[data-state="connected"] { color: var(--ok); }
+.connection-value[data-state="error"] { color: var(--err); }
+.connection-value[data-state="pending"] { color: var(--warn); }
+.connection-detail {
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.connection-detail:empty { display: none; }

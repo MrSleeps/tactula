@@ -3,7 +3,7 @@
 > **Upstream credit:** tactula is based on [TouchDeck](https://github.com/Keralots/TouchDeck), created by [Rafał Stolarek (Keralots)](https://github.com/Keralots). Original software, documentation and underlying display work belong to the upstream project; see [LICENSE](LICENSE) for the retained MIT copyright notice.
 
 
-Full reference for the deck's features. For initial installation, build the full image below (the upstream TouchDeck web flasher does not install tactula); for an overview, the [README](README.md).
+Full reference for **Tactula**, the custom ESP32-S3 touchscreen firmware. For an overview and the origin of the Tactula name, see the [README](README.md). For installation, use Tactula's own [GitHub Releases](https://github.com/MrSleeps/tactula/releases) and the instructions below; the upstream TouchDeck firmware and flasher are not Tactula installers.
 
 - [Pages and tiles](#pages-and-tiles)
 - [Web portal](#web-portal)
@@ -17,11 +17,19 @@ Full reference for the deck's features. For initial installation, build the full
 - [HTTP sensors](#http-sensors)
 - [Home Assistant media controls](#home-assistant-media-controls)
 - [Status LED](#status-led)
-- [Flashing without the web flasher](#flashing-without-the-web-flasher)
+- [Installing Tactula firmware](#installing-tactula-firmware)
 - [Building from source](#building-from-source)
+- [Firmware builds and release process](#firmware-builds-and-release-process)
 - [Automatic firmware updates](#automatic-firmware-updates)
 
 ## Pages and tiles
+
+### Hide the name beneath an image or icon
+
+In **Pages & tiles**, open the tile's **More options (⋯)** and tick **Hide name** for a switch, button or slider tile. This is independent of the text in its name field: you can leave that field empty without showing a fallback Home Assistant entity name, or keep a name saved for later and hide it temporarily. Untick the option to restore the normal label. The setting is saved as `"hideName": true` in `/deck.json` and survives restarts; existing layouts stay unchanged unless you enable it.
+
+On a tile using a custom **PNG image**, hiding the name removes the reserved caption area and centres and enlarges the image to fit the tile's inner rectangle while retaining its aspect ratio (upscaling small files at most 2×). When using an **MDI/brand icon** instead, the icon is centred and made larger too. The tile still performs its original tap/long-press action. Nav tiles already use an icon-only layout. Sensor and other specialised tiles retain their existing layout and name handling.
+
 
 On a **new installation** with no saved `/deck.json`, tactula starts with one **Home** page containing a large standalone clock. The firmware no longer ships the original personalised bedroom, TV or fish-tank sample layout. This also applies to a fresh `with_bambu` build; Bambu connection settings are under **Configuration → Bambu printer** in the portal, visible only in `with_bambu` builds. Existing valid `/deck.json` layouts are loaded without being replaced. An ordinary firmware update **will not reset** your existing layout.
 
@@ -39,7 +47,7 @@ If the partition is **not blank**, or a flash read fails, tactula will **never a
 - **Home Assistant tiles:** live state over the WebSocket API, optimistic toggles, scenes / scripts / buttons, a detail card on long press with a level slider (light brightness, cover position, fan speed, volume, numbers). Icons come from Material Design Icons, the set Home Assistant uses (the font is installed from the portal).
 - **Sensor history:** `style: "chart"` and `hours` (1..168, default 24) show Home Assistant history; the detail card includes min / max / now. Optional `warn` and `crit` thresholds colour the value and line amber or red; `crit` below `warn` makes lower values worse, such as battery levels. `"format": "duration"` shows a reading in s, min, h or d as `1h 49m` or `3d 2h` (uptime, a battery runtime).
 - **Large temperature:** add with **+ Add temperature** and select a `sensor.*` **or** `climate.*` entity. Sensor tiles show the sensor's numeric state; climate tiles show its **current_temperature** (actual room temperature), **not** the thermostat target or HVAC mode. It displays a single large reading using the Clock tile's digit font (no chart) and a small label. By default it is standalone with no tile background; choose **Boxed** under More options to add the themed fill. Existing sensor tiles can select **Style → Large temperature**. When a large temperature tile is in the same row as a Clock tile, its value aligns with the clock's time by reserving a matching lower line for the sensor label (or a visually hidden spacer when the label is disabled). Without an adjacent clock, its normal centred layout is unchanged.
-- **Weather:** add with **+ Add weather** and select any `weather.*` entity (for example Met Office or PirateWeather). Its current temperature, conditions and weather icon refresh from Home Assistant. With **Automatic** selected in the icon picker, the weather icon also follows `sun.sun` (above/below horizon): clear and partly-cloudy conditions switch between sun and moon versions at sunrise/sunset, even if the weather condition stays the same. A manually chosen MDI/brand icon remains fixed. If `sun.sun` is unavailable, TouchDeck uses the condition's regular icon. Tap to open a scrollable detail popup showing available feels-like temperature, humidity, wind/gusts, pressure, visibility and UV. Missing data is omitted. This shows **current observations only**; the separate Home Assistant `weather.get_forecasts` response is not yet included. Switch between weather providers via the tile's **Entity** selector. The tile can be Boxed or Standalone. On short 2×1 cards, the condition and icon share a compact top row so the temperature remains large and readable; taller cards show the title and condition separately. Readings are re-fitted whenever Home Assistant changes them.
+- **Weather:** add with **+ Add weather** and select any `weather.*` entity (for example Met Office or PirateWeather). Its current temperature, conditions and weather icon refresh from Home Assistant. With **Automatic** selected in the icon picker, the weather icon also follows `sun.sun` (above/below horizon): clear and partly-cloudy conditions switch between sun and moon versions at sunrise/sunset, even if the weather condition stays the same. A manually chosen MDI/brand icon remains fixed. If `sun.sun` is unavailable, Tactula uses the condition's regular icon. Tap to open a scrollable detail popup showing available feels-like temperature, humidity, wind/gusts, pressure, visibility and UV. Missing data is omitted. This shows **current observations only**; the separate Home Assistant `weather.get_forecasts` response is not yet included. Switch between weather providers via the tile's **Entity** selector. The tile can be Boxed or Standalone. On short 2×1 cards, the condition and icon share a compact top row so the temperature remains large and readable; taller cards show the title and condition separately. Readings are re-fitted whenever Home Assistant changes them.
 - **Climate tiles:** a thermostat shows its mode and setpoint ("Heat 21.5°"). Tap toggles it; hold opens the card with - / + to move the setpoint in the entity's own step (0.5° when it reports none, within its min / max), the room temperature and what it is doing ("Now 20.5° • Heating"), and its HVAC modes as buttons. Taps in a row are sent as one `set_temperature` once they stop; a heat/cool range moves low and high together.
 - **Slider tiles:** a light, cover, fan, media player or number as a tile that fills to its level; drag sideways on it to change the level (the page does not swipe there), tap to toggle, hold for the card. Pick "Slider" as the tile type in the portal.
 - **Tile colours:** per tile, the accent, icon (off and on), text, off background and on fill colours, and in Glass its own glass and on opacity, all optional on top of the theme ("more options" in Pages & tiles).
@@ -123,6 +131,16 @@ python tools/wall_tool.py upload <out> <deck-ip> --daily      # out/dl, out/dp i
 Or copy the folders straight onto the card under `/touchdeck/wall/` and restart the deck.
 
 ## MQTT (Home Assistant discovery)
+
+### Multiple touchscreens: device name in Home Assistant
+
+Under **Home Assistant → MQTT discovery**, enter a **Device name in Home Assistant** such as `Office Touchscreen` or `Bedroom Touchscreen` and click **Save MQTT settings**. Each touchscreen stores this name in its own MQTT NVS settings, includes it in configuration backups, and republishes Home Assistant MQTT discovery with the new friendly name. A blank name defaults to **tactula**. Names are limited to 48 characters.
+
+The name is purely for display. Tactula keeps its existing per-device, MAC-derived MQTT `touchdeck_<id>` identifier, unique entity IDs, command/state topics, and discovery topic names unchanged. Renaming the device should therefore update its Home Assistant device name without creating duplicate devices or breaking existing entity references and automations. The Wi-Fi hostname and `.local` address are separate settings under **Network** and are not renamed.
+
+If Home Assistant still shows an old device name, verify the MQTT connection is online and allow discovery to republish; if you manually customised the device name in Home Assistant, Home Assistant may retain that user-assigned name.
+
+
 
 Under **Home Assistant → Optional MQTT integration**, enable **Connect to an MQTT broker**, enter its host and port (plain TCP, default 1883), and optional username/password. Broker accepts `host`, `host:port` or `mqtt://host:port`. Leave the discovery prefix as `homeassistant` unless your MQTT integration uses another one. Save the form; its status line shows the connection. The deck appears under **Settings > Devices > MQTT** with the configured hostname. Home Assistant needs its MQTT integration and a broker such as the Mosquitto add-on.
 
@@ -252,33 +270,53 @@ Connect IN to a free GPIO, VCC to 5V and GND to GND. The 4-pin 1.25 mm extended 
 
 Turn it on under **Hardware > Vibration motor**, pick the GPIO, set the strength (20 to 100 %) and the pulse length (10 to 200 ms), and press **Test**. The motor and the status LED cannot share a pin.
 
-## Flashing without the web flasher
+## Installing Tactula firmware
 
-[Releases](https://github.com/Keralots/TouchDeck/releases) ship two firmware files: `TouchDeck-<version>-full.bin` (full image, for a first flash over USB) and `TouchDeck-<version>-ota.bin` (app only, for **Maintenance > Firmware update** in the portal of a device that already runs TouchDeck).
+**Download Tactula firmware from [MrSleeps/tactula Releases](https://github.com/MrSleeps/tactula/releases)** (or see the [firmware website](https://firmware.mrsleeps.uk/tactula/)). Do not use the original [TouchDeck releases](https://github.com/Keralots/TouchDeck/releases): those are for the upstream project, not this fork.
 
-Flash the full image at `0x0`, with esptool or the [ESP Web Flasher](https://espressif.github.io/esptool-js/) in desktop Chrome or Edge. Close the TouchDeck Companion first: it holds the device's serial port.
+Choose the file that matches your device and whether you want Bambu printer support:
 
-```sh
-esptool.py --chip esp32s3 --port COM3 --baud 460800 write_flash 0x0 TouchDeck-v1.2.1-full.bin
-```
+| Edition | Full installation via USB | Update an existing Tactula device |
+| --- | --- | --- |
+| Standard (no Bambu) | `tactula-v<version>-jc3248w535-without_bambu-full.bin` | `tactula-v<version>-jc3248w535-without_bambu-ota.bin` |
+| With Bambu | `tactula-v<version>-jc3248w535-with_bambu-full.bin` | `tactula-v<version>-jc3248w535-with_bambu-ota.bin` |
 
-If the board keeps connecting and disconnecting, hold **BOOT** while plugging in USB, or hold **BOOT**, press **RESET**, then release both.
+Replace `<version>` with the published release number, such as `1.2.0`. Both editions target the **Guition JC3248W535 ESP32-S3** board.
+
+- **First installation or erased flash:** flash the matching `*-full.bin` at address `0x0` over USB using esptool or the [ESP Web Flasher](https://espressif.github.io/esptool-js/) in a supported desktop browser. Example for the Standard edition of v1.2.0:
+
+  ```sh
+  esptool.py --chip esp32s3 --port COM3 --baud 460800 write_flash 0x0 tactula-v1.2.0-jc3248w535-without_bambu-full.bin
+  ```
+
+  Change `COM3` to your device's serial port (for example, `/dev/ttyACM0` on Linux). The *full* image can overwrite existing settings and flash data; back up your configuration before reinstalling.
+- **Existing compatible Tactula installation:** use **Maintenance → Firmware update** with the matching `*-ota.bin` (or the firmware's automatic update feature described below). **Never upload a full image into the OTA upload page.**
+- If the serial connection repeatedly disappears, try holding **BOOT** while plugging in USB, or hold **BOOT**, press **RESET**, and then release both.
+
+Releases also include `MANIFEST.json` and `SHA256SUMS.txt`, which record the packaged assets and integrity checksums. The release binaries are published separately from Git commits; downloading the repository source ZIP is not the same as downloading a flashable firmware image.
 
 ## Building from source
 
-Built with [PlatformIO](https://platformio.org/) for two firmware environments. Both identify as **tactula**; only one includes the optional Bambu printer code:
+Source code and official firmware releases are available from **[MrSleeps/tactula](https://github.com/MrSleeps/tactula)**, a fork of [Keralots/TouchDeck](https://github.com/Keralots/TouchDeck).
+
+For local builds, install [PlatformIO](https://platformio.org/) and select one of the two environments:
 
 ```sh
-pio run -e without_bambu                      # no printer, e.g. bedroom
-pio run -e with_bambu                    # with Bambu printer, e.g. office
-pio run -e with_bambu -t upload          # USB flash, printer-enabled
-pio run -e without_bambu -t upload            # USB flash, no printer
-python create_firmware.py --env with_bambu   # package full + OTA printer images
+pio run -e without_bambu
+pio run -e with_bambu
 ```
 
-App-only OTA firmware is at `.pio/build/<environment>/firmware.bin` and can be uploaded using the device's **Maintenance > Firmware update** (on an existing device with compatible partitions). A fresh device needs the full install image.
+The resulting app-only OTA image is `.pio/build/<environment>/firmware.bin`. To produce a complete installation image, use the firmware packaging scripts described in the repository rather than assuming `firmware.bin` is flashable at `0x0`. The versioned release packaging process also produces full and OTA images for each edition with checksums.
 
-The product/splash-screen name is always **tactula**. New devices default to a unique `tactula-XXXX.local` hostname and `tactula-XXXX` setup hotspot. Older saved hostnames are normalised to include `touchdeck` without resetting Wi-Fi credentials; users can set `tactula-office` or `tactula-bedroom` in **Network**. A first-boot migration copies old `bedroomdeck` settings to `touchdeck`. The internal `touchdeck` NVS namespace remains unchanged after migration as a compatibility detail; the original `bedroomdeck` namespace remains as a rollback copy; if migration cannot complete, that boot continues using the old settings and retries at startup. Home Assistant and MQTT credentials are stored in their existing separate namespaces.
+The product/splash-screen name is **Tactula**. New devices default to `tactula-XXXX.local` hostnames and `tactula-XXXX` setup hotspots. Legacy `touchdeck` and `bedroomdeck` settings, NVS storage namespaces, microSD paths and MQTT identifiers are retained where required for compatibility with existing installations; these are **not** directions to install upstream TouchDeck firmware. The Wi-Fi hostname can be changed under **Network**.
+
+## Firmware builds and release process
+
+Tactula uses two PlatformIO editions, **Standard** (`without_bambu`) and **With Bambu** (`with_bambu`). Published [Tactula Releases](https://github.com/MrSleeps/tactula/releases) provide a full-install image and an OTA image for each edition, along with `MANIFEST.json` and `SHA256SUMS.txt`.
+
+Release firmware is tested, then published as versioned GitHub Release assets. The [firmware download service](https://firmware.mrsleeps.uk/tactula/) verifies published binaries by their sizes and SHA-256 digests and exposes them through the HTTPS OTA manifest. Installation still requires confirmation on the physical touchscreen.
+
+Developers may build either firmware edition locally using PlatformIO, as described above.
 
 ## Automatic firmware updates
 
@@ -290,7 +328,7 @@ In the device's web portal, open **Maintenance → Automatic firmware update che
 - **Automatically download verified firmware:** disabled by default. When enabled, discovering a newer version downloads it promptly into the *inactive OTA flash partition*. It verifies the expected board/edition, image byte count, SHA-256 checksum and ESP application image before marking it ready.
 - **Show an update icon:** controls the normal top-bar update notification. A successfully staged **automatic** download is quiet and shows an icon (when the top bar is enabled), **not a popup**. Tap the icon to open the confirmation.
 - **Download OTA** (manual): downloads and verifies the selected update and **automatically displays** the installation confirmation on the touchscreen once staging finishes, whether or not the optional update icon is enabled. Choosing **Not now** closes it without repeated interruptions.
-- **Install and restart** is only available **on the physical touchscreen**. Neither checking nor downloading installs firmware, changes the boot partition, or reboots on its own. No web-based remote install endpoint is provided.
+- **Install and restart** must be confirmed **on the physical touchscreen**. When a verified image is staged, Maintenance replaces **Download verified OTA** with **Install firmware**. Clicking that button requests the existing touchscreen confirmation; it does not install remotely or reboot without a touch. The **Firmware downloads** button opens the public firmware website in a new browser tab. Neither checking nor downloading installs firmware, changes the boot partition, or reboots on its own. No web-based remote install endpoint is provided.
 
 ### Where updates come from
 
@@ -303,4 +341,24 @@ The download is **not a separate file on the SD card**. It occupies the ESP32's 
 Use **Maintenance → Firmware update** and upload the matching `firmware.bin` (or the release's `*-ota.bin`) for your edition. **Never upload `firmware.factory.bin` or `*-full.bin` into the OTA page**; those are for initial/full USB flashing. Manual OTA is also how to recover from an update-checker bug without publishing a broken release.
 
 If the device cannot see a published update, confirm that `current.json` and the corresponding `/tactula/releases/vX.Y.Z/*-ota.bin` return HTTP 200 on the firmware website, that the **new** version is higher than the firmware currently installed, and that the firmware edition matches. If download links fail despite being present on disk, check the nginx file permissions and rerun the website mirror. Certificate validation remains mandatory; do not use insecure HTTPS workarounds. The automatic-install option is intentionally unsupported.
+
+
+### Overview connection statuses
+
+The **Overview → All connections** card displays separate live status rows for:
+
+- **Home Assistant** — the direct Home Assistant connection (including connecting, authenticating, disconnected and token-rejected states).
+- **MQTT broker** — connection status from the MQTT worker, including Disabled, Connecting, Connected and errors, with broker information or the current error where available. MQTT is optional even if the direct Home Assistant connection is active.
+- **Bambu LAN** — shown only on a Bambu-capable firmware build when its configured printer is enabled in **LAN** source mode. Shows the configured printer name, live connection state and errors. The row is hidden in Home Assistant-backed printer mode and on Standard firmware.
+
+The Home Assistant and MQTT readings use the existing device-status endpoint. Bambu status is refreshed separately every 15 seconds **only while Overview is open**, to avoid repeatedly fetching the larger printer status payload during normal background polling. An unavailable API response is not treated as proof that the printer itself disconnected.
+
+### Managing installed icon packs
+
+Under **Pages & tiles → Icons**, the actions reflect the pack's current state:
+
+- **Material Design Icons (MDI)**: `Install MDI 7.4.47` becomes **Update / reinstall MDI 7.4.47** when a font is installed. This is the fixed target version shipped in the website code; the current font's original version is **not tracked**, so the label doesn't claim one is available. **Remove MDI** uninstalls the font from internal flash.
+- **Custom Brand Icons**: `Install latest from GitHub` becomes **Update from GitHub** when installed. **Remove** uninstalls the font and its name index from the microSD card. The status text shows the installed brand pack's reported version.
+
+Both removal actions require explicit confirmation and warn that tiles may lose icons. Removing a pack **does not remove tiles or change saved icon names in `deck.json`**; missing glyphs use available fallbacks and return when the same icon pack is reinstalled. Consider exporting your configuration before replacing/removing packs. MDI font uploads and updates still require internal flash space; brand pack updates require a mounted microSD card.
 

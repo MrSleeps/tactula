@@ -1,9 +1,7 @@
-# Flasher firmware
+# Tactula firmware downloads
 
-`latest/` holds:
+Official firmware is available from [Tactula GitHub Releases](https://github.com/MrSleeps/tactula/releases).
 
-- `VERSION`: one line with the release version, for example `v1.2.0`.
-- `TouchDeck-<VERSION>-full.bin`: the merged bootloader, partitions and app image flashed at `0x0`.
-- `SHA256SUMS.txt`: the firmware checksum.
+For the Guition JC3248W535, download `tactula-v<version>-jc3248w535-without_bambu-full.bin` or `tactula-v<version>-jc3248w535-with_bambu-full.bin` for first-time USB flashing at `0x0`. Use the corresponding `*-ota.bin` file to update an existing compatible Tactula installation.
 
-To publish a release, replace the `.bin`, `VERSION` and `SHA256SUMS.txt`. Running `create_firmware.py --flasher` does this. The page reads `VERSION` and builds the image path automatically, so it needs no code change.
+Every published release includes `SHA256SUMS.txt` and `MANIFEST.json` alongside the firmware. Follow [the installation guide](../../GUIDE.md#installing-tactula-firmware) for details. Legacy `TouchDeck-*.bin` filenames are not Tactula installation images.

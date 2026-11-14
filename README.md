@@ -4,21 +4,23 @@
 
 A customised fork of [TouchDeck](https://github.com/Keralots/TouchDeck), originally created by **Rafał Stolarek ([Keralots](https://github.com/Keralots))**, for the Guition JC3248W535 (3.5" 320x480 IPS, capacitive touch, ESP32-S3 with 16 MB flash and 8 MB PSRAM). Pages of tiles control and display Home Assistant entities, sensors, climate and media players. Everything is set up from a web portal on the device. No cloud or additional companion program is required: it talks to Home Assistant over its local WebSocket API.
 
-This has been modified to fit my needs so you may or may not like what I've done, I've removed the PC stats code and separated out the Bambu Printer (2 different firmwares available, one with Bambu Printer support and one without).
-
 > **Project origin and credit:** tactula is a fork and continuation of **[TouchDeck by Rafał Stolarek (Keralots)](https://github.com/Keralots/TouchDeck)**, not an independently written replacement. The original firmware, hardware work, display engine, and much of the documentation and screenshots come from that project. tactula adds custom Home Assistant controls, a redesigned portal, Bambu support and other modifications. All original copyright and MIT licence notices remain in [LICENSE](LICENSE).
 >
 > This fork reflects a personal setup and may include rough edges.
 
-**Install:** build `without_bambu` or `with_bambu` using PlatformIO, then flash via USB or update an existing compatible device from its Maintenance page. See [the build guide](GUIDE.md#building-from-source). The upstream TouchDeck web flasher does **not** install tactula.
+### Why the name Tactula?
+
+**Tactula** is a coined name inspired by two Latin roots: *tactus*, relating to touch (from *tangere*, “to touch”), and *tabula*, meaning a board or writing tablet. Put together, they suggest a **touch tablet** — a fitting name for a little touchscreen control panel. It is a playful blend, not a literal Latin word. The project started as a fork of TouchDeck, and the new name gives this customised version its own identity while recognising where it came from.
+
+**Install:** download the appropriate Standard or With Bambu firmware from [Tactula Releases](https://github.com/MrSleeps/tactula/releases). Use the full image for first-time USB installation or the matching OTA image to update an existing compatible device. See the [installation guide](GUIDE.md#installing-tactula-firmware).
 
 **Firmware updates:** See [automatic checks, downloads and touchscreen confirmation](GUIDE.md#automatic-firmware-updates).
 
 **Full feature guide:** [GUIDE.md](GUIDE.md).
 
-## Hardware
+**Brand:** tactula uses its own purple-to-blue panel mark, a navy/violet web portal inspired by the media downloader design, and unique `tactula-XXXX` Wi-Fi setup and DHCP hostnames. Internal NVS/MQTT compatibility identifiers remain intentionally unchanged.
 
-As per Keralots documentation and original build.
+## Hardware
 
 [Guition JC3248W535](https://aliexpress.com/item/1005007566315926.html): AXS15231B panel over QSPI, AXS15231B touch on I2C. Nothing to wire. 3D printed case: [MakerWorld model 3463113](https://makerworld.com/models/3463113). USB-C cable I use: [AliExpress](https://aliexpress.com/item/1005007148475800.html).
 
@@ -29,11 +31,10 @@ As per Keralots documentation and original build.
 Optional: a single-colour status LED on a free GPIO ([wiring](GUIDE.md#wiring-the-led)), a [vibration motor](GUIDE.md#vibration-motor) for tile taps and a microSD card for wallpapers and brand icons.
 
 ## Screenshots
-These are totally ripped from Keralots documentation!
 
-Short video of the original touchdeck in use: [YouTube video by Keralots](https://youtube.com/shorts/eh1_8pJR3-M).
+Original TouchDeck demonstration by Keralots: [Watch on YouTube](https://youtube.com/shorts/eh1_8pJR3-M).
 
-Historical screenshots captured from the device (`/screen_live.bmp`), Glass theme unless noted. Some show retired PC monitoring features.
+The following historical screenshots originate from Keralots' TouchDeck documentation and show features or layouts that may differ from the current Tactula firmware. Some include retired PC monitoring features.
 
 | | |
 |:---:|:---:|
@@ -46,9 +47,7 @@ Historical screenshots captured from the device (`/screen_live.bmp`), Glass them
 
 ## Animations
 
-Again, these are from Keralots documentation!
-
-Recorded frame by frame from the display. Pick a set under **Display > Animations** (Classic, Calm, Water, Glass, Heavy, or Custom to choose each effect).
+These animation examples also originate from Keralots' TouchDeck documentation. In Tactula, pick a set under **Display > Animations** (Classic, Calm, Water, Glass, Heavy, or Custom to choose each effect).
 
 | | |
 |:---:|:---:|
@@ -71,11 +70,11 @@ Recorded frame by frame from the display. Pick a set under **Display > Animation
 
 ## Getting started
 
-1. Build and install a tactula firmware variant from [the build guide](GUIDE.md#building-from-source).
+1. Download and install a firmware variant from [Tactula Releases](https://github.com/MrSleeps/tactula/releases), following the [installation guide](GUIDE.md#installing-tactula-firmware).
 2. Set up WiFi over USB in the same tab, or join the device's **`tactula-XXXX`** network (password `touchdeck1234`, setup page at `http://192.168.4.1`).
 3. Open the device IP, connect [Home Assistant](GUIDE.md#home-assistant) and build your pages.
 
-Updating an existing tactula device: upload the matching `tactula-<version>-ota.bin` build via **Maintenance > Firmware update**. The `without_bambu` and `with_bambu` variants share the same functionality except the optional Bambu P1S/AMS integration. See [GUIDE.md](GUIDE.md#building-from-source).
+Updating an existing Tactula device: upload the matching `tactula-v<version>-jc3248w535-<edition>-ota.bin` asset via **Maintenance > Firmware update**. The `without_bambu` and `with_bambu` variants share the same functionality except the optional Bambu P1S/AMS integration. See [GUIDE.md](GUIDE.md#building-from-source).
 
 ## Credits and upstream attribution
 
@@ -89,7 +88,7 @@ MIT, see [LICENSE](LICENSE). The vendored Improv WiFi library keeps its own MIT 
 
 ## Combined Met Office weather for the touchscreen
 
-Home Assistant's default `weather.met_office_hove` entity contains the condition, temperature, humidity, dew point, pressure, visibility, UV and wind. However, some useful Met Office readings are separate entities: apparent ("feels like") temperature, wind gust and probability of precipitation. The supplied **Template Weather** example combines them into one `weather.*` entity that TouchDeck can display without provider-specific code.
+Home Assistant's default `weather.met_office_hove` entity contains the condition, temperature, humidity, dew point, pressure, visibility, UV and wind. However, some useful Met Office readings are separate entities: apparent ("feels like") temperature, wind gust and probability of precipitation. The supplied **Template Weather** example combines them into one `weather.*` entity that Tactula can display without provider-specific code.
 
 1. Copy the weather block in [examples/met_office_hove_weather.yaml](examples/met_office_hove_weather.yaml) into your Home Assistant `configuration.yaml` under the existing top-level `template:` list (if you already have `template:`, **do not add a second top-level key**). The file is an example, not a complete replacement configuration.
 2. Validate your Home Assistant YAML configuration, then reload Template Entities in **Developer Tools → YAML** (or **Tools → YAML** on newer Home Assistant). If template reload is unavailable, restart Home Assistant using its UI.

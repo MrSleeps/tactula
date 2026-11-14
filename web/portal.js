@@ -731,9 +731,13 @@
       $("srLed").classList.remove("offline");
       $("srTitle").textContent = s.ap_mode ? "setup access point" : "device online";
       $("srIp").textContent = s.ip || "--";
-      $("srHost").textContent = (s.hostname || "tactula") + ".local";
+      const hostname = String(s.hostname || "tactula").replace(/\.local$/i, "");
+      $("srHost").textContent = hostname + ".local";
+      $("topHostname").textContent = hostname;
+      $("topHostname").title = hostname;
+      document.title = "tactula | " + hostname;
       const ha = String(s.ha_link || "unknown");
-      connectionState("factHa", ha,
+      connectionState("factHa", ha.charAt(0).toUpperCase() + ha.slice(1),
         ha === "connected" ? "connected" :
         ["connecting", "authenticating", "waiting for WiFi"].includes(ha) ? "pending" :
         ha === "not set up" ? "neutral" : "error");

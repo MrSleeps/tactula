@@ -140,6 +140,19 @@ a {
   filter: drop-shadow(0 0 7px rgba(123,99,240,0.16));
 }
 .tb-brand { gap: 9px; }
+.tb-identity {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.tb-hostname {
+  font: 11px var(--mono);
+  color: var(--mute);
+  max-width: 31ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .tb-name {
   font-size: 20px;
   font-weight: 750;

@@ -843,10 +843,10 @@
       "</select></div>";
     const hiddenName = t.hideName === true ||
       (Object.hasOwn(t, "label") && t.label === "");
-    const nameOption = ['action', 'toggle', 'slider'].includes(t.type)
+    const nameOption = ['action', 'toggle', 'slider', 'sensor'].includes(t.type)
       ? '<label class="check-row standalone wide dk-hide-name"><input type="checkbox" data-hide-name="' +
         i + '"' + (hiddenName ? ' checked' : '') +
-        '><span class="check-box"></span><span class="check-text"><strong>Hide name</strong><span class="ct-hint">Show just the image or icon, centred and enlarged to use the tile.</span></span></label>'
+        '><span class="check-box"></span><span class="check-text"><strong>Hide name</strong><span class="ct-hint">' + (t.type === "sensor" ? "Hide the sensor name while keeping its reading visible." : "Show just the image or icon, centred and enlarged to use the tile.") + '</span></span></label>'
       : '';
     return (
       '<div class="dk-more">' +
@@ -3264,8 +3264,7 @@
   }
 
   async function brInstall(files) {
-    if (brBusy || !brState || !brState.sd ||
-        (brState.loaded && !confirmIconRemoval("brand", "phu:"))) return;
+    if (brBusy || !brState || !brState.sd) return;
     brBusy = true;
     brButtons();
     $("dkBrDot").className = "dk-dot busy";
@@ -3333,7 +3332,8 @@
     if (files.length) brInstall(files);
   };
   $("dkBrRemove").onclick = async () => {
-    if (brBusy || !brState || !brState.sd) return;
+    if (brBusy || !brState || !brState.sd || !brState.loaded ||
+        !confirmIconRemoval("brand", "phu:")) return;
     brBusy = true;
     brButtons();
     brProgress("Removing brand icons...");

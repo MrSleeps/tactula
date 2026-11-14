@@ -304,8 +304,8 @@ void fitRows(TileRt& r, int cw, int ch) {
   fitName(r.name, o->name, 1);
   lv_obj_set_width(r.name, chip ? cw - chip - 4 : cw);
   lv_obj_align(r.name, LV_ALIGN_TOP_LEFT, 0, -2);
-  showObj(r.name, true);
-  const int top = lineH(o->name);
+  showObj(r.name, !r.def->noName);
+  const int top = r.def->noName ? 0 : lineH(o->name);
   r.rowH = n ? LV_MAX(lineH(o->row), (ch - top) / n) : 0;
   lv_obj_set_size(r.rows, cw, ch - top);
   lv_obj_align(r.rows, LV_ALIGN_TOP_LEFT, 0, top);
@@ -337,7 +337,7 @@ void fitSensor(TileRt& r, int cw, int ch) {
   for (const Opt& o : kOpts) {
     const lv_font_t* df = o.val == &deck_font_28 ? &deck_font_14 : &deck_font_12;
     const int dh = pass ? 0 : lineH(df);
-    if ((o.wideOnly && cw < WIDE_W) || lineH(o.val) + textH(o.name, o.lines) + dh > ch) continue;
+    if ((o.wideOnly && cw < WIDE_W) || lineH(o.val) + (r.def->noName ? 0 : textH(o.name, o.lines)) + dh > ch) continue;
     const int chip = iconOff(r) ? 0 : o.val == &deck_font_14 ? 18 : 22;
     if (chip) {
       fitChip(r, chip);
@@ -358,7 +358,7 @@ void fitSensor(TileRt& r, int cw, int ch) {
     r.nameW = cw;
     fitNameText(r);
     lv_obj_align(r.name, LV_ALIGN_BOTTOM_LEFT, 0, -dh);
-    showObj(r.name, true);
+    showObj(r.name, !r.def->noName);
     fitDetail(r, df, cw, LV_ALIGN_BOTTOM_LEFT, 0, !pass);
     return;
   }
@@ -369,7 +369,7 @@ void fitSensor(TileRt& r, int cw, int ch) {
   r.nameFont = nullptr;
   lv_obj_set_style_pad_right(r.sub, 0, 0);
   lv_obj_set_style_text_align(r.sub, LV_TEXT_ALIGN_RIGHT, 0);
-  const bool name = cw >= 80;
+  const bool name = cw >= 80 && !r.def->noName;
   lv_obj_set_size(r.sub, name ? cw / 2 : cw, lineH(vf));
   lv_obj_align(r.sub, name ? LV_ALIGN_RIGHT_MID : LV_ALIGN_CENTER, 0, 0);
   r.valFont = vf;
@@ -529,7 +529,7 @@ void fitMetric(TileRt& r, int cw, int ch) {
       lv_obj_set_height(r.viz, LV_MIN(ch * 62 / 100, detail ? ch - top : ch - 22));
       fitDetail(r, &deck_font_12, cw * 55 / 100, LV_ALIGN_TOP_LEFT, lineH(nf) - 2, detail);
     }
-    showObj(r.name, true);
+    showObj(r.name, !d.noName);
     fitValue(r);
     return;
   }
@@ -548,7 +548,7 @@ void fitMetric(TileRt& r, int cw, int ch) {
   for (int pass = r.detail ? 0 : 1; pass < 2 && !wideViz; pass++)
   for (const Opt& o : kOpts) {
     const int dh = pass ? 0 : lineH(&deck_font_12);
-    if ((o.wideOnly && cw < WIDE_W) || lineH(o.name) + dh + lineH(o.val) * 3 / 4 > ch) continue;
+    if ((o.wideOnly && cw < WIDE_W) || (d.noName ? 0 : lineH(o.name)) + dh + lineH(o.val) * 3 / 4 > ch) continue;
     setFont(r.name, o.name);
     lv_obj_set_size(r.name, lv_pct(100), lineH(o.name));
     lv_obj_align(r.name, LV_ALIGN_TOP_LEFT, 0, -2);
@@ -556,13 +556,13 @@ void fitMetric(TileRt& r, int cw, int ch) {
     r.valFont = o.val;
     r.valW = cw;
     lv_obj_align(row, LV_ALIGN_BOTTOM_LEFT, 0, 2);
-    showObj(r.name, true);
-    fitDetail(r, &deck_font_12, cw, LV_ALIGN_TOP_LEFT, lineH(o.name) - 2, !pass);
+    showObj(r.name, !d.noName);
+    fitDetail(r, &deck_font_12, cw, LV_ALIGN_TOP_LEFT, (d.noName ? 0 : lineH(o.name)) - 2, !pass);
     fitValue(r);
     return;
   }
   showObj(r.detail, false);
-  const bool name = cw >= 80;
+  const bool name = cw >= 80 && !d.noName;
   const lv_font_t* rf = cw >= WIDE_W && ch >= lineH(&deck_font_14) ? &deck_font_14 : &deck_font_12;
   setFont(r.name, rf);
   lv_obj_set_height(r.name, lineH(rf));

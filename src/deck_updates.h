@@ -11,6 +11,7 @@ struct State {
   bool autoDownload = false;
   bool downloading = false;
   bool staged = false;
+  bool promptOnStage = false; // true only for user-initiated OTA downloads
   uint32_t downloadedBytes = 0;
   uint32_t totalBytes = 0;
   char version[24] = {};

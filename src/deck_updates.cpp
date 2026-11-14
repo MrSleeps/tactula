@@ -98,7 +98,7 @@ constexpr const char* ROOT_CA =
     "RNZu9YO6bVi9JNlWSOrvxKJGgYhqOkbRqZtNyWHa0V1Xahg=\n"
     "-----END CERTIFICATE-----\n";
 constexpr const char* MANIFEST_URL =
-    "https://api.github.com/repos/MrSleeps/tactula/releases/latest";
+    "https://firmware.mrsleeps.uk/tactula/releases/current.json";
 constexpr uint32_t INTERVAL_MS = 6UL * 60 * 60 * 1000;
 constexpr uint32_t RETRY_MS = 30UL * 60 * 1000;
 constexpr uint32_t START_DELAY_MS = 45000;
@@ -108,6 +108,7 @@ bool requested = false;
 uint32_t nextAttempt = START_DELAY_MS;
 bool running = false;
 bool downloadRequested = false;
+bool manualDownloadRequested = false;
 bool downloadRunning = false;
 bool installRequested = false;
 char approvedDigest[65] = {};
@@ -115,11 +116,16 @@ char approvedPath[160] = {};
 uint32_t approvedSize = 0;
 const esp_partition_t* stagedPartition = nullptr;
 
-void setError(const char* msg) {
+// A transient request failure must not invalidate a release whose filename,
+// size and SHA-256 digest were already verified in an earlier successful check.
+// Never preserve the prior release for malformed/untrusted release metadata.
+void setError(const char* msg, bool preserveVerified = false) {
   portENTER_CRITICAL(&mux);
   snprintf(status.error, sizeof(status.error), "%s", msg);
-  status.available = false;
-  status.version[0] = 0;
+  if (!preserveVerified) {
+    status.available = false;
+    status.version[0] = 0;
+  }
   status.checking = false;
   status.lastCheckMs = millis();
   running = false;
@@ -153,127 +159,103 @@ bool validHash(const char* s) {
 void checkTask(void*) {
   // Require clock sync for X.509 certificate validity.
   if (time(nullptr) < 1700000000) {
-    setError("Waiting for time synchronisation");
+    setError("Waiting for time synchronisation", true);
     vTaskDelete(nullptr);
     return;
   }
-  IPAddress githubAddress;
-  if (WiFi.hostByName("api.github.com", githubAddress) != 1) {
-    setError("GitHub DNS lookup failed");
+  IPAddress mirrorAddress;
+  if (WiFi.hostByName("firmware.mrsleeps.uk", mirrorAddress) != 1) {
+    setError("Firmware mirror DNS lookup failed", true);
     vTaskDelete(nullptr);
     return;
   }
-  // TLS certificate validation is kept mandatory. Record the internal
-  // memory available because a failed handshake can otherwise look like
-  // a generic HTTPClient (-1) connection failure.
-  const uint32_t largestHeap = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  Serial.printf("[Tactula OTA] GitHub IP=%s, free heap=%u, largest internal block=%u\\n",
-                githubAddress.toString().c_str(),
-                static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(largestHeap));
+  Serial.printf("[Tactula OTA] Mirror IP=%s, internal heap=%u, largest block=%u\n",
+                mirrorAddress.toString().c_str(),
+                static_cast<unsigned>(ESP.getFreeHeap()),
+                static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+
   WiFiClientSecure client;
   client.setCACert(ROOT_CA);
   client.setTimeout(12000);
   client.setHandshakeTimeout(15);
   HTTPClient http;
   http.setTimeout(12000);
-  // Receive the complete HTTP body through HTTPClient. Its buffered
-  // getString() path handles chunked transfer encoding and network waits,
-  // unlike passing getStream() directly to ArduinoJson.
+  http.useHTTP10(true);  // Static manifest: require nonchunked Content-Length.
   http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
-  http.setUserAgent("Tactula-Update-Check/1.0");
+  http.setUserAgent("Tactula-Update-Check/2.0");
   const bool begun = http.begin(client, MANIFEST_URL);
   const int httpStatus = begun ? http.GET() : -1;
   if (!begun || httpStatus != HTTP_CODE_OK) {
-    // Preserve strict HTTPS verification. Report whether GitHub returned an
-    // HTTP response or the TLS/transport layer failed, to aid diagnosis.
-    char diagnostic[96] = {};
+    char diagnostic[112] = {};
     if (httpStatus > 0) {
-      snprintf(diagnostic, sizeof(diagnostic), "GitHub API HTTP %d", httpStatus);
+      snprintf(diagnostic, sizeof(diagnostic), "Mirror manifest HTTP %d", httpStatus);
     } else {
       char tlsReason[96] = {};
       const int tlsCode = client.lastError(tlsReason, sizeof(tlsReason));
-      Serial.printf("[Tactula OTA] GitHub request failed: HTTP=%d TLS=%d (%s), "
-                    "free heap=%u, largest internal block=%u\\n",
-                    httpStatus, tlsCode, tlsReason,
-                    static_cast<unsigned>(ESP.getFreeHeap()),
-                    static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
-      // HTTPClient's -1 alone does not identify DNS, TCP, X.509, or
-      // TLS-memory failures. Include the secure client's last TLS code.
-      if (tlsCode != 0) {
-        snprintf(diagnostic, sizeof(diagnostic),
-                 "GitHub HTTPS failed: TLS %d (HTTP %d)", tlsCode, httpStatus);
-      } else {
-        snprintf(diagnostic, sizeof(diagnostic),
-                 "GitHub HTTPS failed: HTTP %d, TLS detail unavailable", httpStatus);
-      }
+      Serial.printf("[Tactula OTA] Mirror HTTPS failure: HTTP=%d TLS=%d (%s)\n",
+                    httpStatus, tlsCode, tlsReason);
+      snprintf(diagnostic, sizeof(diagnostic),
+               "Mirror HTTPS failed TLS %d (HTTP %d)", tlsCode, httpStatus);
     }
     http.end();
-    setError(diagnostic);
+    setError(diagnostic, true);
     vTaskDelete(nullptr);
     return;
   }
-  // API JSON contains release notes and metadata unrelated to the device.
-  // Reject oversized responses and use ArduinoJson's document filter to
-  // retain only the signed-in-TLS release metadata and asset fields.
-  constexpr int MAX_RELEASE_JSON = 32768;
+
+  // The mirror publishes this tiny feed atomically after verifying the
+  // release binaries against GitHub's original SHA-256 digests and sizes.
+  // Keep the entire JSON bounded; never load GitHub's large releases API.
+  constexpr int MAX_MANIFEST_BYTES = 4096;
   const int declaredLength = http.getSize();
-  if (declaredLength > MAX_RELEASE_JSON) {
+  if (declaredLength < 1 || declaredLength > MAX_MANIFEST_BYTES) {
     http.end();
-    setError("GitHub release JSON exceeds 32 KiB limit");
+    setError("Mirror manifest size missing or too large", true);
     vTaskDelete(nullptr);
     return;
   }
-  // GitHub's current latest-release metadata is about 11 KiB. Buffering
-  // this small, bounded response avoids ArduinoJson interpreting a temporary
-  // gap in the live secure stream as the end of the JSON document.
-  String responseBody = http.getString();
+  String responseBody;
+  if (!responseBody.reserve(declaredLength + 1)) {
+    http.end();
+    setError("Not enough memory for update manifest", true);
+    vTaskDelete(nullptr);
+    return;
+  }
+  responseBody = http.getString();
   const size_t receivedLength = responseBody.length();
-  Serial.printf("[Tactula OTA] GitHub JSON: declared=%d received=%u\\n",
-                declaredLength, static_cast<unsigned>(receivedLength));
   http.end();
-  if (receivedLength == 0 || receivedLength > MAX_RELEASE_JSON ||
-      (declaredLength >= 0 && receivedLength != static_cast<size_t>(declaredLength))) {
-    char diagnostic[112] = {};
-    snprintf(diagnostic, sizeof(diagnostic),
-             "GitHub JSON truncated (received %u, expected %d)",
-             static_cast<unsigned>(receivedLength), declaredLength);
-    setError(diagnostic);
+  Serial.printf("[Tactula OTA] Manifest expected=%d received=%u\n",
+                declaredLength, static_cast<unsigned>(receivedLength));
+  if (receivedLength != static_cast<size_t>(declaredLength)) {
+    setError("Mirror manifest download incomplete", true);
     vTaskDelete(nullptr);
     return;
   }
-  JsonDocument filter;
-  filter["tag_name"] = true;
-  filter["draft"] = true;
-  filter["prerelease"] = true;
-  filter["assets"][0]["name"] = true;
-  filter["assets"][0]["size"] = true;
-  filter["assets"][0]["digest"] = true;
-  filter["assets"][0]["browser_download_url"] = true;
   JsonDocument doc;
-  const DeserializationError parseError = deserializeJson(
-      doc, responseBody,
-      DeserializationOption::Filter(filter),
-      DeserializationOption::NestingLimit(8));
-  // Reclaim the temporary response body as soon as parsing finishes.
+  const DeserializationError parseError =
+      deserializeJson(doc, responseBody, DeserializationOption::NestingLimit(8));
   responseBody = "";
   if (parseError) {
     char diagnostic[112] = {};
     snprintf(diagnostic, sizeof(diagnostic),
-             "GitHub release JSON parse failed: %s", parseError.c_str());
-    setError(diagnostic);
+             "Mirror manifest JSON invalid: %s", parseError.c_str());
+    setError(diagnostic, true);
     vTaskDelete(nullptr);
     return;
   }
-  // The GitHub API returns JSON booleans. Treat absent/malformed metadata
-  // as invalid instead of accidentally treating it as a published release.
-  if (!doc["draft"].is<bool>() || !doc["prerelease"].is<bool>() ||
-      doc["draft"].as<bool>() || doc["prerelease"].as<bool>()) {
-    setError("GitHub release is draft, prerelease or missing status flags");
+  if ((doc["schema"] | 0) != 1 ||
+      strcmp(doc["status"] | "", "published") != 0) {
+    setError("Mirror release not published or manifest invalid");
     vTaskDelete(nullptr);
     return;
   }
-  const char* version = doc["tag_name"] | "";
-  if (!version[0] || strlen(version) >= sizeof(status.version) || !newer(version)) {
+  const char* version = doc["version"] | "";
+  if (!version[0] || strlen(version) >= sizeof(status.version)) {
+    setError("Mirror manifest has invalid version");
+    vTaskDelete(nullptr);
+    return;
+  }
+  if (!newer(version)) {
     portENTER_CRITICAL(&mux);
     status.available = false;
     status.version[0] = 0;
@@ -286,39 +268,39 @@ void checkTask(void*) {
     vTaskDelete(nullptr);
     return;
   }
-  // We require the OTA binary published by the exact GitHub Release, not
-  // arbitrary paths from a separately hosted update feed.
 #if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
-  constexpr const char* edition = "with_bambu";
+  constexpr const char* edition = "bambu";
+  constexpr const char* firmwareVariant = "with_bambu";
 #else
-  constexpr const char* edition = "without_bambu";
+  constexpr const char* edition = "standard";
+  constexpr const char* firmwareVariant = "without_bambu";
 #endif
   char expectedName[115];
   snprintf(expectedName, sizeof(expectedName),
-           "tactula-%s-jc3248w535-%s-ota.bin", version, edition);
-  char expectedUrl[245];
-  snprintf(expectedUrl, sizeof(expectedUrl),
-           "https://github.com/MrSleeps/tactula/releases/download/%s/%s",
-           version, expectedName);
-  bool matched = false;
+           "tactula-%s-jc3248w535-%s-ota.bin", version, firmwareVariant);
+  char expectedPath[160];
+  snprintf(expectedPath, sizeof(expectedPath),
+           "releases/%s/%s", version, expectedName);
   char assetDigest[65] = {};
   uint32_t assetSize = 0;
+  bool matched = false;
   const esp_partition_t* partition = esp_ota_get_next_update_partition(nullptr);
-  for (JsonObjectConst asset : doc["assets"].as<JsonArrayConst>()) {
-    if (strcmp(asset["name"] | "", expectedName) != 0) continue;
-    const char* digest = asset["digest"] | "";
-    const char* url = asset["browser_download_url"] | "";
+  for (JsonObjectConst variant : doc["variants"].as<JsonArrayConst>()) {
+    if (strcmp(variant["board"] | "", "s3") != 0 ||
+        strcmp(variant["edition"] | "", edition) != 0) continue;
+    JsonObjectConst asset = variant["ota"].as<JsonObjectConst>();
+    const char* digest = asset["sha256"] | "";
+    const char* path = asset["path"] | "";
     const uint32_t size = asset["size"] | 0;
-    if (strcmp(url, expectedUrl) != 0 || strncmp(digest, "sha256:", 7) != 0 ||
-        !validHash(digest + 7) || !partition ||
-        size < 1024 || size > partition->size) break;
-    snprintf(assetDigest, sizeof(assetDigest), "%s", digest + 7);
+    if (strcmp(path, expectedPath) != 0 || !validHash(digest) ||
+        !partition || size < 1024 || size > partition->size) break;
+    snprintf(assetDigest, sizeof(assetDigest), "%s", digest);
     assetSize = size;
     matched = true;
     break;
   }
   if (!matched) {
-    setError("Release lacks a matching verified board/edition OTA asset");
+    setError("Mirror lacks verified board/edition OTA asset");
     vTaskDelete(nullptr);
     return;
   }
@@ -327,12 +309,13 @@ void checkTask(void*) {
   // A release change invalidates any previously staged image.
   if (strcmp(status.version, version) != 0) {
     status.staged = false;
+    status.promptOnStage = false;
     stagedPartition = nullptr;
   }
   snprintf(status.version, sizeof(status.version), "%s", version);
   snprintf(approvedDigest, sizeof(approvedDigest), "%s", assetDigest);
   snprintf(approvedPath, sizeof(approvedPath),
-    "/tactula/releases/%s/%s", version, expectedName);
+    "/tactula/%s", expectedPath);
   approvedSize = assetSize;
   status.totalBytes = assetSize;
   if (status.autoDownload && !status.staged) downloadRequested = true;
@@ -397,7 +380,10 @@ void requestDownload() {
   return;
 #endif
   portENTER_CRITICAL(&mux);
-  if (status.available && !status.staged && !status.downloading) downloadRequested = true;
+  if (status.available && !status.staged && !status.downloading) {
+    manualDownloadRequested = true;
+    downloadRequested = true;
+  }
   portEXIT_CRITICAL(&mux);
 }
 
@@ -427,6 +413,7 @@ void downloadTask(void*) {
     portENTER_CRITICAL(&mux);
     status.downloading = false;
     status.staged = false;
+    status.promptOnStage = false;
     stagedPartition = nullptr;
     snprintf(status.error, sizeof(status.error), "%s", reason);
     downloadRunning = false;
@@ -529,7 +516,10 @@ void tick() {
   bool activate = false;
   const esp_partition_t* bootTarget = nullptr;
   portENTER_CRITICAL(&mux);
-  if (!running && !downloadRunning && (requested || (status.checksEnabled && (int32_t)(millis() - nextAttempt) >= 0))) {
+  // Prefer a pending verified download over another network check. It also
+  // avoids recreating a TLS connection while the download is waiting to start.
+  if (!running && !downloadRunning && !downloadRequested &&
+      (requested || (status.checksEnabled && (int32_t)(millis() - nextAttempt) >= 0))) {
     requested = false;
     running = true;
     status.checking = true;
@@ -540,6 +530,8 @@ void tick() {
       status.available && !status.staged) {
     downloadRequested = false;
     downloadRunning = true;
+    status.promptOnStage = manualDownloadRequested;
+    manualDownloadRequested = false;
     status.downloading = true;
     status.downloadedBytes = 0;
     status.error[0] = 0;

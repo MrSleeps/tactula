@@ -182,6 +182,9 @@ void goToPage(const String& id) {
 
 
 static lv_obj_t* s_firmwareConfirm = nullptr;
+// Track a freshly staged image independently of top-bar badge preferences.
+// Declining the popup must not make it appear once per second.
+static bool s_firmwarePrompted = false;
 static void closeFirmwareConfirm(lv_event_t*) {
   if (s_firmwareConfirm) {
     lv_obj_delete_async(s_firmwareConfirm);
@@ -241,7 +244,7 @@ void layoutHeader(Page& p) {
   }
   if (p.updateBadge) {
     const auto st = firmwareUpdate::snapshot();
-    if (s_header && st.checksEnabled && st.showBadge && (st.available || st.staged))
+    if (s_header && st.checksEnabled && (st.showBadge || (st.staged && !st.promptOnStage)) && (st.available || st.staged))
       lv_obj_remove_flag(p.updateBadge, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(p.updateBadge, LV_OBJ_FLAG_HIDDEN);
   }
@@ -702,11 +705,23 @@ void updateHeaders() {
   if (now - s_lastClockCheck < 1000) return;
   s_lastClockCheck = now;
   const auto updateState = firmwareUpdate::snapshot();
+  // Staging happens asynchronously in the updater task. Show the physical
+  // install confirmation once as soon as the image is verified, even if the
+  // optional header update badge (or the whole header) is disabled.
+  if (!updateState.staged) {
+    s_firmwarePrompted = false;
+  } else if (!s_firmwarePrompted && updateState.promptOnStage) {
+    // Only a manual Download OTA request interrupts the touchscreen.
+    // Automatic downloads advertise readiness through the header icon.
+    s_firmwarePrompted = true;
+    openFirmwareConfirmation(nullptr);
+  }
   for (int i = 0; i < s_count; ++i) {
     Page& page = s_pages[i];
     if (!page.updateBadge) continue;
     const bool visible = s_header && updateState.checksEnabled &&
-      updateState.showBadge && (updateState.available || updateState.staged);
+      (updateState.showBadge || (updateState.staged && !updateState.promptOnStage)) &&
+      (updateState.available || updateState.staged);
     const bool hidden = lv_obj_has_flag(page.updateBadge, LV_OBJ_FLAG_HIDDEN);
     if (visible == hidden) {
       if (visible) lv_obj_remove_flag(page.updateBadge, LV_OBJ_FLAG_HIDDEN);

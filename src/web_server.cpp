@@ -1476,10 +1476,16 @@ static void handleDeckGet() {
   JsonDocument runtime;
   runtime["source"] = deckBootConfigSource();
   runtime["error"] = deckBootConfigError();
+  // ArduinoJson's String output replaces the destination rather than appending.
+  // Serialize each field separately so we never erase the response prefix.
+  String encodedSource;
+  serializeJson(runtime["source"], encodedSource);
   out += ",\"runtime_source\":";
-  serializeJson(runtime["source"], out);
+  out += encodedSource;
+  String encodedError;
+  serializeJson(runtime["error"], encodedError);
   out += ",\"runtime_error\":";
-  serializeJson(runtime["error"], out);
+  out += encodedError;
   out += ",\"deck\":";
   out += text;
   out += "}";

@@ -92,7 +92,7 @@ constexpr int ORIENT_PORTRAIT = 1;
 constexpr int MAX_DECK_PAGES = 8;
 constexpr int MAX_PAGE_TILES = 24;
 
-enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_SLIDER, TILE_CLOCK, TILE_CLIMATE, TILE_HA_MEDIA, TILE_NAV, TILE_BAMBU };
+enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_SLIDER, TILE_CLOCK, TILE_CLIMATE, TILE_HA_MEDIA, TILE_NAV, TILE_BAMBU, TILE_GROUP, TILE_WEATHER_CLOCK };
 enum MetricStyle : uint8_t { METRIC_NUMBER = 0, METRIC_CHART, METRIC_BAR, METRIC_HEADLINE, METRIC_WEATHER };
 enum ActionKind : uint8_t {
   ACT_NONE = 0,
@@ -142,12 +142,23 @@ struct SensorRowDef {
 struct TileDef {
   String id;
   TileType type = TILE_ACTION;
+  // One-level containers. Children remain ordinary tiles for HA subscriptions,
+  // actions and persistence; parent names a group on the same page.
+  String parent;
+  uint8_t groupLayout = 1; // row=0, column=1, grid=2, custom=3
+  // Custom group placement uses a compact 6 x 6 internal grid.
+  uint8_t groupX = 0, groupY = 0, groupW = 3, groupH = 2;
+  bool groupSlotSet = false;
+  uint8_t groupColumns = 2, groupPadding = 8, groupGap = 6;
+  uint8_t groupSurface = 0; // theme=0, solid=1, transparent=2
+  bool groupPlainChildren = true, groupPlain = false; // latter is resolved at parse time
   String entity, label, sub, icon;
   bool noName = false;  // "label": "" (or blank): show no name instead of HA's
   bool iconPlain = false;   // "iconStyle": "plain": no circle
   bool clockBox = true;    // Clock/headline/weather/toggle: "box": false removes fill and border.
   bool clockDate = false;       // Clock: "date": "always" forces date to fit.
   bool clockDateNever = false;  // Clock: "date": "never" hides the date.
+  uint8_t weatherIcons = 0; // Weather Clock: MDI=0, Meteocons Fill=1, Flat=2, Skycons animated=3
   bool showEntityId = true; // Weather popup: show the Home Assistant entity ID under its title.
   String onIcon;            // toggle: the icon while on, "" = icon
   String statusEntity;      // optional HA status entity for visual state
@@ -229,3 +240,4 @@ bool deckFsWipe(const char* keep);
 }  // namespace deck
 
 #endif  // DECK_CONFIG_H
+

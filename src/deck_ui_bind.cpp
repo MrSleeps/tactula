@@ -514,10 +514,16 @@ void setSliderFill(TileRt& r, float frac) {
 // Pull the latest HA state into one tile's widgets.
 void applyHaToTile(TileRt& r, bool force) {
   const TileDef& d = *r.def;
-  if (d.http.enabled || (!d.entity.length() && !d.statusEntity.length())) return;
+  if (d.type == TILE_GROUP || d.http.enabled || (!d.entity.length() && !d.statusEntity.length())) return;
   const String& visualEntity = d.statusEntity.length() ? d.statusEntity : d.entity;
   HaEntity e;
   if (!haGetEntity(visualEntity, e)) return;
+  if (d.type == TILE_WEATHER_CLOCK) {
+    if (!force && e.version == r.haVersion) return;
+    r.haVersion = e.version;
+    applyWeatherClock(r);
+    return;
+  }
   if (d.type == TILE_HA_MEDIA) {
     if (!force && e.version == r.haVersion) return;
     r.haVersion = e.version;
@@ -707,8 +713,8 @@ void haSync() {
     const bool sunChanged = sunVersion != sunSeen;
     sunSeen = sunVersion;
     for (TileRt& r : s_tiles)
-      applyHaToTile(r, sunChanged && r.def->type == TILE_SENSOR &&
-                       r.def->style == METRIC_WEATHER);
+      applyHaToTile(r, sunChanged && ((r.def->type == TILE_SENSOR &&
+                       r.def->style == METRIC_WEATHER) || r.def->type == TILE_WEATHER_CLOCK));
     refreshModal();
     ledFromHa(false);
   }
@@ -899,7 +905,8 @@ std::vector<String> entityIds() {
   std::vector<String> ids;
   bool hasWeatherTile = false;
   for (const TileRt& r : s_tiles) {
-    if (r.def->type == TILE_SENSOR && r.def->style == METRIC_WEATHER)
+    if ((r.def->type == TILE_SENSOR && r.def->style == METRIC_WEATHER) ||
+        r.def->type == TILE_WEATHER_CLOCK)
       hasWeatherTile = true;
     if (r.def->entity.length()) ids.push_back(r.def->entity);
     if (r.def->statusEntity.length() && r.def->statusEntity != r.def->entity)
@@ -1106,3 +1113,4 @@ void sliderEvent(lv_event_t* e) {
 }
 
 }  // namespace deckui
+

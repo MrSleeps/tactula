@@ -310,15 +310,25 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       else if (!strcmp(tt, "sensor")) t.type = TILE_SENSOR;
       else if (!strcmp(tt, "slider")) t.type = TILE_SLIDER;
       else if (!strcmp(tt, "clock")) t.type = TILE_CLOCK;
+      else if (!strcmp(tt, "weather-clock")) t.type = TILE_WEATHER_CLOCK;
       else if (!strcmp(tt, "climate")) t.type = TILE_CLIMATE;
       else if (!strcmp(tt, "ha-media")) t.type = TILE_HA_MEDIA;
       else if (!strcmp(tt, "nav")) t.type = TILE_NAV;
+      else if (!strcmp(tt, "group")) t.type = TILE_GROUP;
 #if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
       else if (!strcmp(tt, "bambu")) t.type = TILE_BAMBU;
 #endif
       else {
         if (err) *err = where + ": unknown type '" + tt + "'";
         return false;
+      }
+      t.parent = (const char*)(tv["parent"] | "");
+      if (tv["slot"].is<JsonObjectConst>()) {
+        t.groupSlotSet = true;
+        t.groupX = constrain((int)(tv["slot"]["x"] | 0), 0, 5);
+        t.groupY = constrain((int)(tv["slot"]["y"] | 0), 0, 5);
+        t.groupW = constrain((int)(tv["slot"]["w"] | 3), 1, 6 - (int)t.groupX);
+        t.groupH = constrain((int)(tv["slot"]["h"] | 2), 1, 6 - (int)t.groupY);
       }
       t.entity = (const char*)(tv["entity"] | "");
       t.label = (const char*)(tv["label"] | "");
@@ -346,7 +356,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         if (!tv["lightColor"].is<const char*>() && (tv["lightIcon"] | false))
           t.lightColorMode = 1;
       }
-      if ((t.type == TILE_CLOCK || t.type == TILE_SENSOR || t.type == TILE_TOGGLE) && tv["box"].is<bool>())
+      if ((t.type == TILE_CLOCK || t.type == TILE_WEATHER_CLOCK || t.type == TILE_SENSOR || t.type == TILE_TOGGLE) && tv["box"].is<bool>())
         t.clockBox = tv["box"].as<bool>();
       if (t.type == TILE_SENSOR && tv["showEntityId"].is<bool>())
         t.showEntityId = tv["showEntityId"].as<bool>();
@@ -363,6 +373,25 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       parsePos(tv["pos"]["landscape"], t.pos[ORIENT_LANDSCAPE]);
       parsePos(tv["pos"]["portrait"], t.pos[ORIENT_PORTRAIT]);
       if (!parseWhen(tv["when"], t.when, err, where)) return false;
+      if (t.type == TILE_GROUP) {
+        const char* flow = tv["flow"] | "column";
+        const char* surface = tv["surface"] | "theme";
+        if (!t.id.length() || t.parent.length() ||
+            (strcmp(flow, "row") && strcmp(flow, "column") && strcmp(flow, "grid") && strcmp(flow, "custom")) ||
+            (strcmp(surface, "theme") && strcmp(surface, "solid") && strcmp(surface, "transparent"))) {
+          if (err) *err = where + ": group needs an id, valid flow/surface and cannot be nested";
+          return false;
+        }
+        t.groupLayout = !strcmp(flow, "row") ? 0 : !strcmp(flow, "grid") ? 2 : !strcmp(flow, "custom") ? 3 : 1;
+        t.groupSurface = !strcmp(surface, "solid") ? 1 : !strcmp(surface, "transparent") ? 2 : 0;
+        t.groupColumns = constrain((int)(tv["columns"] | 2), 1, 6);
+        t.groupPadding = constrain((int)(tv["padding"] | 8), 0, 24);
+        t.groupGap = constrain((int)(tv["gap"] | 6), 0, 24);
+        t.groupPlainChildren = tv["plainChildren"] | true;
+        t.entity = ""; // containers never execute HA actions
+        p.tiles.push_back(t);
+        continue;
+      }
       if (t.type == TILE_SENSOR) {
         if (!tv["http"].isNull()) {
           TileAction source;
@@ -425,6 +454,22 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         }
         p.tiles.push_back(t);
         continue;  // inline thermostat has its own controls, not tile tap actions
+      }
+      if (t.type == TILE_WEATHER_CLOCK) {
+        const char* iconPack = tv["weatherIcons"] | "mdi";
+        if (!strcmp(iconPack, "meteocons-fill")) t.weatherIcons = 1;
+        else if (!strcmp(iconPack, "meteocons-flat")) t.weatherIcons = 2;
+        else if (!strcmp(iconPack, "skycons")) t.weatherIcons = 3;
+        else if (strcmp(iconPack, "mdi")) {
+          if (err) *err = where + ": invalid weather-clock icon pack";
+          return false;
+        }
+        if (!t.entity.startsWith("weather.")) {
+          if (err) *err = where + ": weather-clock requires a weather.* entity";
+          return false;
+        }
+        p.tiles.push_back(t);
+        continue;
       }
       if (t.type == TILE_CLOCK) {
         const char* dateMode = tv["date"] | "";
@@ -496,6 +541,30 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         }
       }
       p.tiles.push_back(t);
+    }
+    // Resolve after parsing, so a child may precede its parent in JSON.
+    for (TileDef& child : p.tiles) {
+      if (child.type == TILE_GROUP) {
+        int matches = 0;
+        for (const TileDef& other : p.tiles) if (other.id == child.id) ++matches;
+        if (matches != 1) {
+          if (err) *err = "group ids must be unique within their page";
+          return false;
+        }
+      }
+      if (!child.parent.length()) continue;
+      const TileDef* parent = nullptr;
+      for (const TileDef& group : p.tiles)
+        if (group.type == TILE_GROUP && group.id == child.parent) parent = &group;
+      if (!parent || child.type == TILE_GROUP) {
+        if (err) *err = "page '" + p.id + "' tile '" + child.id + "': parent must be a group on the same page";
+        return false;
+      }
+      child.groupPlain = parent->groupPlainChildren;
+      if (!child.hasTextColor && parent->hasTextColor) {
+        child.hasTextColor = true;
+        child.textColor = parent->textColor;
+      }
     }
     cfg.pages.push_back(p);
   }
@@ -818,11 +887,65 @@ bool deckConfigStore(const String& text, DeckConfig& out, String& err) {
   return true;
 }
 
+// Boot-only recovery: omit individually invalid tiles in memory so one bad
+// widget cannot hide every saved page. The original /deck.json is untouched.
+bool deckConfigRecoverTiles(const String& original, DeckConfig& out, String& warning) {
+  JsonDocument doc(psramJson());
+  if (deserializeJson(doc, original)) return false;
+  JsonArray pages = doc["pages"].as<JsonArray>();
+  if (pages.isNull()) return false;
+  String firstProblem;
+  unsigned skipped = 0;
+  constexpr unsigned maxSkipped = MAX_DECK_PAGES * MAX_PAGE_TILES;
+  for (unsigned attempt = 0; attempt < maxSkipped; ++attempt) {
+    String candidate;
+    serializeJson(doc, candidate);
+    String problem;
+    if (deckConfigParse(candidate.c_str(), candidate.length(), out, &problem)) {
+      if (!skipped) return false;
+      warning = "Recovered saved pages; skipped " + String(skipped) +
+                " invalid tile(s). First: " + firstProblem +
+                ". Saved file unchanged.";
+      Serial.printf("Deck: runtime recovered after skipping %u tile(s): %s\n",
+                    skipped, firstProblem.c_str());
+      return true;
+    }
+    // Never guess which tile to remove. Require an exact page/tile error;
+    // syntax errors, page errors and ambiguous group errors still fail safely.
+    if (!problem.startsWith("page '")) return false;
+    const int pageEnd = problem.indexOf("' tile '", 6);
+    if (pageEnd < 0) return false;
+    const int tileStart = pageEnd + 8;
+    const int tileEnd = problem.indexOf("'", tileStart);
+    if (tileEnd < 0 || problem.indexOf(":", tileEnd) != tileEnd + 1) return false;
+    const String pageId = problem.substring(6, pageEnd);
+    const String tileId = problem.substring(tileStart, tileEnd);
+    if (!tileId.length()) return false;
+    bool removed = false;
+    for (JsonObject page : pages) {
+      if (String((const char*)(page["id"] | "")) != pageId) continue;
+      JsonArray tiles = page["tiles"].as<JsonArray>();
+      for (size_t i = 0; i < tiles.size(); ++i) {
+        if (String((const char*)(tiles[i]["id"] | "")) != tileId) continue;
+        tiles.remove(i);
+        removed = true;
+        break;
+      }
+      break;
+    }
+    if (!removed) return false;
+    if (!skipped) firstProblem = problem;
+    ++skipped;
+  }
+  return false;
+}
+
 bool deckConfigLoad(DeckConfig& out, String* source, String* err) {
   if (err) *err = "";
   if (mountFs() && LittleFS.exists(CONFIG_PATH)) {
     File f = LittleFS.open(CONFIG_PATH, "r");
     if (f) {
+      f.setBufferSize(8192); // large decks: reduce read-time heap fragmentation
       String text = f.readString();
       f.close();
       String why;
@@ -831,7 +954,14 @@ bool deckConfigLoad(DeckConfig& out, String* source, String* err) {
         return true;
       }
       if (err) *err = why;
-      Serial.printf("Deck: %s rejected (%s), using the built-in deck\n", CONFIG_PATH, why.c_str());
+      Serial.printf("Deck: %s failed validation (%s)\n", CONFIG_PATH, why.c_str());
+      String recoveryWarning;
+      if (deckConfigRecoverTiles(text, out, recoveryWarning)) {
+        if (source) *source = "/deck.json (recovered)";
+        if (err) *err = recoveryWarning;
+        return true;
+      }
+      Serial.println("Deck: runtime recovery failed; original saved layout preserved");
     }
   }
   if (source) *source = "built-in";
@@ -839,3 +969,4 @@ bool deckConfigLoad(DeckConfig& out, String* source, String* err) {
 }
 
 }  // namespace deck
+

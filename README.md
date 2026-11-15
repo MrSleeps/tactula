@@ -18,6 +18,8 @@ A customised fork of [TouchDeck](https://github.com/Keralots/TouchDeck), origina
 
 **Full feature guide:** [GUIDE.md](GUIDE.md).
 
+**Tiles & cards explained:** [Choose and configure every tile type](docs/TILES_AND_CARDS.md), including Weather Clock, climate, sensors, groups, media and Bambu widgets.
+
 **Brand:** tactula uses its own purple-to-blue panel mark, a navy/violet web portal inspired by the media downloader design, and unique `tactula-XXXX` Wi-Fi setup and DHCP hostnames. Internal NVS/MQTT compatibility identifiers remain intentionally unchanged.
 
 ## Hardware
@@ -99,12 +101,31 @@ The combined weather entity includes current-condition values and a custom `prec
 
 For a different weather provider, use the same approach with that provider's entity IDs. The touchscreen reads standard weather attributes and the optional `precipitation_probability` attribute; unavailable observations are omitted.
 
+## Optional web portal password
+
+The built-in web portal can use **HTTP Basic Authentication** (disabled by default).
+Open **Device → Security**, enter an 8–64-character password, and choose **Enable authentication**.
+The username is always `admin`; the browser provides its normal username/password prompt.
+The same screen can change the password or disable authentication.
+
+The ESP32 saves only a random 16-byte salt and a PBKDF2-HMAC-SHA256 password
+hash (using the bundled Mbed TLS implementation) in NVS, not the plaintext password.
+Authentication covers the portal, APIs, live screen image and firmware/file uploads.
+The captive-portal connection checks remain available, but they cannot bypass the
+password. A full flash/NVS erase via USB will reset a forgotten password. Configuration
+exports deliberately do **not** include the auth record.
+
+**Local HTTP only:** Basic Auth does not encrypt credentials over the network.
+Use this only on a trusted LAN; do not expose port 80 to the internet. Use a
+secure proxy or VPN for remote access.
+
 ## Automatic firmware updates
 
 Tactula supports **automatic update checks and optional automatic downloads**, with **physical touchscreen approval required for every installation**.
 
 In the device's web portal, open **Maintenance → Automatic firmware update checks**:
 
+- **Allow beta releases:** disabled by default. Enable this under Maintenance to opt into prerelease testing. The device then checks the separate `https://firmware.mrsleeps.uk/tactula/releases/beta.json` manifest, which provides the latest eligible beta **or newer stable version**. Leaving this off checks stable releases only; switching channels invalidates any pending update offered under the old channel.
 - **Check for updates:** enabled by default. The first check runs about **45 seconds after boot**, then **every six hours** after a successful check. Failed checks retry after **30 minutes**. **Check now** requests an immediate check when the updater is idle.
 - **Automatically download verified firmware:** disabled by default. When enabled, discovering a newer version downloads it promptly into the *inactive OTA flash partition*. It verifies the expected board/edition, image byte count, SHA-256 checksum and ESP application image before marking it ready.
 - **Show an update icon:** controls the normal top-bar update notification. A successfully staged **automatic** download is quiet and shows an icon (when the top bar is enabled), **not a popup**. Tap the icon to open the confirmation.
@@ -113,7 +134,7 @@ In the device's web portal, open **Maintenance → Automatic firmware update che
 
 ### Where updates come from
 
-The device reads the small HTTPS manifest at `https://firmware.mrsleeps.uk/tactula/releases/current.json` rather than querying the large GitHub Releases API. The website's release mirror obtains published assets from [MrSleeps/tactula GitHub Releases](https://github.com/MrSleeps/tactula/releases), verifies their sizes and SHA-256 digests, then atomically exposes the versioned firmware and manifest. Firmware also verifies HTTPS, the exact model and edition, the canonical OTA path, expected size, and the image hash. A temporary check error does not erase a previously verified update.
+By default the device reads the small stable-only HTTPS manifest at `https://firmware.mrsleeps.uk/tactula/releases/current.json`; devices opted into prereleases use `https://firmware.mrsleeps.uk/tactula/releases/beta.json` instead. Neither queries the large GitHub Releases API. The website's release mirror obtains published assets from [MrSleeps/tactula GitHub Releases](https://github.com/MrSleeps/tactula/releases), verifies their sizes and SHA-256 digests, then atomically exposes the versioned firmware and manifest. Firmware also verifies HTTPS, the exact model and edition, the canonical OTA path, expected size, and the image hash. A temporary check error does not erase a previously verified update.
 
 The download is **not a separate file on the SD card**. It occupies the ESP32's inactive OTA partition. If a newer version is discovered while an earlier one is waiting for installation, the old image is marked unavailable and the newer verified image **overwrites that same partition** when downloaded (if automatic downloading is enabled). No history of older images accumulates. The installed/running partition is not overwritten by this process.
 

@@ -665,9 +665,21 @@ void tick() {
   }
   portEXIT_CRITICAL(&mux);
   if (activate) {
-    // A failed boot partition switch never starts a reboot.
-    if (esp_ota_set_boot_partition(bootTarget) == ESP_OK) ESP.restart();
-    else setError("Cannot activate staged firmware");
+    // A failed boot partition switch never starts a reboot. Include the
+    // ESP-IDF error name/code instead of hiding the reason from the UI.
+    const esp_err_t result = esp_ota_set_boot_partition(bootTarget);
+    if (result == ESP_OK) {
+      ESP.restart();
+    } else {
+      char reason[sizeof(status.error)];
+      snprintf(reason, sizeof(reason), "Cannot activate staged firmware: %s (0x%04X)",
+               esp_err_to_name(result), static_cast<unsigned>(result));
+      Serial.printf("OTA: %s; target=%s offset=0x%lx size=%lu\n",
+                    reason, bootTarget ? bootTarget->label : "none",
+                    bootTarget ? static_cast<unsigned long>(bootTarget->address) : 0UL,
+                    bootTarget ? static_cast<unsigned long>(bootTarget->size) : 0UL);
+      setError(reason);
+    }
   }
   if (startDownload && xTaskCreate(downloadTask, "update_fetch", 12288, nullptr, 1, nullptr) != pdPASS) {
     portENTER_CRITICAL(&mux);

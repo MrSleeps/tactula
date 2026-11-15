@@ -5,6 +5,23 @@
 (function () {
   "use strict";
   const CSS = `
+.dk-group-membership{grid-column:1/-1;display:block;font-size:12px;color:var(--mute)}
+.dk-group-membership select{min-width:0;max-width:100%}
+.dk-gt.dk-gt-group{display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;gap:6px;overflow:hidden}
+.dk-gt-group.transparent{background:transparent;border-style:dashed}
+.dk-gt-group.theme{background:color-mix(in srgb,var(--card-2) 82%,#000 18%);border:1px solid var(--line)}
+.dk-gt-group.drop-ok{outline:2px solid var(--accent);outline-offset:-2px;background:color-mix(in srgb,var(--accent-soft) 55%,var(--card-2) 45%)}
+.dk-gt-group.drop-bad{outline:2px solid var(--warn);outline-offset:-2px}
+.dk-gt-group .dk-group-heading{font-size:12px;flex:none;text-align:left}
+.dk-group-preview{display:grid;flex:1;min-height:0;overflow:hidden;pointer-events:none}
+.dk-group-preview{pointer-events:auto}
+.dk-group-item.sel{outline:2px solid var(--accent);outline-offset:-2px;background:var(--accent-soft);z-index:2}
+.dk-group-preview.custom{pointer-events:auto}
+.dk-group-preview.custom .dk-group-item{position:relative;cursor:grab;touch-action:none;user-select:none;border:1px solid var(--line);background:var(--card-2);z-index:1}
+.dk-group-preview.custom .dk-group-item.drag{z-index:4;opacity:.8}
+.dk-child-rs{position:absolute;bottom:0;right:0;width:14px;height:14px;background:linear-gradient(135deg,transparent 45%,var(--accent) 45%);cursor:nwse-resize;touch-action:none}
+.dk-group-item{display:flex;align-items:center;justify-content:center;min-width:0;min-height:0;overflow:hidden;text-overflow:ellipsis;font-size:11px;color:var(--ink);text-align:center;overflow-wrap:anywhere}
+.dk-group-item.boxed{background:var(--card-2);border-radius:6px;padding:3px}
 .dk-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .dk-status{display:flex;align-items:center;gap:8px;font:13px var(--mono);color:var(--mute);margin-top:12px}
 .dk-dot{width:9px;height:9px;border-radius:50%;background:var(--faint)}.dk-dot.ok{background:var(--ok)}.dk-dot.err{background:var(--err)}.dk-dot.busy{background:var(--warn)}
@@ -15,11 +32,15 @@
 .dk-tmain{min-width:0}.dk-tmain input{max-width:none;padding:7px 10px;font-size:14px}
 .dk-tsub{font:11px var(--mono);color:var(--dim);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dk-tact{display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.dk-tact select{width:auto;padding:6px 8px;font-size:12px}.dk-tact .btn{padding:6px 9px}
+.dk-page-stack{margin:12px 0 16px}
+#dkBootWarning[hidden]{display:none}
 .dk-phead .btn{padding:6px 9px}.dk-phead .dk-row{gap:6px}@media (min-width:561px){.dk-phead{grid-template-columns:minmax(160px,1fr) auto}}
 .dk-cap{font:12px var(--mono);color:var(--dim);margin:10px 0 0}.dk-cap.over{color:var(--err)}
 .dk-tile.sel{border-color:var(--accent)}
 .dk-more{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px 12px;padding-top:10px;border-top:1px solid var(--line)}
-.dk-more .field{margin:0}.dk-sec,.dk-grp.flat>.field::before{font:600 11px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}.dk-sec{grid-column:1/-1}.dk-grp.flat{display:contents}.dk-grp.flat>.field::before{content:"\\a0";display:block;margin-bottom:8px}.dk-grp.flat>.field:first-child::before{content:var(--t)}.dk-grp.wide{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px 12px;min-width:0}.dk-more .field-label{display:flex;align-items:center;min-height:17px;margin-bottom:6px}.dk-more .field-label .tip-btn{width:15px;height:15px;margin-left:6px;font-size:10px}.dk-warn{margin-left:8px;color:var(--warn);font-weight:600;text-transform:none;letter-spacing:0}.dk-more .field-hint.tip{margin:0 0 6px}.dk-oib i{font:18px dkmdi, dkcbi;font-style:normal;line-height:1;margin-right:6px;vertical-align:-3px}.dk-more .wide{grid-column:1/-1}.dk-more select,.dk-more input,.dk-more textarea{max-width:none;padding:7px 10px;font-size:13px}
+.dk-more .field{margin:0}.dk-sec,.dk-grp.flat>.field::before{font:600 11px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}.dk-sec{grid-column:1/-1}.dk-grp.flat{display:contents}.dk-grp.flat>.field::before{content:"\\a0";display:block;margin-bottom:8px}.dk-grp.flat>.field:first-child::before{content:var(--t)}.dk-grp.wide{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px 12px;min-width:0}.dk-more input[data-group-key="label"]{display:block;width:100%;min-width:0;background:var(--card);color:var(--ink);border:1px solid var(--line-2);border-radius:var(--r-md);font:13px var(--sans)}
+.dk-more input[data-group-key="label"]:focus{outline:2px solid var(--accent);outline-offset:1px}
+.dk-more .field-label{display:flex;align-items:center;min-height:17px;margin-bottom:6px}.dk-more .field-label .tip-btn{width:15px;height:15px;margin-left:6px;font-size:10px}.dk-warn{margin-left:8px;color:var(--warn);font-weight:600;text-transform:none;letter-spacing:0}.dk-more .field-hint.tip{margin:0 0 6px}.dk-oib i{font:18px dkmdi, dkcbi;font-style:normal;line-height:1;margin-right:6px;vertical-align:-3px}.dk-more .wide{grid-column:1/-1}.dk-more select,.dk-more input,.dk-more textarea{max-width:none;padding:7px 10px;font-size:13px}
 .dk-more .dk-hide-name{display:flex;align-items:flex-start;gap:9px;padding:0;margin:0;border:0;min-width:0}
 .dk-more .dk-hide-name .check-box{width:16px;height:16px;border-radius:4px;margin-top:1px}
 .dk-more .dk-hide-name .check-text{display:block;min-width:0}
@@ -74,18 +95,22 @@
   const sec = document.getElementById("deckSection");
   if (!sec) return;
   sec.innerHTML = `<div class="page-header"><h1 class="page-h1">Deck</h1><p class="page-lede">Build and edit your touchscreen pages and tiles. Configure the Home Assistant connection under Home Assistant in the sidebar.</p></div>
-<div class="card"><div class="card-head"><h2 class="card-title">Icons</h2><span class="tag" id="dkIcTag">-</span></div>
-<p class="field-hint">Material Design Icons, the set Home Assistant uses (mdi:...). The font file (about 1.3 MB) is stored on the device; Installation or updates download the target font in your browser and send it to the device. Removing it leaves saved tile selections intact but icons from that pack will no longer render.</p>
-<div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkIcNet">Install MDI 7.4.47</button><button type="button" class="btn" id="dkIcRemove" disabled>Remove MDI</button><button type="button" class="btn" id="dkIcFile">Upload .ttf file</button><input type="file" id="dkIcInput" accept=".ttf" hidden></div>
-<div class="dk-status"><span class="dk-dot" id="dkIcDot"></span><span id="dkIcState">checking...</span></div>
-<div class="card-head" style="margin-top:18px;margin-bottom:10px"><h3 class="card-title">Brand icons</h3><span class="tag" id="dkBrTag">-</span></div>
-<p class="field-hint">Custom Brand Icons (phu:) by elax46, installed from <a href="https://github.com/elax46/custom-brand-icons" target="_blank" rel="noopener">their GitHub</a>, not bundled. Needs a mounted microSD card. Enable it in <a href="#" data-page="maintenance">Maintenance &gt; microSD card</a>. Install latest now downloads all icon chunks automatically. Upload .js files accepts a release index with all its cbi-N.js chunks, individual chunks, or older single-file Icon Finder subsets.</p>
-<div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkBrNet" disabled>Install latest from GitHub</button><button type="button" class="btn" id="dkBrFile" disabled>Upload .js files</button><button type="button" class="btn" id="dkBrBrowse" disabled>Browse &amp; search</button><button type="button" class="btn" id="dkBrExport" disabled>Download names</button><button type="button" class="btn" id="dkBrRemove" disabled>Remove</button><input type="file" id="dkBrInput" accept=".js" multiple hidden></div>
-<div class="dk-status"><span class="dk-dot" id="dkBrDot"></span><span id="dkBrState">checking...</span></div></div>
+<div id="dkBootWarning" class="card" role="alert" hidden style="border-color:var(--warn);margin-bottom:16px"></div>
 <div class="card"><div class="card-head"><h2 class="card-title">Pages and tiles</h2></div>
 <label class="check-row standalone" style="margin-bottom:14px"><input type="checkbox" id="dkHeader"><span class="check-box"></span><span class="check-text"><strong>Show the top bar</strong><span class="ct-hint">Page name, WiFi and clock above the tiles. Also switchable in the quick panel on the device.</span></span></label>
 <div class="dk-tabs" id="dkTabs"></div><div id="dkPage"></div>
 <div class="dk-save"><span class="dk-msg" id="dkMsg">No changes</span><button type="button" class="btn btn-accent" id="dkSave">Save to device</button></div></div>`;
+  const iconSection = document.getElementById("deckIconsSection");
+  if (iconSection) iconSection.innerHTML = `<div class="card"><div class="card-head"><h2 class="card-title">Material Design Icons (MDI)</h2><span class="tag" id="dkIcTag">-</span></div>
+<p class="field-hint">Material Design Icons, the set Home Assistant uses (mdi:...). The font file (about 1.3 MB) is stored on the device; Installation or updates download the target font in your browser and send it to the device. Removing it leaves saved tile selections intact but icons from that pack will no longer render.</p>
+<div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkIcNet">Install MDI 7.4.47</button><button type="button" class="btn" id="dkIcRemove" disabled>Remove MDI</button><button type="button" class="btn" id="dkIcFile">Upload .ttf file</button><input type="file" id="dkIcInput" accept=".ttf" hidden></div>
+<div class="dk-status"><span class="dk-dot" id="dkIcDot"></span><span id="dkIcState">checking...</span></div>
+</div>
+<div class="card"><div class="card-head"><h2 class="card-title">Brand icons</h2><span class="tag" id="dkBrTag">-</span></div>
+<p class="field-hint">Custom Brand Icons (phu:) by elax46, installed from <a href="https://github.com/elax46/custom-brand-icons" target="_blank" rel="noopener">their GitHub</a>, not bundled. Needs a mounted microSD card. Enable it in <a href="#" data-page="maintenance">Maintenance &gt; microSD card</a>. Install latest now downloads all icon chunks automatically. Upload .js files accepts a release index with all its cbi-N.js chunks, individual chunks, or older single-file Icon Finder subsets.</p>
+<div class="dk-row" style="margin-top:10px"><button type="button" class="btn btn-accent" id="dkBrNet" disabled>Install latest from GitHub</button><button type="button" class="btn" id="dkBrFile" disabled>Upload .js files</button><button type="button" class="btn" id="dkBrBrowse" disabled>Browse &amp; search</button><button type="button" class="btn" id="dkBrExport" disabled>Download names</button><button type="button" class="btn" id="dkBrRemove" disabled>Remove</button><input type="file" id="dkBrInput" accept=".js" multiple hidden></div>
+<div class="dk-status"><span class="dk-dot" id="dkBrDot"></span><span id="dkBrState">checking...</span></div></div>
+`;
   document.body.insertAdjacentHTML(
     "beforeend",
     `<div class="dk-modal" id="dkPicker"><div class="dk-sheet"><div class="dk-head">
@@ -279,7 +304,7 @@
     if (wide) return '<div class="dk-grp wide">' + secH(title) + inner + "</div>";
     return '<div class="dk-grp flat" style="--t:&quot;' + title + '&quot;">' + inner + "</div>";
   }
-  const canOn = (t) => !["metric", "sensor", "clock", "media", "climate"].includes(t.type);
+  const canOn = (t) => !["metric", "sensor", "clock", "weather-clock", "media", "climate"].includes(t.type);
   /* Colours, then the on state; icon colours sit with them, the icon's style in iconFields. */
   function colorField(t, i) {
     const tx = TXT.concat(SW),
@@ -374,26 +399,30 @@
     return th === "1" ? "#FFFFFF" : th === "2" ? "#101622" : "#171E2C";
   };
   function lookOff(t, i) {
+    const group = t.type === "group";
     return (
       colRow(
         t,
         i,
         "bgColor",
-        canOn(t) ? "Off background" : "Background",
+        group ? "Group background" : canOn(t) ? "Off background" : "Background",
         themeBg(),
-        "The tile background" +
-          (canOn(t) ? " while it is off" : "") +
-          "; in Glass the tint of its glass. Auto uses the theme.",
+        group
+          ? "The background colour of this group container. In Glass, this colours the glass tint. Auto uses the theme."
+          : "The tile background" + (canOn(t) ? " while it is off" : "") +
+            "; in Glass the tint of its glass. Auto uses the theme.",
         { sw: ["#171E2C", "#101622", "#FFFFFF"].concat(SW) },
       ) +
       opRow(
         t,
         i,
         "opacity",
-        canOn(t) ? "Off opacity" : "Opacity",
+        group ? "Group opacity" : canOn(t) ? "Off opacity" : "Opacity",
         "glassTint",
         10,
-        "Glass only: how much of the background colour covers the picture. Auto text may still darken it. Auto = Glass look.",
+        group
+          ? "In Glass, controls how strongly the group background tint covers the wallpaper. Auto uses the theme's Glass setting."
+          : "Glass only: how much of the background colour covers the picture. Auto text may still darken it. Auto = Glass look.",
       )
     );
   }
@@ -497,14 +526,14 @@
         h += '<div class="field">' +
           lbl(t.type === "nav" ? "Navigation image (optional)" : label,
               t.type === "nav" ?
-              "Choose a PNG uploaded under Maintenance → Bedroom custom icons (ending _off.png). This takes priority over the MDI/brand icon. Select Use icon to show the chosen icon instead." :
-              "PNG on the microSD card. Upload images under Maintenance → Bedroom custom icons. None uses the tile ID filename automatically, falling back to its MDI icon.") +
+              "Choose a PNG uploaded under Configuration → Icons → Custom PNG icons (ending _off.png). This takes priority over the MDI/brand icon. Select Use icon to show the chosen icon instead." :
+              "PNG on the microSD card. Upload images under Configuration → Icons → Custom PNG icons. None uses the tile ID filename automatically, falling back to its MDI icon.") +
           '<select data-img="' + i + '" data-imgkey="' + field + '">' +
           opt("", t.type === "nav" ? "Use selected MDI / Brand icon" : "Automatic (" + fallback + ")", !saved) +
           options.map((n) => opt(n, n, n === saved)).join("") +
           '</select></div>';
       }
-      h += '<p class="field-hint wide">To use a different PNG, upload it under Maintenance → Bedroom custom icons, then reopen this editor.</p>';
+      h += '<p class="field-hint wide">To use a different PNG, upload it under Configuration → Icons → Custom PNG icons, then reopen this editor.</p>';
     }
     return grp("Icon", h);
   }
@@ -566,6 +595,39 @@
       '<select data-clock-date="' + i + '">' + opt("", "Date if it fits", t.date !== "always" && t.date !== "never") + opt("always", "Date always", t.date === "always") + opt("never", "Date never", t.date === "never") + '</select></div>' + colorField(t, i) + whenField(t, i) + "</div>" : "") +
       "</div>"
     );
+  }
+  function weatherClockRow(t, i) {
+    const weatherSources = Object.keys(entMap || {}).filter(id=>domainOf(id)==='weather').sort();
+    const choices = weatherSources.map(id=>'<option value="' + esc(id) + '"></option>').join('');
+    return '<div class="dk-tile' + (i === sel ? ' sel' : '') +
+      '"><div class="dk-ic" style="background:' + (t.color || '#EDF0F8') +
+      '">12</div><div class="dk-tmain"><b>Weather Clock</b><div class="dk-tsub">Weather · short date · large time</div></div>' +
+      '<div class="dk-tact">' + sizeSel(t, i) +
+      '<button type="button" class="btn' + (i === more ? ' on' : '') +
+      '" data-mo="' + i + '" title="More options">&#8943;</button>' +
+      '<button type="button" class="btn" data-u="' + i + '" title="Move up">&#8593;</button>' +
+      '<button type="button" class="btn" data-x="' + i + '" title="Remove">&#215;</button></div>' +
+      (i === more ? '<div class="dk-more">' +
+      '<div class="field wide">' + lbl('Weather source', 'Select a Home Assistant weather.* entity. Its current condition and temperature appear beside the short date.') +
+      '<input type="text" list="dk-weather-clock-' + i + '" data-wclock-entity="' + i + '" value="' + esc(t.entity || '') +
+      '" placeholder="weather.forecast_home"><datalist id="dk-weather-clock-' + i + '">' + choices + '</datalist></div>' +
+      '<div class="field wide">' + lbl('Weather icon style', 'MDI always works. Meteocons Fill and Flat use PNG packs installed on the microSD card.') +
+      '<select data-wclock-pack="' + i + '">' + opt('mdi','Built-in MDI',!t.weatherIcons || t.weatherIcons==='mdi') +
+      opt('meteocons-fill','Meteocons Fill',t.weatherIcons==='meteocons-fill') +
+      opt('meteocons-flat','Meteocons Flat',t.weatherIcons==='meteocons-flat') +
+      opt('skycons','Skycons (animated)',t.weatherIcons==='skycons') + '</select>' +
+      '<div class="dk-row" style="margin-top:8px">' +
+      '<button type="button" class="btn" data-wclock-install="fill">Install / update Fill</button>' +
+      '<button type="button" class="btn" data-wclock-install="flat">Install / update Flat</button>' +
+      '<button type="button" class="btn" data-skycons-install>Install / update Skycons</button></div>' +
+      '<p class="field-hint" data-wclock-status>Requires microSD. Meteocons install as small PNGs; Skycons install as animated eight-frame PNG atlases.</p></div>' +
+      '<div class="field wide">' + lbl('Background', 'Standalone is transparent; Boxed uses the tile background.') +
+      '<select data-clock-box="' + i + '">' + opt('0','Standalone (no box)',t.box===false) +
+      opt('1','Boxed',t.box!==false) + '</select></div>' +
+      grp('Colours',
+        colRow(t,i,'color','Time colour','#EDF0F8','Colour of the large clock numerals.') +
+        colRow(t,i,'textColor','Header text colour','#EDF0F8','Colour of the weather temperature and date.') +
+        lookOff(t,i),true) + whenField(t,i) + '</div>' : '') + '</div>';
   }
   // Dedicated icon-only page navigation: no entity, label or status on
   // the physical tile. Reuses the installed icon picker and uploaded PNGs.
@@ -1261,6 +1323,7 @@
     setPos(t, q);
   }
   const sizeSel = (t, i) => {
+    if (t.parent) return '<span class="dk-tsub">Sized by group</span>';
     const s = tileSize(t),
       o = ["1x1", "1.5x1", "2x1", "3x1", "1x1.5", "1.5x1.5", "1x2", "2x2"];
     if (!o.includes(s)) o.push(s);
@@ -1290,7 +1353,7 @@
       at[k] = { x: x, y: y, w: w, h: h };
     };
     p.tiles.forEach((t, k) => {
-      if (hidT(t)) return;
+      if (hidT(t) || t.parent) return;
       const q = tpos(t),
         [w, h] = tdim(t);
       if (typeof q.x === "number" && typeof q.y === "number") {
@@ -1300,7 +1363,7 @@
       }
     });
     p.tiles.forEach((t, k) => {
-      if (at[k] || hidT(t)) return;
+      if (at[k] || hidT(t) || t.parent) return;
       const [w, h] = tdim(t);
       for (let y = 0; y < r && !at[k]; y++)
         for (let x = 0; x < c && !at[k]; x++) if (fits(x, y, w, h)) put(k, x, y, w, h);
@@ -1311,7 +1374,7 @@
    A hidden tile loses its old cell, or it could claim space before a pinned one. */
   function pinAll(p, at) {
     p.tiles.forEach((t, k) => {
-      if (hidT(t)) return;
+      if (hidT(t) || t.parent) return;
       const a = at[k];
       if (a) {
         setPos(t, cell(a.x, a.y, a.w, a.h));
@@ -1388,12 +1451,87 @@
       "</i></span>"
     );
   }
+  function groupMembers(p, group) {
+    return p.tiles.filter((t) => t.parent === group.id);
+  }
+  function releaseGroup(p, id) {
+    p.tiles.forEach((t) => { if (t.parent === id) delete t.parent; });
+  }
+  function groupRow(t, i) {
+    const field = (label, input) => '<label class="field"><span class="field-label">' + label + '</span>' + input + '</label>';
+    const select = (key, choices, value) => '<select data-group-key="' + key + '" data-group-i="' + i + '">' +
+      choices.map(([v, label]) => opt(v, label, String(value) === v)).join('') + '</select>';
+    const number = (key, value, max) => '<input type="number" min="0" max="' + max + '" data-group-key="' + key + '" data-group-i="' + i + '" value="' + value + '">';
+    return '<div class="dk-tile"><span class="dk-ic">▦</span><div class="dk-tmain"><b>Group</b><div class="dk-tsub">' +
+      groupMembers(pages()[cur], t).length + ' items · contents keep their own actions</div></div><div class="dk-tact">' + sizeSel(t, i) +
+      '<button type="button" class="btn" data-u="' + i + '" aria-label="Move group earlier">↑</button><button type="button" class="btn" data-x="' + i + '">Ungroup</button></div>' +
+      '<div class="dk-more">' +
+      field('Heading (optional)', '<input data-group-key="label" data-group-i="' + i + '" value="' + esc(t.label || '') + '">') +
+      field('Arrangement', select('flow', [['row','Row'],['column','Column'],['grid','Grid'],['custom','Custom (6 × 6)']], t.flow || 'column')) +
+      field('Grid columns', select('columns', [1,2,3,4,5,6].map(n=>[String(n),String(n)]), t.columns || 2)) +
+      field('Background', select('surface', [['theme','Theme (glass in Glass theme)'],['solid','Solid'],['transparent','Transparent']], t.surface || 'theme')) +
+      field('Padding (pixels)', number('padding', t.padding == null ? 8 : t.padding, 24)) +
+      field('Spacing (pixels)', number('gap', t.gap == null ? 6 : t.gap, 24)) +
+      field('Child backgrounds', select('plainChildren', [['true','Shared group background'],['false','Keep individual backgrounds']], t.plainChildren !== false)) +
+      grp('Colours', lookOff(t, i), true) +
+      '<p class="field-hint" style="grid-column:1/-1">Choose this group in each tile’s “Container” field. Automatic layouts share space equally. Custom lets you position and resize each child with its Container controls. Groups cannot contain other groups. Ungroup keeps every item.</p></div></div>';
+  }
+  function groupMembership(t, i) {
+    if (t.type === 'group') return '';
+    const groups = pages()[cur].tiles.filter(g=>g.type === 'group');
+    if (!groups.length) return '';
+    const group = groups.find(g => g.id === t.parent);
+    const slot = t.slot || {};
+    const slotFields = ['x','y','w','h'].map(key => {
+      const fallback = key === 'w' ? 3 : key === 'h' ? 2 : 0;
+      const value = slot[key] == null ? fallback : slot[key];
+      return '<label class="field"><span class="field-label">' + ({x:'Column',y:'Row',w:'Width',h:'Height'}[key]) +
+        '</span><input type="number" min="' + (key === 'w' || key === 'h' ? 1 : 0) +
+        '" max="6" value="' + value + '" data-slot-key="' + key + '" data-slot-i="' + i + '"></label>';
+    }).join('');
+    return '<div class="dk-group-membership"><label>Container <select data-parent="' + i + '">' +
+      opt('', 'Page (standalone)', !t.parent) + groups.map(g=>opt(g.id,g.label || 'Group (' + g.id + ')',t.parent === g.id)).join('') +
+      '</select></label>' + (group && group.flow === 'custom' ?
+      '<div class="dk-slot-fields" style="display:grid;grid-template-columns:repeat(4,minmax(65px,1fr));gap:6px;width:100%;margin-top:8px">' + slotFields +
+      '<small style="grid-column:1/-1">6 × 6 grid; columns and rows start at 0. Avoid overlapping other tiles.</small></div>' : '') + '</div>';
+  }
+  function groupPreview(t, k, a) {
+    const members = groupMembers(pages()[cur], t).filter(x=>!hidT(x));
+    const flow = t.flow || 'column';
+    const custom = flow === 'custom';
+    const cols = custom ? 6 : flow === 'row' ? Math.max(1,members.length) : flow === 'grid' ? Math.min(t.columns || 2,Math.max(1,members.length)) : 1;
+    const rows = custom ? 6 : Math.max(1,Math.ceil(members.length/cols));
+    const surface = ['theme','solid','transparent'].includes(t.surface) ? t.surface : 'theme';
+    const previewColor = typeof t.bgColor === 'string' && /^#[0-9a-f]{6}$/i.test(t.bgColor)
+      ? t.bgColor : '';
+    return '<div class="dk-gt dk-gt-group ' + surface + (k === sel ? ' sel' : '') + '" data-g="' + k + '"' +
+      (a ? ' style="grid-area:' + garea(a) + ';padding:' + cl(t.padding == null ? 8 : t.padding,0,24) +
+        'px' + (previewColor && surface !== 'transparent' ? ';background:color-mix(in srgb,' + previewColor + ' 80%,#000 20%)' : '') + '"' : '') + '>' +
+      (t.label ? '<b class="dk-group-heading">' + esc(t.label) + '</b>' : '') +
+      '<div class="dk-group-preview' + (custom ? ' custom' : '') + '" style="grid-template-columns:repeat(' + cols + ',minmax(0,1fr));grid-template-rows:repeat(' + rows + ',minmax(0,1fr));gap:' + cl(t.gap == null ? 6 : t.gap,0,24) + 'px">' +
+      members.map((child,index)=>{
+        const slot = child.slot || {};
+        const x = cl(slot.x == null ? (index%2)*3 : slot.x,0,5);
+        const y = cl(slot.y == null ? Math.floor(index/2)%3*2 : slot.y,0,5);
+        const w = cl(slot.w == null ? 3 : slot.w,1,6-x);
+        const h = cl(slot.h == null ? 2 : slot.h,1,6-y);
+        const area = custom ? ' style="grid-column:' + (x+1) + '/span ' + w + ';grid-row:' + (y+1) + '/span ' + h + '"' : '';
+        const i = pages()[cur].tiles.indexOf(child);
+        return '<span class="dk-group-item' + (t.plainChildren === false ? ' boxed' : '') + (i === sel ? ' sel' : '') + '"' +
+          ' data-child="' + i + '"' + (i === sel ? ' data-selected="true"' : '') + area + '>' +
+          esc(child.label || (child.type === 'weather-clock' ? 'Weather Clock' : child.type === 'clock' ? 'Clock' : (entMap[child.entity] || {}).name || child.entity || child.type)) +
+          (custom ? '<span class="dk-child-rs" data-child-rs="' + i + '"></span>' : '') + '</span>';
+      }).join('') +
+      (!members.length ? '<span class="dk-group-item">Assign tiles using Container</span>' : '') + '</div>' +
+      (a ? '<span class="dk-rs" data-rs="' + k + '"></span>' : '') + '</div>';
+  }
   function gtile(t, k, a) {
+    if (t.type === 'group') return groupPreview(t, k, a);
     const en = entMap[t.entity], d = domainOf(t.entity);
-    const ck = t.type === "clock";
+    const ck = t.type === "clock" || t.type === "weather-clock";
     const col = t.color || (ck ? "#EDF0F8" : COL[d] || "#48A5FF");
     const cp = ck ? 0 : tileCp(t);
-    const nm = ck ? "Clock" : t.label || (en && en.name) || t.entity || "Tile";
+    const nm = ck ? (t.type === "weather-clock" ? "Weather Clock" : "Clock") : t.label || (en && en.name) || t.entity || "Tile";
     const chip = iconTile(t) ? gchip(t, col, cp) : null;
     if (t.type === "nav") {
       return '<div class="dk-gt dk-gt-nav' + (k === sel ? " sel" : "") +
@@ -1432,6 +1570,161 @@
       "</div>"
     );
   }
+  // Internal group grid editor, independent of the outer page-grid drag.
+  // Only custom groups expose these pointer handles.
+  function groupChildDrag(e, p, i, resizing) {
+    if (e.button > 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const handle = e.currentTarget;
+    const tile = resizing ? handle.parentElement : handle;
+    const body = tile.parentElement;
+    const parent = p.tiles.find(g => g.type === 'group' && g.id === p.tiles[i].parent);
+    if (!parent) return;
+    if (parent.flow !== 'custom') {
+      // Automatic groups keep their layout but allow a child to be dragged out.
+      const startX=e.clientX, startY=e.clientY, body=tile.parentElement;
+      let travelled=false;
+      handle.setPointerCapture(e.pointerId);
+      handle.onpointermove=ev=>{
+        if (Math.abs(ev.clientX-startX)+Math.abs(ev.clientY-startY)>=6) travelled=true;
+      };
+      handle.onpointerup=handle.onpointercancel=ev=>{
+        handle.onpointermove=handle.onpointerup=handle.onpointercancel=null;
+        if (ev.type !== 'pointerup') return;
+        if (travelled && !insideRect(ev,body.getBoundingClientRect())) {
+          const target=pageDropCell(ev,p,i);
+          if (target) {
+            const at=layout(p);
+            pinAll(p,at);
+            delete p.tiles[i].parent;
+            setPos(p.tiles[i],cell(target.x,target.y,target.w,target.h));
+            setDirty(true);
+            selectTile(i);
+            return;
+          }
+        }
+        if (!travelled) selectTile(i);
+        else renderPage();
+      };
+      return;
+    }
+    const siblings = groupMembers(p, parent).filter(x => !hidT(x));
+    const index = siblings.indexOf(p.tiles[i]);
+    const original = Object.assign({
+      x:(index%2)*3, y:Math.floor(index/2)%3*2, w:3, h:2
+    },p.tiles[i].slot || {});
+    const rect = body.getBoundingClientRect();
+    const styles = getComputedStyle(body);
+    const gapX = parseFloat(styles.columnGap) || 0;
+    const gapY = parseFloat(styles.rowGap) || 0;
+    const cellW = (rect.width - gapX*5)/6;
+    const cellH = (rect.height - gapY*5)/6;
+    const stepX = cellW + gapX, stepY = cellH + gapY;
+    if (stepX <= 0 || stepY <= 0) return;
+    const startX = e.clientX, startY = e.clientY;
+    let changed = false, next = original, travelled = false;
+    handle.setPointerCapture(e.pointerId);
+    handle.onpointermove = ev => {
+      if (Math.abs(ev.clientX-startX)+Math.abs(ev.clientY-startY) >= 5) travelled = true;
+      const dx = Math.round((ev.clientX-startX)/stepX);
+      const dy = Math.round((ev.clientY-startY)/stepY);
+      next = Object.assign({},original);
+      if (resizing) {
+        next.w = cl(original.w+dx,1,6-original.x);
+        next.h = cl(original.h+dy,1,6-original.y);
+      } else {
+        next.x = cl(original.x+dx,0,6-original.w);
+        next.y = cl(original.y+dy,0,6-original.h);
+      }
+      changed = next.x!==original.x || next.y!==original.y || next.w!==original.w || next.h!==original.h;
+      tile.style.gridColumn = (next.x+1)+'/span '+next.w;
+      tile.style.gridRow = (next.y+1)+'/span '+next.h;
+    };
+    handle.onpointerup = handle.onpointercancel = ev => {
+      handle.onpointermove = handle.onpointerup = handle.onpointercancel = null;
+      if (ev.type === 'pointerup' && !resizing && travelled && !insideRect(ev, body.getBoundingClientRect())) {
+        const target = pageDropCell(ev, p, i);
+        if (target) {
+          const old = layout(p);
+          pinAll(p, old);
+          delete p.tiles[i].parent;
+          // Preserve the child slot for a later return to a container.
+          setPos(p.tiles[i], cell(target.x,target.y,target.w,target.h));
+          setDirty(true);
+          selectTile(i);
+          return;
+        }
+      }
+      if (ev.type === 'pointerup' && changed) {
+        // Reject collisions with visible sibling positions rather than
+        // silently overlapping touch targets.
+        const occupied = siblings.some((other,j)=>{
+          if(other === p.tiles[i]) return false;
+          const o = Object.assign({x:(j%2)*3,y:Math.floor(j/2)%3*2,w:3,h:2},other.slot || {});
+          return next.x < o.x+o.w && next.x+next.w > o.x &&
+                 next.y < o.y+o.h && next.y+next.h > o.y;
+        });
+        if (!occupied) {
+          p.tiles[i].slot = next;
+          setDirty(true);
+        }
+      }
+      if (ev.type === 'pointerup' && !resizing && !travelled) {
+        selectTile(i);
+      } else {
+        renderPage();
+      }
+    };
+  }
+  function selectTile(i) {
+    sel = i;
+    renderPage();
+    const row = document.querySelector('[data-tile-row="' + i + '"]');
+    if (row) row.scrollIntoView({block:'nearest',behavior:'smooth'});
+  }
+  const insideRect = (ev,b) => ev.clientX >= b.left && ev.clientX <= b.right &&
+                               ev.clientY >= b.top && ev.clientY <= b.bottom;
+  // Map a pointer release to a free page position without evicting other tiles.
+  function pageDropCell(ev,p,k) {
+    const surface = $("dkGrid"), rect = surface.getBoundingClientRect();
+    if (!insideRect(ev,rect)) return null;
+    const [gc,gr] = grid(p), c = gc*2, r = gr*2;
+    const st = getComputedStyle(surface);
+    const padX = parseFloat(st.paddingLeft) || 0, padY = parseFloat(st.paddingTop) || 0;
+    const gapX = parseFloat(st.columnGap) || 0, gapY = parseFloat(st.rowGap) || 0;
+    const sx = (rect.width-2*padX+gapX)/c;
+    const sy = (rect.height-2*padY+gapY)/r;
+    const [w,h] = tdim(p.tiles[k]);
+    const q = {x:cl(Math.floor((ev.clientX-rect.left-padX)/sx),0,Math.max(0,c-w)),
+               y:cl(Math.floor((ev.clientY-rect.top-padY)/sy),0,Math.max(0,r-h)),w,h};
+    if (w>c || h>r || !free(layout(p),k,q,c,r)) return null;
+    return q;
+  }
+  function groupDropSlot(ev,p,k,at) {
+    if (p.tiles[k].type === 'group') return null;
+    const groups = p.tiles.map((t,i)=>({t,i})).filter(x=>x.t.type==='group' && at[x.i] && !hidT(x.t));
+    for (const {t,i} of groups) {
+      const node = $("dkGrid").querySelector('[data-g="' + i + '"] .dk-group-preview');
+      if (!node || !insideRect(ev,node.getBoundingClientRect())) continue;
+      if (t.flow !== 'custom') return {group:t,slot:null};
+      const siblings = groupMembers(p,t).filter(child=>!hidT(child));
+      const rect = node.getBoundingClientRect(), style=getComputedStyle(node);
+      const gapX = parseFloat(style.columnGap)||0, gapY=parseFloat(style.rowGap)||0;
+      const sx = (rect.width+gapX)/6, sy=(rect.height+gapY)/6;
+      const x = cl(Math.floor((ev.clientX-rect.left)/sx),0,5);
+      const y = cl(Math.floor((ev.clientY-rect.top)/sy),0,5);
+      const size = p.tiles[k].slot || {w:3,h:2};
+      const w = cl(size.w,1,6-x), h = cl(size.h,1,6-y);
+      const slot={x,y,w,h};
+      const collides=siblings.some((other,j)=>{
+        const o=Object.assign({x:j%2*3,y:Math.floor(j/2)%3*2,w:3,h:2},other.slot||{});
+        return x < o.x+o.w && x+w > o.x && y < o.y+o.h && y+h > o.y;
+      });
+      if (!collides) return {group:t,slot};
+    }
+    return null;
+  }
   /* Drag a tile to a free place or onto another tile, which moves to the dragged
    tile's old place (swapPlan, shown live); the corner handle resizes. A press without movement selects the tile. */
   function gdrag(e, p, at, k, size) {
@@ -1458,7 +1751,12 @@
       oy = a ? e.clientY - tb.top : sy / 2;
     let moved = false,
       tgt = null,
-      shown = -1;
+      shown = -1,
+      hoverGroup = null;
+    const clearHover = () => {
+      if (hoverGroup) hoverGroup.classList.remove('drop-ok','drop-bad');
+      hoverGroup = null;
+    };
     n.setPointerCapture(e.pointerId);
     n.onpointermove = (ev) => {
       const dx = ev.clientX - e.clientX,
@@ -1466,6 +1764,22 @@
       if (!moved && Math.abs(dx) + Math.abs(dy) < 6) return;
       moved = true;
       tile.classList.add("drag");
+      clearHover();
+      // The group owns its outer grid cells. Accepting a child there is not
+      // an outer-grid collision; show group-specific feedback instead.
+      if (!size) {
+        const groupNode = [...g.querySelectorAll('.dk-gt-group')].find(node =>
+          insideRect(ev,node.getBoundingClientRect()));
+        if (groupNode) {
+          const drop = groupDropSlot(ev,p,k,at);
+          hoverGroup = groupNode;
+          groupNode.classList.add(drop ? 'drop-ok' : 'drop-bad');
+          tile.style.transform = "translate(" + dx + "px," + dy + "px)";
+          gh.hidden = true;
+          tgt = null;
+          return;
+        }
+      }
       if (size)
         tgt = {
           x: a.x,
@@ -1512,12 +1826,22 @@
     };
     n.onpointerup = n.onpointercancel = (ev) => {
       n.onpointermove = n.onpointerup = n.onpointercancel = null;
+      clearHover();
       if (!moved) {
-        sel = k;
-        renderPage();
-        const row = document.querySelector(".dk-tile.sel");
-        if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        selectTile(k);
         return;
+      }
+      if (ev.type === "pointerup" && !size) {
+        const drop = groupDropSlot(ev,p,k,at);
+        if (drop) {
+          pinAll(p,at);
+          p.tiles[k].parent = drop.group.id;
+          if (drop.slot) p.tiles[k].slot = drop.slot;
+          sel=k;
+          setDirty(true);
+          renderPage();
+          return;
+        }
       }
       if (ev.type === "pointerup" && tgt && tgt.ok) {
         pinAll(p, at);
@@ -1631,7 +1955,7 @@
     const [c, r] = grid(p),
       land = ori === "landscape",
       at = layout(p),
-      lost = p.tiles.map((t, k) => k).filter((k) => !at[k] && !hidT(p.tiles[k]));
+      lost = p.tiles.map((t, k) => k).filter((k) => !at[k] && !hidT(p.tiles[k]) && !p.tiles[k].parent);
     let cells = 0;
     at.forEach((a) => {
       if (a) cells += (a.w * a.h) / 4;
@@ -1671,7 +1995,7 @@
       h += '<p class="field-hint" style="margin:6px 0 12px">Saved layout · Hidden on the touchscreen while the Bambu printer is disabled. Your edits are preserved and return when the printer is enabled.</p>';
     h += pageWhenField(p);
     h +=
-      '<label class="check-row standalone"><input type="checkbox" id="dkPStack"' +
+      '<label class="check-row standalone dk-page-stack"><input type="checkbox" id="dkPStack"' +
       (stackedAt(ps, cur) ? " checked" : "") +
       (cur === 0 ? " disabled" : "") +
       '><span class="check-box"></span><span class="check-text"><strong>Below the previous page</strong><span class="ct-hint">Stacked pages form one column: swipe up and down between them, left and right to the next column. Move left/right moves a column head with its column, or swaps a stacked page within its column.</span></span></label>';
@@ -1719,8 +2043,10 @@
       '</div><div class="dk-right"><div class="dk-tiles">' +
       p.tiles
         .map((t, i) => {
+          if (t.type === "group") return groupRow(t, i);
           if (t.type === "bambu") return bambuRow(t, i);
           if (t.type === "clock") return clockRow(t, i);
+          if (t.type === "weather-clock") return weatherClockRow(t, i);
           if (t.type === "nav") return navRow(t, i);
           if (t.type === "ha-media") return haMediaRow(t, i);
           const d = domainOf(t.entity);
@@ -1793,7 +2119,11 @@
             "</div>"
           );
         })
-        .map((html, i) => html.replace('<div class="dk-tile', '<div data-tile-row="' + i + '" class="dk-tile'))
+        .map((html, i) => {
+          html = html.replace('<div class="dk-tile', '<div data-tile-row="' + i + '" class="dk-tile');
+          const end = html.lastIndexOf('</div>');
+          return html.slice(0, end) + groupMembership(p.tiles[i], i) + html.slice(end);
+        })
         .join("") +
       "</div>";
     h +=
@@ -1801,7 +2131,7 @@
       +cells.toFixed(2) +
       " of " +
       c * r +
-      ' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddClimate">+ Add climate controls</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddHaMedia">+ Add media controls</button><button type="button" class="btn" id="dkAddClock">+ Add clock</button><button type="button" class="btn" id="dkAddNav">+ Add navigation</button><button type="button" class="btn" id="dkAddTemperature">+ Add temperature</button><button type="button" class="btn" id="dkAddWeather">+ Add weather</button><button type="button" class="btn" id="dkAddHttpSensor">+ Add HTTP sensor</button>' +
+      ' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddClimate">+ Add climate controls</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddHaMedia">+ Add media controls</button><button type="button" class="btn" id="dkAddClock">+ Add clock</button><button type="button" class="btn" id="dkAddWeatherClock">+ Weather clock</button><button type="button" class="btn" id="dkAddGroup">+ Add group</button><button type="button" class="btn" id="dkAddNav">+ Add navigation</button><button type="button" class="btn" id="dkAddTemperature">+ Add temperature</button><button type="button" class="btn" id="dkAddWeather">+ Add weather</button><button type="button" class="btn" id="dkAddHttpSensor">+ Add HTTP sensor</button>' +
       (bambuAvailable ? '<button type="button" class="btn" id="dkAddBambu">+ Add Bambu widget</button>' : '') +
       "</div>" +
       '<p class="field-hint">Chart and Bar need a wide tile (2x1 on most grids, a 2x0.5 one fits them in a row between the name and the number, a narrower one shows the number), so picking one makes a 1x1 tile 2x1.</p></div></div>';
@@ -1827,18 +2157,19 @@
       $("dkMv").onclick = () => {
         const q = ps[+$("dkMvPg").value];
         if (!q) return;
-        const t = p.tiles.splice(sel, 1)[0];
-        Object.keys(t.pos || {}).forEach((o) => {
-          delete t.pos[o].x;
-          delete t.pos[o].y;
-          if (!Object.keys(t.pos[o]).length) delete t.pos[o];
+        const t = p.tiles[sel];
+        const moving = t.type === 'group' ? [t, ...groupMembers(p, t)] : [t];
+        if (q.tiles.length + moving.length > 24) { alert('The destination page would exceed 24 tiles.'); return; }
+        p.tiles = p.tiles.filter(x=>!moving.includes(x));
+        moving.forEach((item) => {
+          delete item.parent;
+          Object.values(item.pos || {}).forEach(pos=>{ delete pos.x; delete pos.y; });
+          const original = item.id;
+          let n = 2;
+          while (q.tiles.some(x=>x.id === item.id)) item.id = original + '_' + n++;
+          if (item !== t && t.type === 'group') item.parent = t.id;
+          q.tiles.push(item);
         });
-        if (t.pos && !Object.keys(t.pos).length) delete t.pos;
-        let id = t.id,
-          n = 2;
-        while (q.tiles.some((x) => x.id === id)) id = t.id + "_" + n++;
-        t.id = id;
-        q.tiles.push(t);
         sel = -1;
         more = -1;
         setDirty(true);
@@ -1859,6 +2190,12 @@
           sel = -1;
           renderPage();
         }),
+    );
+    el.querySelectorAll("[data-child]").forEach(
+      n => n.onpointerdown = e => groupChildDrag(e,p,+n.dataset.child,false)
+    );
+    el.querySelectorAll("[data-child-rs]").forEach(
+      n => n.onpointerdown = e => groupChildDrag(e,p,+n.dataset.childRs,true)
     );
     el.querySelectorAll("[data-g]").forEach(
       (n) => (n.onpointerdown = (e) => gdrag(e, p, at, +n.dataset.g, false)),
@@ -1983,8 +2320,13 @@
         (x.onclick = () => {
           const i = +x.dataset.u;
           if (i < 1) return;
-          const t = p.tiles.splice(i, 1)[0];
-          p.tiles.splice(i - 1, 0, t);
+          const t = p.tiles[i];
+          // Move within the same container; unrelated tile rows do not affect order.
+          let before = i - 1;
+          while (before >= 0 && (p.tiles[before].parent || '') !== (t.parent || '')) --before;
+          if (before < 0) return;
+          p.tiles.splice(i, 1);
+          p.tiles.splice(before, 0, t);
           sel = -1;
           more = -1;
           setDirty(true);
@@ -1994,6 +2336,8 @@
     el.querySelectorAll("[data-x]").forEach(
       (x) =>
         (x.onclick = () => {
+          const t = p.tiles[+x.dataset.x];
+          if (t.type === 'group') releaseGroup(p, t.id);
           p.tiles.splice(+x.dataset.x, 1);
           sel = -1;
           more = -1;
@@ -2286,6 +2630,174 @@
       setDirty(true);
       renderPage();
     };
+    $("dkAddGroup").onclick = () => {
+      if (p.tiles.length >= 24) { alert('The page already has the maximum of 24 tiles.'); return; }
+      const group = {id:'group_' + Date.now().toString(36),type:'group',flow:'column',padding:8,gap:6,plainChildren:true};
+      setSize(group, '2x2');
+      p.tiles.push(group);
+      sel = p.tiles.length - 1;
+      setDirty(true);
+      renderPage();
+    };
+    el.querySelectorAll('[data-parent]').forEach(input=>{
+      input.onchange = () => {
+        const t = p.tiles[Number(input.dataset.parent)];
+        if (input.value) t.parent = input.value;
+        else delete t.parent;
+        setDirty(true);
+        renderPage();
+      };
+    });
+    el.querySelectorAll('[data-slot-key]').forEach(input=>{
+      input.onchange = () => {
+        const t = p.tiles[Number(input.dataset.slotI)], key = input.dataset.slotKey;
+        const memberIndex = p.tiles.filter(item => item.parent === t.parent).indexOf(t);
+        const slot = Object.assign({x:(memberIndex%2)*3,y:(Math.floor(memberIndex/2)%3)*2,w:3,h:2},t.slot || {});
+        slot[key] = Math.round(Number(input.value) || 0);
+        slot.x = cl(slot.x,0,5); slot.y = cl(slot.y,0,5);
+        slot.w = cl(slot.w,1,6-slot.x); slot.h = cl(slot.h,1,6-slot.y);
+        t.slot = slot;
+        setDirty(true); renderPage();
+      };
+    });
+    el.querySelectorAll('[data-group-key]').forEach(input=>{
+      input.onchange = () => {
+        const t = p.tiles[Number(input.dataset.groupI)], key = input.dataset.groupKey;
+        t[key] = key === 'plainChildren' ? input.value === 'true' :
+          ['padding','gap','columns'].includes(key) ? cl(Number(input.value), key === 'columns' ? 1 : 0, key === 'columns' ? 6 : 24) : input.value.trim();
+        setDirty(true);
+        renderPage();
+      };
+    });
+    $("dkAddWeatherClock").onclick = () => {
+      if (p.tiles.length >= 24) { alert('The page already has the maximum of 24 tiles.'); return; }
+      const source = Object.keys(entMap || {}).find(id=>domainOf(id)==='weather') || 'weather.forecast_home';
+      const t = {id:'wc'+Date.now().toString(36),type:'weather-clock',entity:source,box:false};
+      setSize(t,'3x2');
+      p.tiles.push(t);
+      more = p.tiles.length - 1;
+      sel = more;
+      setDirty(true);
+      renderPage();
+    };
+    el.querySelectorAll('[data-wclock-entity]').forEach(x=>{
+      x.onchange = () => {
+        const value=x.value.trim();
+        if (!value.startsWith('weather.')) {
+          alert('Select a Home Assistant weather.* entity.');
+          x.value=p.tiles[+x.dataset.wclockEntity].entity || '';
+          return;
+        }
+        p.tiles[+x.dataset.wclockEntity].entity=value;
+        setDirty(true);
+        renderPage();
+      };
+    });
+    // Install weather icon packs through the existing validated microSD PNG API.
+    // Browser-side conversion keeps SVG parsing and animation off the ESP32.
+    const WEATHER_SVGS = ['clear-day','clear-night','partly-cloudy-day','partly-cloudy-night',
+      'cloudy','fog','hail','rain','thunderstorms','snow','wind'];
+    async function weatherPng(style, slug) {
+      const url='https://cdn.meteocons.com/latest/svg-static/'+style+'/'+slug+'.svg';
+      const response=await fetch(url);
+      if (!response.ok) throw new Error('Meteocons '+slug+': HTTP '+response.status);
+      const svg=await response.blob();
+      if (svg.size>250000 || !((svg.type||'').includes('svg') || svg.type==='text/plain'))
+        throw new Error('Unexpected Meteocons SVG '+slug);
+      const objectUrl=URL.createObjectURL(svg);
+      try {
+        const img=new Image();
+        await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(new Error('Could not decode '+slug));img.src=objectUrl;});
+        const canvas=document.createElement('canvas');
+        canvas.width=canvas.height=64;
+        const ctx=canvas.getContext('2d');
+        if (!ctx) throw new Error('Canvas unavailable');
+        ctx.drawImage(img,0,0,64,64);
+        return await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('Could not convert '+slug)),'image/png'));
+      } finally { URL.revokeObjectURL(objectUrl); }
+    }
+    el.querySelectorAll('[data-wclock-pack]').forEach(x=>{
+      x.onchange=()=>{p.tiles[+x.dataset.wclockPack].weatherIcons=x.value;setDirty(true);renderPage();};
+    });
+    el.querySelectorAll('[data-wclock-install]').forEach(x=>{
+      x.onclick=async()=>{
+        const style=x.dataset.wclockInstall;
+        const status=x.closest('.field').querySelector('[data-wclock-status]');
+        const buttons=[...el.querySelectorAll('[data-wclock-install]')];
+        buttons.forEach(b=>b.disabled=true);
+        try {
+          const check=await api('/api/bedroom/icons');
+          if (!check.mounted) throw new Error('Insert or mount the microSD card first.');
+          for(let i=0;i<WEATHER_SVGS.length;i++){
+            const slug=WEATHER_SVGS[i];
+            status.textContent='Installing '+style+' '+(i+1)+'/'+WEATHER_SVGS.length+': '+slug;
+            const png=await weatherPng(style,slug);
+            const name='wc_'+style+'_'+slug.replace(/-/g,'_')+'_off.png';
+            const fd=new FormData();
+            fd.append('icon',png,name);
+            await api('/api/bedroom/icons/upload?n='+encodeURIComponent(name),{method:'POST',body:fd});
+          }
+          status.textContent='Meteocons '+style+' installed ('+WEATHER_SVGS.length+' icons).';
+        }catch(e){status.textContent='Install failed: '+e.message;}
+        finally {buttons.forEach(b=>b.disabled=false);}
+      };
+    });
+    const SKYCONS_STATES = ['clear-day','clear-night','partly-cloudy-day','partly-cloudy-night',
+      'cloudy','rain','sleet','snow','wind','fog'];
+    // Load the original public-domain Skycons source only at install time.
+    let skyconsLoader = null;
+    function loadSkycons() {
+      if (window.Skycons) return Promise.resolve(window.Skycons);
+      if (!skyconsLoader) skyconsLoader = new Promise((resolve,reject)=>{
+        const script=document.createElement('script');
+        script.src='https://cdn.jsdelivr.net/gh/darkskyapp/skycons@a869a208b16ee8e9d54eb8daf0ea6a6a235df201/skycons.js';
+        script.onload=()=>window.Skycons ? resolve(window.Skycons) : reject(new Error('Skycons script did not load'));
+        script.onerror=()=>reject(new Error('Could not download Skycons'));
+        document.head.appendChild(script);
+      });
+      return skyconsLoader;
+    }
+    async function skyconsAtlas(Skycons,slug) {
+      const key=slug.toUpperCase().replace(/-/g,'_');
+      const draw=Skycons[key];
+      if (typeof draw!=='function') throw new Error('Unknown Skycons condition '+slug);
+      const frame=document.createElement('canvas');frame.width=frame.height=64;
+      const ctx=frame.getContext('2d');
+      const atlas=document.createElement('canvas');atlas.width=512;atlas.height=64;
+      const output=atlas.getContext('2d');
+      if(!ctx||!output) throw new Error('Canvas unavailable');
+      for(let i=0;i<8;i++){
+        ctx.clearRect(0,0,64,64);
+        draw(ctx,i*1500,'#FFFFFF');
+        output.drawImage(frame,i*64,0);
+      }
+      const blob=await new Promise((resolve,reject)=>
+        atlas.toBlob(x=>x?resolve(x):reject(new Error('PNG conversion failed')),'image/png'));
+      if (blob.size>512*1024) throw new Error('Sprite PNG exceeds 512 KB');
+      return blob;
+    }
+    el.querySelectorAll('[data-skycons-install]').forEach(button=>{
+      button.onclick=async()=>{
+        const status=button.closest('.field').querySelector('[data-wclock-status]');
+        button.disabled=true;
+        try {
+          const check=await api('/api/bedroom/icons');
+          if(!check.mounted) throw new Error('Insert or mount the microSD card first.');
+          const Skycons=await loadSkycons();
+          for(let i=0;i<SKYCONS_STATES.length;i++){
+            const slug=SKYCONS_STATES[i];
+            status.textContent='Installing animated Skycons '+(i+1)+'/'+SKYCONS_STATES.length+': '+slug;
+            const png=await skyconsAtlas(Skycons,slug);
+            const name='wc_sky_'+slug.replace(/-/g,'_')+'_off.png';
+            const form=new FormData();
+            form.append('icon',png,name);
+            await api('/api/bedroom/icons/upload?n='+encodeURIComponent(name),{method:'POST',body:form});
+          }
+          status.textContent='Animated Skycons installed ('+SKYCONS_STATES.length+' icons).';
+        }catch(e){status.textContent='Skycons installation failed: '+e.message;}
+        finally {button.disabled=false;}
+      };
+    });
     $("dkAddClock").onclick = () => {
       const t = { id: "k" + Date.now().toString(36), type: "clock", box: false };
       setSize(t, "2x1");
@@ -3558,6 +4070,20 @@
     try {
       const r = await api("/api/deck");
       deck = r.deck;
+      // The GET endpoint reads the saved file, which may differ from what the
+      // firmware loaded at boot. Make that discrepancy obvious before editing.
+      const bootWarning = $("dkBootWarning");
+      if (bootWarning && r.runtime_error) {
+        const recovered = r.runtime_source === "/deck.json (recovered)";
+        bootWarning.hidden = false;
+        bootWarning.innerHTML = '<strong>' + (recovered ? 'Some saved tiles were skipped' : 'Saved pages were not loaded') + '</strong>' +
+          '<p class="field-hint">' + (recovered
+            ? 'Tactula has restored your pages but temporarily skipped an invalid tile. The original saved file is intact.'
+            : 'The device is displaying its built-in Home page because the saved layout could not be loaded. Your saved pages have not been deleted.') +
+          ' Do not reset or format storage.</p>' +
+          '<p class="field-hint" style="white-space:pre-wrap">Reason: ' + esc(r.runtime_error) + '</p>' +
+          '<p class="field-hint">Export a configuration backup before editing. Save to device still checks the complete layout and will reject invalid tile settings.</p>';
+      }
       bambuEnabled = r.bambu_enabled === true;
       deck.pages = deck.pages.filter((p) => p.type !== "metrics" && !p.printer && !["pc-on", "pc-off"].includes(p.when));
       deck.pages.forEach((p) => { p.tiles = p.tiles.filter((t) => !["printer", "metric", "media"].includes(t.type) && t.control !== "pc-volume" && t.tap?.action !== "pc" && t.hold?.action !== "pc" && !["pc-on", "pc-off"].includes(t.when)); });
@@ -3572,3 +4098,4 @@
     } catch (e) {}
   })();
 })();
+

@@ -186,6 +186,51 @@ void makeInlineClimate(TileRt& r, lv_obj_t* tile, size_t index) {
 
 void fitInlineClimate(TileRt& r, int cw, int ch) {
   if (cw <= 0 || ch <= 0) return;
+  // Grouped climate tiles need a condensed layout when their allocated
+  // row is too short for the standalone thermostat's three content bands.
+  // Keep the HVAC mode buttons usable; standalone tiles are unaffected.
+  if (r.def->parent.length() && (ch < 145 || cw < 150)) {
+    // Only grouped tiles use compact rendering. A narrow group cannot safely
+    // fit a thermostat label, value and three side-by-side HVAC buttons.
+    const bool narrow = cw < 150;
+    const int nameHeight = lv_font_get_line_height(&deck_font_14);
+    lv_obj_set_style_text_font(r.name, &deck_font_14, 0);
+    lv_obj_set_pos(r.name, 0, 0);
+    lv_obj_set_size(r.name, cw, nameHeight);
+    showObj(r.climMinus, false);
+    showObj(r.climPlus, false);
+    showObj(r.climInfo, false);
+    // Narrow containers prioritise usable HVAC choices over the setpoint.
+    // Wide but short groups can show the setpoint above a single button row.
+    showObj(r.climValue, !narrow && ch >= 66);
+    lv_obj_set_style_text_font(r.climValue, &deck_font_20, 0);
+    const int modesTop = narrow ? nameHeight + 2 : std::max(nameHeight, ch - 30);
+    lv_obj_set_pos(r.climValue, 0, nameHeight + 1);
+    lv_obj_set_size(r.climValue, cw, std::max(1, modesTop - nameHeight - 2));
+    lv_obj_set_pos(r.climModeRow, 0, modesTop);
+    const int available = std::max(1, ch - modesTop);
+    lv_obj_set_size(r.climModeRow, cw, available);
+    if (r.climModeCount) {
+      const bool stack = narrow;
+      const int spacing = stack ? 2 : 4;
+      const int modeW = stack ? cw : std::max(1, (cw - spacing * (r.climModeCount - 1)) / r.climModeCount);
+      const int modeH = stack ? std::max(1, (available - spacing * (r.climModeCount - 1)) / r.climModeCount) : available;
+      for (int i = 0; i < r.climModeCount; ++i) {
+        lv_obj_t* button = r.climModeBtns[i];
+        if (!button) continue;
+        lv_obj_set_pos(button, stack ? 0 : i * (modeW + spacing),
+                       stack ? i * (modeH + spacing) : 0);
+        lv_obj_set_size(button, modeW, modeH);
+        lv_obj_t* label = lv_obj_get_child(button, 0);
+        if (label) lv_obj_set_style_text_font(label, &deck_font_12, 0);
+      }
+    }
+    return;
+  }
+  showObj(r.climMinus, true);
+  showObj(r.climPlus, true);
+  showObj(r.climInfo, true);
+  showObj(r.climValue, true);
   const int button = std::min(52, std::max(30, cw / 5));
   const int modeHeight = std::min(40, std::max(28, ch / 5));
   const int modeY = std::max(0, ch - modeHeight);

@@ -1471,6 +1471,15 @@ static void handleDeckGet() {
   out += ",\"bambu_enabled\":";
   out += deck::officeBambuConfigured() ? "true" : "false";
 #endif
+  // ArduinoJson serializes JsonVariant/JsonDocument, not bare Arduino
+  // Strings. Use a small JSON document to quote and escape these fields.
+  JsonDocument runtime;
+  runtime["source"] = deckBootConfigSource();
+  runtime["error"] = deckBootConfigError();
+  out += ",\"runtime_source\":";
+  serializeJson(runtime["source"], out);
+  out += ",\"runtime_error\":";
+  serializeJson(runtime["error"], out);
   out += ",\"deck\":";
   out += text;
   out += "}";

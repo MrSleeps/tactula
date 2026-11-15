@@ -118,7 +118,9 @@ uint32_t showIcon(lv_obj_t* label, const TileDef& d, const HaEntity* e, bool on,
 
 String tileLabel(const TileDef& t) {
   if (t.label.length()) return t.label;
+  if (t.type == TILE_GROUP) return "Group";
   if (t.type == TILE_CLOCK) return "Clock";
+  if (t.type == TILE_WEATHER_CLOCK) return "Weather Clock";
   if (t.type == TILE_NAV) return "Navigation";
   const int dot = t.entity.indexOf('.');
   if (dot > 0) return t.entity.substring(dot + 1);
@@ -278,7 +280,7 @@ void tileIconColor(TileRt& r, const HaEntity* e) {
   const bool on = lv_obj_has_state(r.obj, LV_STATE_CHECKED);
   const bool light = entityDomain(d.entity) == "light";
   const bool followIcon = light && (d.lightColorMode & 1);
-  const bool followBg = light && (d.lightColorMode & 2);
+  const bool followBg = light && (d.lightColorMode & 2) && !d.groupPlain;
   HaEntity own;
   if ((followIcon || followBg) && !e && haGetEntity(d.entity, own)) e = &own;
   const bool lit = e && e->known && e->state == "on";
@@ -351,16 +353,28 @@ void glassStyle(lv_obj_t* t, const TileDef& def) {
 // enough, else the normal light text (Glass with a faint fill over a dark picture).
 uint32_t onTextColor(const TileDef& def, bool glass) {
   if (def.hasOnTextColor) return def.onTextColor;
+  if (def.groupPlain) return tileText(def);
   if (!glass) return C_TEXT_ON;
   const uint32_t fill = tileOnFill(def);
   const uint32_t lum = ((fill >> 16 & 0xFF) * 299 + (fill >> 8 & 0xFF) * 587 + (fill & 0xFF) * 114) / 1000;
   return lum * tileOnOpa(def) / 100 >= 115 ? C_TEXT_ON : C_TEXT;
 }
 
+bool tileBare(const TileDef& def) {
+  return def.groupPlain || (def.type == TILE_GROUP && def.groupSurface == 2) ||
+      (!def.clockBox && (def.type == TILE_CLOCK || def.type == TILE_WEATHER_CLOCK || def.type == TILE_TOGGLE ||
+       (def.type == TILE_SENSOR && (def.style == METRIC_HEADLINE || def.style == METRIC_WEATHER))));
+}
+
+bool tileBaked(const TileDef& def) {
+  return !def.parent.length() && !tileBare(def) &&
+      !(def.type == TILE_GROUP && def.groupSurface == 1);
+}
+
 void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, int w, int h) {
   const String domain = entityDomain(def.entity);
   const uint32_t accent = tileAccent(def);
-  const bool glass = s_theme == THEME_GLASS && wallBlur();
+  const bool glass = s_theme == THEME_GLASS && wallBlur() && tileBaked(def);
 
   lv_obj_t* t = lv_obj_create(grid);
   lv_obj_set_grid_cell(t, LV_GRID_ALIGN_STRETCH, col, w, LV_GRID_ALIGN_STRETCH, row, h);
@@ -390,10 +404,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   if (glass) glassStyle(t, def);
   // Clock without a card: don't draw a tile fill, outline or shadow.
   // Glass-theme backgrounds are also omitted from bakeGlass().
-  if ((def.type == TILE_CLOCK ||
-       (def.type == TILE_SENSOR &&
-        (def.style == METRIC_HEADLINE || def.style == METRIC_WEATHER)) ||
-       def.type == TILE_TOGGLE) && !def.clockBox) {
+  if (tileBare(def)) {
     lv_obj_set_style_bg_opa(t, LV_OPA_TRANSP, 0);
     lv_obj_set_style_bg_opa(t, LV_OPA_TRANSP, LV_STATE_CHECKED);
     lv_obj_set_style_bg_opa(t, LV_OPA_TRANSP, LV_STATE_PRESSED);
@@ -401,6 +412,33 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     lv_obj_set_style_border_width(t, 0, 0);
     lv_obj_set_style_border_width(t, 0, LV_STATE_CHECKED);
     lv_obj_set_style_shadow_width(t, 0, 0);
+  }
+
+  if (def.type == TILE_GROUP) {
+    lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_event_cb(t, fxPressed);
+    lv_obj_set_style_transform_width(t, 0, LV_STATE_PRESSED);
+    lv_obj_set_style_transform_height(t, 0, LV_STATE_PRESSED);
+    TileRt r = {};
+    r.def = &def;
+    r.page = page;
+    r.obj = t;
+    r.name = lv_label_create(t);
+    lv_label_set_text(r.name, def.label.c_str());
+    lv_label_set_long_mode(r.name, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_style_text_font(r.name, &deck_font_14, 0);
+    lv_obj_set_width(r.name, LV_PCT(100));
+    r.groupBody = lv_obj_create(t);
+    lv_obj_remove_style_all(r.groupBody);
+    lv_obj_remove_flag(r.groupBody, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(r.groupBody, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_layout(r.groupBody, LV_LAYOUT_GRID);
+    lv_obj_set_style_pad_row(r.groupBody, def.groupGap, 0);
+    lv_obj_set_style_pad_column(r.groupBody, def.groupGap, 0);
+    const size_t idx = s_tiles.size();
+    s_tiles.push_back(r);
+    lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
+    return;
   }
 
 #if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
@@ -464,6 +502,35 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     if (def.style == METRIC_CHART) applySensorHistory(s_tiles.back());
     lv_obj_add_event_cb(t, tileEvent, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)idx);
     lv_obj_add_event_cb(t, tileEvent, LV_EVENT_LONG_PRESSED, (void*)(uintptr_t)idx);
+    lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
+    return;
+  }
+
+  // Echo-style read-only clock: weather and short date above one large time.
+  if (def.type == TILE_WEATHER_CLOCK) {
+    lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);
+    TileRt r = {};
+    r.def = &def;
+    r.page = page;
+    r.obj = t;
+    r.icon = lv_label_create(t);
+    if (def.hasIconColor)
+      lv_obj_set_style_text_color(r.icon, lv_color_hex(def.iconColor), 0);
+    r.unit = lv_label_create(t);  // current weather temperature
+    lv_obj_set_style_text_opa(r.unit, LV_OPA_90, 0);
+    r.name = lv_label_create(t);  // SAT, 14 NOV
+    lv_obj_set_style_text_opa(r.name, LV_OPA_90, 0);
+    if (def.hasTextColor) {
+      lv_obj_set_style_text_color(r.unit, lv_color_hex(def.textColor), 0);
+      lv_obj_set_style_text_color(r.name, lv_color_hex(def.textColor), 0);
+    }
+    r.sub = lv_label_create(t);   // big time
+    lv_label_set_text(r.sub, "--:--");
+    lv_obj_set_style_text_color(r.sub, lv_color_hex(def.hasColor ? def.color : C_CLOCK), 0);
+    lv_obj_set_style_text_align(r.sub, LV_TEXT_ALIGN_CENTER, 0);
+    const size_t idx = s_tiles.size();
+    s_tiles.push_back(r);
+    applyWeatherClock(s_tiles.back());
     lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
     return;
   }
@@ -574,3 +641,4 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
 }
 
 }  // namespace deckui
+

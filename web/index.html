@@ -136,6 +136,7 @@
               <div class="nav-label">Configuration</div>
               <button type="button" class="nav-item" data-nav="homeassistant">Home Assistant</button
               ><button type="button" class="nav-item" data-nav="display">Display</button
+              ><button type="button" class="nav-item hidden" data-nav="icons" id="navIcons">Icons</button
               ><button type="button" class="nav-item" data-nav="wallpapers">Wallpapers</button
               ><button type="button" class="nav-item" data-nav="light">Screen</button
               ><button type="button" class="nav-item hidden" data-nav="printer" id="navPrinter">Bambu printer</button
@@ -278,6 +279,31 @@
             </section>
 
             <section class="page" data-page="deck" id="deckSection"></section>
+
+            <section class="page" data-page="icons" id="iconsSection">
+              <div class="page-header">
+                <h1 class="page-h1">Icons</h1>
+                <p class="page-lede">Install and manage the icon packs and custom artwork used by your touchscreen tiles.</p>
+              </div>
+              <div id="deckIconsSection"></div>
+              <div class="card" id="bedroomIconsCard">
+                <h2 class="card-title">Custom PNG icons</h2>
+                <p class="maintenance-copy">
+                  Upload transparent PNG icons straight to the microSD card, without removing it.
+                  Use lowercase filenames such as <code>netflix_on.png</code> and <code>netflix_off.png</code>.
+                  Icons are shared across tactula variants; existing files remain in <code>/touchdeck/icons/bedroom/</code> for compatibility.
+                </p>
+                <p id="bedroomIconsStatus" class="field-hint" role="status">Checking microSD card...</p>
+                <div class="maintenance-actions">
+                  <button type="button" class="btn btn-accent" id="bedroomIconsBrowse">Upload PNG icons</button>
+                  <button type="button" class="btn" id="bedroomIconsRefresh">Refresh icons</button>
+                  <input type="file" id="bedroomIconsFiles" accept=".png,image/png" multiple hidden />
+                </div>
+                <div id="bedroomIconsList" class="dk-row" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:14px"></div>
+                <p class="field-hint">Maximum 512 KB and 512×512 pixels per icon. Existing names are replaced.
+                  Custom icon files are stored on the microSD card and can be used by compatible tiles.</p>
+              </div>
+            </section>
 
             <section class="page" data-page="display">
               <div class="page-header">
@@ -1572,23 +1598,6 @@
                   Format card erases the card and creates one FAT partition the deck can read. Use it when
                   the card answers but its file system is not accepted.
                 </p>
-              </div>
-              <div class="card" id="bedroomIconsCard">
-                <h2 class="card-title">Custom PNG icons</h2>
-                <p class="maintenance-copy">
-                  Upload transparent PNG icons straight to the microSD card, without removing it.
-                  Use lowercase filenames such as <code>netflix_on.png</code> and <code>netflix_off.png</code>.
-                  Icons are shared across tactula variants; existing files remain in <code>/touchdeck/icons/bedroom/</code> for compatibility.
-                </p>
-                <p id="bedroomIconsStatus" class="field-hint" role="status">Checking microSD card...</p>
-                <div class="maintenance-actions">
-                  <button type="button" class="btn btn-accent" id="bedroomIconsBrowse">Upload PNG icons</button>
-                  <button type="button" class="btn" id="bedroomIconsRefresh">Refresh icons</button>
-                  <input type="file" id="bedroomIconsFiles" accept=".png,image/png" multiple hidden />
-                </div>
-                <div id="bedroomIconsList" class="dk-row" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:14px"></div>
-                <p class="field-hint">Maximum 512 KB and 512×512 pixels per icon. Existing names are replaced.
-                  PNG display on the touchscreen will be added separately; this section currently manages the files.</p>
               </div>
               <div class="card danger-card">
                 <h2 class="card-title">Factory reset</h2>

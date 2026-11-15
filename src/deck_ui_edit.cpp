@@ -798,6 +798,12 @@ bool edBuild(String& out, String& err) {
     JsonObject q = pos[key].to<JsonObject>();
     putHalves(q, t.c);
   }
+  for (size_t i = 0; i < own; ++i) {
+    if (!s_ed.tiles[i].removed || strcmp(tiles[i]["type"] | "", "group")) continue;
+    const String id = tiles[i]["id"] | "";
+    for (JsonObject tile : tiles)
+      if (id == (tile["parent"] | "")) tile.remove("parent");
+  }
   for (size_t i = own; i-- > 0;)
     if (s_ed.tiles[i].removed) tiles.remove(i);
   for (size_t j = 0; j < s_ed.added.size(); j++) {
@@ -837,3 +843,4 @@ void edFinish() {
 }
 
 }  // namespace deckui
+

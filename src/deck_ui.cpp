@@ -302,7 +302,7 @@ void placeTiles(const PageDef& def, int orient, std::vector<Cell>& out) {
     const TilePos& ps = def.tiles[i].pos[orient];
     out[i].w = ps.w;
     out[i].h = ps.h;
-    out[i].off = !def.tiles[i].shown;
+    out[i].off = !def.tiles[i].shown || def.tiles[i].parent.length();
     if (!out[i].off && ps.set && fits(ps.x, ps.y, ps.w, ps.h)) take(out[i], ps.x, ps.y);
   }
   for (Cell& c : out) {
@@ -310,6 +310,53 @@ void placeTiles(const PageDef& def, int orient, std::vector<Cell>& out) {
     for (int y = 0; y < rows && !c.placed; y++)
       for (int x = 0; x < cols && !c.placed; x++)
         if (fits(x, y, c.w, c.h)) take(c, x, y);
+  }
+}
+
+// Every group uses equal tracks. LVGL retains descriptor pointers, so use
+// a shared immutable tail of 24 fractional tracks plus its end marker.
+void layoutGroups(int page) {
+  static const int32_t tracks[] = {
+    LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1),
+    LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1),
+    LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1),
+    LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1),
+    LV_GRID_TEMPLATE_LAST
+  };
+  for (TileRt& group : s_tiles) {
+    if (group.page != page || !group.groupBody) continue;
+    const bool custom = group.def->groupLayout == 3;
+    int count = 0;
+    for (const TileRt& child : s_tiles)
+      if (child.page == page && child.def->parent == group.def->id && child.def->shown) ++count;
+    const int cols = custom ? 6 : group.def->groupLayout == 0 ? std::max(1, count) :
+                     group.def->groupLayout == 1 ? 1 : std::min<int>(group.def->groupColumns, std::max(1, count));
+    const int rows = custom ? 6 : std::max(1, (count + cols - 1) / cols);
+    lv_obj_set_grid_dsc_array(group.groupBody, tracks + MAX_PAGE_TILES - cols,
+                             tracks + MAX_PAGE_TILES - rows);
+    int slot = 0;
+    for (TileRt& child : s_tiles) {
+      if (child.page != page || child.def->parent != group.def->id) continue;
+      child.off = group.off || !child.def->shown;
+      if (child.off) {
+        lv_obj_add_flag(child.obj, LV_OBJ_FLAG_HIDDEN);
+        continue;
+      }
+      if (custom) {
+        // Old children without a slot get deterministic, non-overlapping defaults.
+        const int x = child.def->groupSlotSet ? child.def->groupX : (slot % 2) * 3;
+        const int y = child.def->groupSlotSet ? child.def->groupY : ((slot / 2) % 3) * 2;
+        const int w = child.def->groupSlotSet ? child.def->groupW : 3;
+        const int h = child.def->groupSlotSet ? child.def->groupH : 2;
+        lv_obj_set_grid_cell(child.obj, LV_GRID_ALIGN_STRETCH, x, w,
+                            LV_GRID_ALIGN_STRETCH, y, h);
+      } else {
+        lv_obj_set_grid_cell(child.obj, LV_GRID_ALIGN_STRETCH, slot % cols, 1,
+                            LV_GRID_ALIGN_STRETCH, slot / cols, 1);
+      }
+      lv_obj_remove_flag(child.obj, LV_OBJ_FLAG_HIDDEN);
+      ++slot;
+    }
   }
 }
 
@@ -388,7 +435,7 @@ void addTilesPage(const PageDef& def) {
   std::vector<Cell> cells;
   placeTiles(def, orient, cells);
   for (size_t i = 0; i < cells.size(); i++)
-    if (cells[i].placed && def.tiles[i].type == TILE_CLOCK) {
+    if (cells[i].placed && (def.tiles[i].type == TILE_CLOCK || def.tiles[i].type == TILE_WEATHER_CLOCK)) {
       p.hasClockTile = true;
       break;
     }
@@ -402,17 +449,29 @@ void addTilesPage(const PageDef& def) {
 
   // Build even conditionally hidden tiles. They keep stable LVGL callbacks
   // and can be rearranged without destroying every page on a when flip.
-  for (size_t i = 0; i < cells.size(); i++) {
+  // Create containers before their children, independent of saved tile order.
+  for (int pass = 0; pass < 2; ++pass) for (size_t i = 0; i < cells.size(); i++) {
+    if ((def.tiles[i].type == TILE_GROUP) != (pass == 0)) continue;
+    lv_obj_t* parent = grid;
+    if (def.tiles[i].parent.length()) {
+      for (const TileRt& group : s_tiles)
+        if (group.page == page && group.groupBody && group.def->id == def.tiles[i].parent)
+          parent = group.groupBody;
+    }
     const Cell& c = cells[i];
     if (!c.placed && !c.off) Serial.printf("Deck: page '%s' has no room for tile '%s'\n",
                        def.id.c_str(), def.tiles[i].id.c_str());
-    makeTile(grid, def.tiles[i], page, c.placed ? c.x : 0, c.placed ? c.y : 0, c.w, c.h);
+    makeTile(parent, def.tiles[i], page, c.placed ? c.x : 0, c.placed ? c.y : 0, c.w, c.h);
     if (!c.placed) {
       s_tiles.back().off = true;
       lv_obj_add_flag(s_tiles.back().obj, LV_OBJ_FLAG_HIDDEN);
     }
   }
 
+  layoutGroups(page);
+  for (const TileRt& child : s_tiles)
+    if (child.page == page && !child.off && (child.def->type == TILE_CLOCK || child.def->type == TILE_WEATHER_CLOCK)) p.hasClockTile = true;
+  layoutHeader(p);
   p.snap = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
   p.stale = true;
   s_count++;
@@ -428,10 +487,10 @@ void placePage(int page) {
   std::vector<Was> was;
   bool clockVisible = false;
   for (size_t i = 0; i < cells.size(); ++i)
-    if (cells[i].placed && def.tiles[i].type == TILE_CLOCK) clockVisible = true;
+    if (cells[i].placed && (def.tiles[i].type == TILE_CLOCK || def.tiles[i].type == TILE_WEATHER_CLOCK)) clockVisible = true;
   lv_obj_update_layout(p.root);
   for (TileRt& r : s_tiles) {
-    if (r.page != page) continue;
+    if (r.page != page || r.def->parent.length()) continue;
     const size_t index = r.def - def.tiles.data();
     if (index >= cells.size()) continue;
     const Cell& c = cells[index];
@@ -448,6 +507,12 @@ void placePage(int page) {
     if (c.placed) lv_obj_remove_flag(tile, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(tile, LV_OBJ_FLAG_HIDDEN);
   }
+  layoutGroups(page);
+  markPageStale(page);
+  s_zonesDirty = true;
+  for (const TileRt& child : s_tiles)
+    if (child.page == page && child.def->parent.length() && !child.off && (child.def->type == TILE_CLOCK || child.def->type == TILE_WEATHER_CLOCK))
+      clockVisible = true;
   const bool clockChanged = p.hasClockTile != clockVisible;
   if (clockChanged) {
     p.hasClockTile = clockVisible;
@@ -854,6 +919,7 @@ void updateHeaders() {
   }
   for (TileRt& r : s_tiles)
     if (r.def->type == TILE_CLOCK) applyClock(r);
+    else if (r.def->type == TILE_WEATHER_CLOCK) applyWeatherClock(r);
 }
 
 // Pages are rebuilt only once nothing is in the user's hands.
@@ -972,13 +1038,22 @@ void logStats() {
 
 using namespace deckui;
 
+static String s_deckBootSource;
+static String s_deckBootError;
+String deckBootConfigSource() { return s_deckBootSource; }
+String deckBootConfigError() { return s_deckBootError; }
+
 // --- Public API ----------------------------------------------------------------------
 bool deckBegin(uint8_t rotation) {
   if (!panelBegin(rotation)) return false;
 
   String source, err;
   deckConfigLoad(s_cfg, &source, &err);
-  Serial.printf("Deck: config from %s, %u pages\n", source.c_str(), (unsigned)s_cfg.pages.size());
+  s_deckBootSource = source;
+  s_deckBootError = err;
+  Serial.printf("Deck: config from %s, %u pages%s%s\n", source.c_str(),
+                (unsigned)s_cfg.pages.size(), err.length() ? ", error: " : "",
+                err.c_str());
 
   lv_init();
   lv_tick_set_cb(tickCb);
@@ -1058,7 +1133,7 @@ void deckTick() {
     }
     // Same edge formula as the compositor; a tile across one drops that cut.
     for (const TileRt& r : s_tiles) {
-      if (r.page < 0 || r.page >= MAX_PAGES || cols[r.page] < 2) continue;
+      if (r.page < 0 || r.page >= MAX_PAGES || cols[r.page] < 2 || r.def->parent.length()) continue;
       const int n = cols[r.page], x1 = lv_obj_get_x(r.obj), x2 = x1 + lv_obj_get_width(r.obj);
       const float cw = (float)(w - 16 - 7 * (n - 1)) / n;
       for (int k = 1; k < n; k++) {
@@ -1137,6 +1212,7 @@ void deckTick() {
   dailyBarSync();
   updateHeaders();
   blinkClocks();
+  animateWeatherClocks();
   qpUpdateStatus(false);
   haSync();
 #if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
@@ -1256,6 +1332,8 @@ bool deckApplyConfig(const String& text, String& err) {
   destroyPages(true);
   s_cfg = next;
   buildPages();
+  s_deckBootSource = "/deck.json";
+  s_deckBootError = "";
   s_gen++;
   lv_obj_invalidate(lv_screen_active());
   Serial.printf("Deck: new config applied, %u pages\n", (unsigned)s_cfg.pages.size());
@@ -1400,7 +1478,7 @@ bool deckTestTap(const String& tileId, bool hold) {
   if (frameActive()) return false;
   if (s_ed.root) return false;
   for (TileRt& r : s_tiles) {
-    if (r.def->id != tileId || r.def->type == TILE_CLOCK) continue;
+    if (r.def->id != tileId || r.def->type == TILE_CLOCK || r.def->type == TILE_WEATHER_CLOCK) continue;
     const TileAction& a = hold ? r.def->hold : r.def->tap;
     requestAction(r, hold);
     return true;
@@ -1594,4 +1672,5 @@ bool uiPanelIsOpen() {
 }
 
 }  // namespace deck
+
 

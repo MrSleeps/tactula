@@ -169,7 +169,8 @@
       if (!printerAvailable) return false;
       refreshPrinter();
     }
-    if (name === "maintenance") { loadBedroomIcons(); loadFlashStorage(); }
+    if (name === "maintenance") loadFlashStorage();
+    if (name === "icons") loadBedroomIcons();
     if (name === "security") loadAuthStatus();
     qa(".page").forEach((p) => p.classList.toggle("active", p.dataset.page === name));
     if (name === "overview") refreshOverviewBambuConnection();
@@ -523,6 +524,8 @@
     {
       const nd = $("navDeck");
       if (nd) nd.classList.toggle("hidden", !c.deck);
+      const ni = $("navIcons");
+      if (ni) ni.classList.toggle("hidden", !c.deck);
       if (c.deck && !window.snDeck) {
         window.snDeck = 1;
         const s = document.createElement("script");

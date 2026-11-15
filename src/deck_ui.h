@@ -48,6 +48,11 @@ void deckReloadWallpaper(bool fileChanged);
 // Bench hook (/api/deck/bench): render the shown page into its page image n
 // times and time it.
 bool deckBenchRender(int n, uint32_t& avgUs, uint32_t& maxUs);
+// Source and validation error from the latest boot-time deck load. When the
+// stored deck is rejected the runtime shows the built-in Home page, while
+// /api/deck still returns the saved file for recovery.
+String deckBootConfigSource();
+String deckBootConfigError();
 // Portal save: validate, store /deck.json and rebuild the pages in place.
 bool deckApplyConfig(const String& text, String& err);
 #if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU

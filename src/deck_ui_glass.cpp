@@ -31,11 +31,7 @@ std::vector<uint32_t> glassKey(Page& p) {
     const TileRt* r = tileOf(t);
     key.push_back(r ? tileBg(*r->def) : C_TILE);
     key.push_back(r ? (uint32_t)tileTint(*r->def) : dispSettings.glassTint);
-    key.push_back(r && (r->def->type == TILE_CLOCK ||
-          (r->def->type == TILE_SENSOR &&
-           (r->def->style == METRIC_HEADLINE || r->def->style == METRIC_WEATHER)) ||
-          r->def->type == TILE_TOGGLE) &&
-          !r->def->clockBox ? 0u : 1u);
+    key.push_back(r && !tileBaked(*r->def) ? 0u : 1u);
     // Toggling this flag changes whether the off tint is baked or overlaid.
     key.push_back(r && r->def->type == TILE_TOGGLE ? 1u : 0u);
   }
@@ -130,6 +126,18 @@ void applyAutoPick(TileRt& r, const AutoPick& pk) {
     lv_obj_set_style_bg_opa(r.obj, pk.opa, 0);
     lv_obj_set_style_bg_opa(r.obj, pk.opa, LV_STATE_PRESSED);
   }
+  if (r.def->type == TILE_GROUP) {
+    for (TileRt& child : s_tiles) {
+      if (child.page != r.page || child.def->parent != r.def->id || !child.def->groupPlain ||
+          child.def->hasTextColor) continue;
+      child.hasAuto = pk.set;
+      child.autoText = pk.text;
+      lv_obj_set_style_text_color(child.obj, lv_color_hex(pk.set ? pk.text : tileText(*child.def)), 0);
+      lv_obj_set_style_text_color(child.obj, lv_color_hex(pk.set ? pk.text : tileText(*child.def)), LV_STATE_CHECKED);
+      if (child.sub && child.def->type == TILE_SENSOR && !child.threshold)
+        lv_obj_set_style_text_color(child.sub, lv_color_hex(tileTextRt(child)), 0);
+    }
+  }
   if (!pk.set && !r.hasAuto) return;
   r.hasAuto = pk.set;
   r.autoText = pk.text;
@@ -163,7 +171,7 @@ void autoTextPage(Page& p) {
   for (uint32_t i = 0; i < lv_obj_get_child_count(p.grid); i++) {
     lv_obj_t* t = lv_obj_get_child(p.grid, i);
     TileRt* r = tileOf(t);
-    if (!r) continue;
+    if (!r || !tileBaked(*r->def)) continue;
     lv_area_t tc;
     lv_obj_get_coords(t, &tc);
     lv_area_move(&tc, -rc.x1, -rc.y1);
@@ -214,10 +222,7 @@ bool bakeGlass(Page& p, const lv_area_t* only) {
     if (tc.x2 < xa || tc.x1 > xb || tc.y2 < ya || tc.y1 > yb) continue;
     TileRt* tr = tileOf(t);
     // Standalone clocks, headline and weather tiles draw on sharp wallpaper.
-    if (tr && !tr->def->clockBox && (tr->def->type == TILE_CLOCK ||
-        (tr->def->type == TILE_SENSOR &&
-         (tr->def->style == METRIC_HEADLINE || tr->def->style == METRIC_WEATHER)) ||
-        tr->def->type == TILE_TOGGLE)) continue;
+    if (tr && !tileBaked(*tr->def)) continue;
     const AutoPick pk = autoPick(tr, tc);
     if (tr) applyAutoPick(*tr, pk);
     opa[i] = pk.opa;
@@ -235,10 +240,7 @@ bool bakeGlass(Page& p, const lv_area_t* only) {
       lv_obj_get_coords(t, &tc);
       lv_area_move(&tc, -rc.x1, -rc.y1 - y0);
       TileRt* tr = tileOf(t);
-      if (tr && !tr->def->clockBox && (tr->def->type == TILE_CLOCK ||
-          (tr->def->type == TILE_SENSOR &&
-           (tr->def->style == METRIC_HEADLINE || tr->def->style == METRIC_WEATHER)) ||
-        tr->def->type == TILE_TOGGLE)) continue;
+      if (tr && !tileBaked(*tr->def)) continue;
       if (tc.y2 < 0 || tc.y1 >= rows || tc.x2 < xa || tc.x1 > xb || lv_obj_has_flag(t, LV_OBJ_FLAG_HIDDEN)) continue;
       const lv_area_t clip = {LV_MAX(tc.x1, xa), LV_MAX(tc.y1, 0), LV_MIN(tc.x2, xb), LV_MIN(tc.y2, rows - 1)};
       const int r = lv_obj_get_style_radius(t, LV_PART_MAIN);
@@ -295,3 +297,4 @@ bool bakeGlass(Page& p, const lv_area_t* only) {
 }
 
 }  // namespace deckui
+

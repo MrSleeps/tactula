@@ -62,6 +62,7 @@ struct TileRt {
   bool off = false;   // Built but hidden when condition fails or no grid cell is available.
   int page;
   lv_obj_t* obj;
+  lv_obj_t* groupBody = nullptr;
   lv_obj_t* name;
   lv_obj_t* sub;
   lv_obj_t* icon;
@@ -348,6 +349,9 @@ void fitNameText(TileRt& r);
 void layoutRows(TileRt& r);
 void fitValue(TileRt& r);
 void fitWeather(TileRt& r, int cw, int ch);  // also re-fit when weather value/unit changes
+void layoutGroups(int page);
+bool tileBare(const TileDef& def);
+bool tileBaked(const TileDef& def);
 void fitTile(TileRt& r);  // shared tile layout; also used when PNG icon visibility changes
 void fitEvent(lv_event_t* e);
 
@@ -362,6 +366,9 @@ String weatherTempText(const HaEntity& e, bool withUnit);
 String climateCurrentUnit(const HaEntity& e);
 String climateCurrentText(const HaEntity& e, bool withUnit);
 void applyClock(TileRt& r);
+void applyWeatherClock(TileRt& r);
+void animateWeatherClocks();
+void fitWeatherClock(TileRt& r, int cw, int ch);
 
 #if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
 // deck_ui_bambu.cpp
@@ -458,3 +465,4 @@ void releaseSwipe();
 void setHeader(bool on);
 
 }  // namespace deckui
+

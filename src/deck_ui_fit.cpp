@@ -876,11 +876,86 @@ void fitNav(TileRt& r, int cw, int ch) {
   lv_obj_center(r.icon);
 }
 
+void fitWeatherClock(TileRt& r, int cw, int ch) {
+  // The header is short and light; the time gets all remaining vertical space.
+  const int headerH = ch >= 90 ? 25 : 18;
+  const int iconW = ch >= 85 ? 27 : 19;
+  const lv_font_t* small = cw >= 330 && ch >= 110 ? &deck_font_20 : &deck_font_14;
+  const int iconPx = iconW >= 27 ? 28 : 20;
+  if (r.iconPx != iconPx) {
+    r.iconPx = iconPx;
+    HaEntity e;
+    const bool known = haGetEntity(r.def->entity, e) && e.known;
+    TileDef visual = *r.def;
+    visual.icon = String("mdi:") + weatherIcon(known ? e.state : String(""));
+    r.iconCp = showIcon(r.icon, visual, nullptr, false, iconPx, 0);
+  }
+  // Treat the weather icon, temperature and date as one centred header.
+  // Measuring their actual text widths keeps the elements tightly grouped
+  // even when the temperature changes (e.g. 4° -> -12.5°).
+  const int iconGap = 2, dateGap = 6;
+  const char* tempText = lv_label_get_text(r.unit);
+  const char* dateText = lv_label_get_text(r.name);
+  const lv_font_t* headerFont = small;
+  int tempW = std::max(1, textW(tempText, headerFont));
+  int dateW = std::max(1, textW(dateText, headerFont));
+  if (iconW + iconGap + tempW + dateGap + dateW > cw) {
+    headerFont = &deck_font_12;
+    tempW = std::max(1, textW(tempText, headerFont));
+    dateW = std::max(1, textW(dateText, headerFont));
+  }
+  const int groupW = iconW + iconGap + tempW + dateGap + dateW;
+  const int startX = std::max(0, (cw - groupW) / 2);
+  lv_obj_set_pos(r.icon, startX, 0);
+  lv_obj_set_size(r.icon, iconW, headerH);
+  if (r.pngIcon) lv_obj_set_pos(r.pngIcon, startX, 0);
+  setFont(r.unit, headerFont);
+  const int tempX = startX + iconW + iconGap;
+  lv_obj_set_pos(r.unit, tempX, 0);
+  lv_obj_set_size(r.unit, std::min(tempW, std::max(1, cw - tempX)), headerH);
+  setFont(r.name, headerFont);
+  lv_obj_set_style_text_align(r.name, LV_TEXT_ALIGN_LEFT, 0);
+  const int dateX = tempX + tempW + dateGap;
+  lv_obj_set_pos(r.name, dateX, 0);
+  lv_obj_set_size(r.name, std::max(1, std::min(dateW, cw - dateX)), headerH);
+  static const lv_font_t* const fonts[] = {
+    &deck_font_clock_72, &deck_font_clock_56, &lv_font_montserrat_40,
+    &deck_font_28, &deck_font_20, &deck_font_14
+  };
+  // A little breathing room between the compact weather/date header and
+  // the large clock, without making very short tiles lose their time digits.
+  const int headerGap = ch >= 105 ? 8 : ch >= 75 ? 6 : 3;
+  const int roomH = std::max(1, ch - headerH - headerGap);
+  const char* timeText = lv_label_get_text(r.sub);
+  const lv_font_t* chosen = fonts[5];
+  for (const lv_font_t* font : fonts) {
+    if (textW(timeText, font) <= cw && lineH(font) <= roomH) {
+      chosen = font;
+      break;
+    }
+  }
+  setFont(r.sub, chosen);
+  lv_obj_set_pos(r.sub, 0, headerH + headerGap);
+  lv_obj_set_size(r.sub, cw, roomH);
+}
+
 void fitTile(TileRt& r) {
   const int w = lv_obj_get_width(r.obj), h = lv_obj_get_height(r.obj);
   if (w <= 0 || h <= 0 || (w == r.fitW && h == r.fitH)) return;
   r.fitW = w;
   r.fitH = h;
+  if (r.def->type == TILE_GROUP) {
+    const int pad = std::min<int>(r.def->groupPadding, std::max(0, (std::min(w, h) - 1) / 2));
+    const bool heading = r.def->label.length() && !r.def->noName;
+    const int titleH = heading ? 22 : 0;
+    lv_obj_set_style_pad_all(r.obj, pad, 0);
+    showObj(r.name, heading);
+    lv_obj_set_pos(r.name, 0, 0);
+    lv_obj_set_pos(r.groupBody, 0, titleH);
+    lv_obj_set_size(r.groupBody, std::max(1, w - 2 * pad), std::max(1, h - 2 * pad - titleH));
+    markPageStale(r.page);
+    return;
+  }
   const int m = LV_MIN(w, h);
   // The clock uses a large time line and a small date; regular tile padding
   // needlessly makes a 2x1 clock too shallow for the 40px numerals.
@@ -898,6 +973,7 @@ void fitTile(TileRt& r) {
   else if (r.def->type == TILE_SENSOR && r.def->style == METRIC_HEADLINE) fitHeadline(r, cw, ch);
   else if (r.def->type == TILE_SENSOR && r.def->style == METRIC_WEATHER) fitWeather(r, cw, ch);
   else if (r.def->type == TILE_CLOCK) fitClock(r, cw, ch);
+  else if (r.def->type == TILE_WEATHER_CLOCK) fitWeatherClock(r, cw, ch);
   else if (r.def->type == TILE_SENSOR) fitSensor(r, cw, ch);
   else fitButton(r, cw, ch);
   markPageStale(r.page);
@@ -909,3 +985,4 @@ void fitEvent(lv_event_t* e) {
 }
 
 }  // namespace deckui
+

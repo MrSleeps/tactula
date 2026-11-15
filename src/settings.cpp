@@ -171,10 +171,12 @@ void loadSettings() {
     dispSettings.warnThresholdPct = prefs.getUChar("warnpct", dispSettings.warnThresholdPct);
   }
   dispSettings.theme = prefs.getUChar("theme", dispSettings.theme);
-  if (dispSettings.theme > THEME_GLASS) dispSettings.theme = THEME_GLASS;
-  dispSettings.glassTint = min<uint8_t>(prefs.getUChar("gtint", dispSettings.glassTint), 90);
+  if (dispSettings.theme > THEME_MAX) dispSettings.theme = THEME_GLASS;
+  dispSettings.tactulaRadius = min<uint8_t>(prefs.getUChar("tacradius", dispSettings.tactulaRadius), TACTULA_RADIUS_MAX);
+  dispSettings.tactulaPadding = min<uint8_t>(prefs.getUChar("tacpadding", dispSettings.tactulaPadding), TACTULA_PADDING_MAX);
+  dispSettings.glassTint = min<uint8_t>(prefs.getUChar("gtint", dispSettings.glassTint), 100);
   dispSettings.glassBlur = min<uint8_t>(prefs.getUChar("gblur", dispSettings.glassBlur), 24);
-  dispSettings.glassDim = min<uint8_t>(prefs.getUChar("gdim", dispSettings.glassDim), 80);
+  dispSettings.glassDim = min<uint8_t>(prefs.getUChar("gdim", dispSettings.glassDim), 100);
   dispSettings.glassOn = constrain(prefs.getUChar("gon", dispSettings.glassOn), 20, 100);
   dispSettings.wallEvery = prefs.getUChar("wevery", 5);
   if (!validWallEvery(dispSettings.wallEvery)) dispSettings.wallEvery = 5;
@@ -278,6 +280,8 @@ void saveSettings() {
   prefs.putUShort("pscale", dispSettings.powerScaleW);
   prefs.putUChar("warnpct", dispSettings.warnThresholdPct);
   prefs.putUChar("theme", dispSettings.theme);
+  prefs.putUChar("tacradius", dispSettings.tactulaRadius);
+  prefs.putUChar("tacpadding", dispSettings.tactulaPadding);
   prefs.putUChar("gtint", dispSettings.glassTint);
   prefs.putUChar("gblur", dispSettings.glassBlur);
   prefs.putUChar("gdim", dispSettings.glassDim);

@@ -41,6 +41,7 @@ constexpr int GLASS_BORDER_WIDTH = 1;
 
 struct Page {
   lv_obj_t* root;
+  lv_obj_t* headerBand;  // Tactula header background and accent line
   lv_obj_t* title;
   lv_obj_t* clock;
   lv_obj_t* wifi;
@@ -352,6 +353,7 @@ void fitWeather(TileRt& r, int cw, int ch);  // also re-fit when weather value/u
 void layoutGroups(int page);
 bool tileBare(const TileDef& def);
 bool tileBaked(const TileDef& def);
+int tilePadding(int width, int height);
 void fitTile(TileRt& r);  // shared tile layout; also used when PNG icon visibility changes
 void fitEvent(lv_event_t* e);
 

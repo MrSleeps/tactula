@@ -337,6 +337,8 @@
                           <option value="0">Midnight (dark)</option>
                           <option value="1">Daylight (light)</option>
                           <option value="2">Glass (wallpaper)</option>
+                          <option value="3">Tactula</option>
+                          <option value="4">Minimal Console (dark)</option>
                         </select>
                       </div>
                     </div>
@@ -406,15 +408,32 @@
                   </div>
                 </div>
                 <div class="card hidden" id="glassLook">
-                  <h2 class="card-title">Glass look</h2>
+                  <h2 class="card-title" id="glassLookTitle">Glass look</h2>
                   <p class="field-hint" style="margin: 0 0 14px">
-                    The pictures behind the glass are set in <a href="#" data-page="wallpapers">Wallpapers</a>.
+                    Choose the background picture in <a href="#" data-page="wallpapers">Wallpapers</a>.
                   </p>
+                  <div class="grid-2 hidden" id="tactulaLook">
+                    <div class="field">
+                      <label class="field-label" for="tactulaRadius">Tile corner radius</label>
+                      <div class="range-row">
+                        <input type="range" id="tactulaRadius" name="tactulaRadius" min="0" max="32" step="1" />
+                        <span class="range-val" id="tactulaRadiusVal">--</span>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="tactulaPadding">Tile padding</label>
+                      <div class="range-row">
+                        <input type="range" id="tactulaPadding" name="tactulaPadding" min="0" max="20" step="1" />
+                        <span class="range-val" id="tactulaPaddingVal">--</span>
+                      </div>
+                      <p class="field-hint" data-tip>Small tiles use less padding to leave room for their contents. Groups use their own padding.</p>
+                    </div>
+                  </div>
                   <div class="grid-2">
                     <div class="field">
                       <label class="field-label" for="glassTint">Tile opacity</label>
                       <div class="range-row">
-                        <input type="range" id="glassTint" name="glassTint" min="0" max="90" step="5" /><span
+                        <input type="range" id="glassTint" name="glassTint" min="0" max="100" step="5" /><span
                           class="range-val"
                           id="glassTintVal"
                           >--</span
@@ -422,8 +441,8 @@
                       </div>
                       <p class="field-hint" data-tip>How dark the glass of each tile is. 0 = clear glass.</p>
                     </div>
-                    <div class="field">
-                      <label class="field-label" for="glassBlur">Blur</label>
+                    <div class="field" id="glassBlurField">
+                      <label class="field-label" for="glassBlur">Tile frosting</label>
                       <div class="range-row">
                         <input type="range" id="glassBlur" name="glassBlur" min="0" max="24" step="2" /><span
                           class="range-val"
@@ -438,14 +457,14 @@
                     <div class="field">
                       <label class="field-label" for="glassDim">Wallpaper black overlay</label>
                       <div class="range-row">
-                        <input type="range" id="glassDim" name="glassDim" min="0" max="80" step="5" /><span
+                        <input type="range" id="glassDim" name="glassDim" min="0" max="100" step="5" /><span
                           class="range-val"
                           id="glassDimVal"
                           >--</span
                         >
                       </div>
                       <p class="field-hint" data-tip>
-                        Black overlay opacity, 0% = off. Darkens the wallpaper and its blurred glass tiles without dimming the text, icons or controls. Applied when a picture loads, not on every frame.
+                        0% shows the full wallpaper. 100% makes the wallpaper black. Text, icons and controls keep their brightness.
                       </p>
                     </div>
                     <div class="field">
@@ -484,7 +503,7 @@
               <div class="page-header">
                 <h1 class="page-h1">Wallpapers</h1>
                 <p class="page-lede">
-                  Pictures shown behind the tiles by the Glass theme and by the photo frame while the screen
+                  Pictures shown behind the tiles in Glass and Tactula, and by the photo frame while the screen
                   sleeps.
                 </p>
               </div>
@@ -645,9 +664,9 @@
                   </section>
                 </div>
                 <div class="card">
-                  <h2 class="card-title">Glass theme</h2>
+                  <h2 class="card-title">Glass and Tactula</h2>
                   <p class="field-hint" style="margin: 0 0 14px">
-                    How the Glass background changes. The photo frame has its own interval in
+                    How the wallpaper changes in Glass and Tactula. The photo frame has its own interval in
                     <a href="#" data-page="light">Screen &gt; Sleep</a>.
                   </p>
                   <div class="grid-2">

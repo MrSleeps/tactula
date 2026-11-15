@@ -7,6 +7,10 @@ namespace deckui {
 // Coordinates are page-relative so moving a page offscreen does not change its key.
 TileRt* tileOf(lv_obj_t* o);
 
+static bool frostTiles() {
+  return s_theme == THEME_GLASS;
+}
+
 std::vector<uint32_t> glassKey(Page& p) {
   if (!wallSharp() || !wallBlur() || !p.root || !p.grid) return {};
   lv_obj_update_layout(p.root);
@@ -92,7 +96,8 @@ AutoPick autoPick(const TileRt* r, const lv_area_t& a) {
   AutoPick pk = {(lv_opa_t)(base * 255 / 100), C_TEXT, false};
   if (!dispSettings.glassAutoText || !r || r->def->hasTextColor || !wallBlur()) return pk;
   int lo, hi;
-  lumaRange(wallBlur(), a, lo, hi);
+  // Tactula tint is composited over the sharp wallpaper.
+  lumaRange(frostTiles() ? wallBlur() : wallSharp(), a, lo, hi);
   const int tint = luma(tileBg(*r->def));
   auto glassed = [&](int v) { return (v * (100 - base) + tint * base) / 100; };
   pk.set = true;
@@ -152,7 +157,7 @@ void applyAutoPick(TileRt& r, const AutoPick& pk) {
 // The top bar sits on the sharp picture, no glass.
 void autoHeader(Page& p) {
   const lv_image_dsc_t* sharp = wallSharp();
-  if (!p.title || !p.clock || !sharp) return;
+  if (p.headerBand || !p.title || !p.clock || !sharp) return;
   bool dark = false;
   if (dispSettings.glassAutoText) {
     int lo, hi;
@@ -244,13 +249,15 @@ bool bakeGlass(Page& p, const lv_area_t* only) {
       if (tc.y2 < 0 || tc.y1 >= rows || tc.x2 < xa || tc.x1 > xb || lv_obj_has_flag(t, LV_OBJ_FLAG_HIDDEN)) continue;
       const lv_area_t clip = {LV_MAX(tc.x1, xa), LV_MAX(tc.y1, 0), LV_MIN(tc.x2, xb), LV_MIN(tc.y2, rows - 1)};
       const int r = lv_obj_get_style_radius(t, LV_PART_MAIN);
-      lv_draw_image_dsc_t id;
-      lv_draw_image_dsc_init(&id);
-      id.src = blur;
-      id.image_area = tc;  // the radius mask works on this area
-      id.clip_radius = r;
-      layer._clip_area = clip;
-      lv_draw_image(&layer, &id, &all);
+      if (frostTiles()) {
+        lv_draw_image_dsc_t id;
+        lv_draw_image_dsc_init(&id);
+        id.src = blur;
+        id.image_area = tc;  // the radius mask works on this area
+        id.clip_radius = r;
+        layer._clip_area = clip;
+        lv_draw_image(&layer, &id, &all);
+      }
       layer._clip_area = band;
       lv_draw_rect_dsc_t rd;
       lv_draw_rect_dsc_init(&rd);
@@ -258,9 +265,11 @@ bool bakeGlass(Page& p, const lv_area_t* only) {
       rd.bg_color = lv_color_hex(tr ? tileBg(*tr->def) : C_TILE);
       // Toggle tint remains an LVGL overlay rather than baked into glass.
       rd.bg_opa = tr && tr->def->type == TILE_TOGGLE ? LV_OPA_TRANSP : opa[i];
-      rd.border_color = lv_color_hex(GLASS_BORDER_COLOR);
-      rd.border_opa = GLASS_BORDER_OPA;
-      rd.border_width = GLASS_BORDER_WIDTH;
+      if (frostTiles()) {
+        rd.border_color = lv_color_hex(GLASS_BORDER_COLOR);
+        rd.border_opa = GLASS_BORDER_OPA;
+        rd.border_width = GLASS_BORDER_WIDTH;
+      }
       lv_draw_rect(&layer, &rd, &tc);
     }
     lv_canvas_finish_layer(cv, &layer);

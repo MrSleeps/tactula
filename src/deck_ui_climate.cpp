@@ -147,8 +147,7 @@ void updateModes(TileRt& r, const HaEntity* e) {
   }
   const int w = lv_obj_get_width(r.obj), h = lv_obj_get_height(r.obj);
   if (w > 0 && h > 0) {
-    const int m = std::min(w, h);
-    const int pad = m >= 80 ? 9 : m >= 56 ? 7 : 5;
+    const int pad = tilePadding(w, h);
     fitInlineClimate(r, w - pad * 2, h - pad * 2);
   }
 }

@@ -37,10 +37,12 @@ struct DisplaySettings {
   uint16_t tempScaleMax;      // C, default full scale of temperature tiles
   uint16_t powerScaleW;       // W, default full scale of power tiles
   uint8_t  warnThresholdPct;  // metric tiles turn amber at >= this % of scale; 0 = off
-  uint8_t  theme;             // THEME_MIDNIGHT, THEME_DAYLIGHT or THEME_GLASS
-  uint8_t  glassTint;         // Glass: tile tint opacity %, 0..90
+  uint8_t  theme;             // THEME_* display preset
+  uint8_t  tactulaRadius = 22; // tile corner radius in pixels
+  uint8_t  tactulaPadding = 9; // preferred inner padding in pixels
+  uint8_t  glassTint;         // Glass: tile tint opacity %, 0..100
   uint8_t  glassBlur;         // Glass: blur radius px, 0..24 (0 = clear glass)
-  uint8_t  glassDim;          // Glass: wallpaper black overlay %, 0..80 (sharp + blurred)
+  uint8_t  glassDim;          // Glass: wallpaper black overlay %, 0..100 (sharp + blurred)
   uint8_t  glassOn;           // Glass: accent fill of an "on" tile, opacity %, 20..100
   uint8_t  wallEvery;         // Wallpaper interval in minutes, 0 = off
   uint8_t  wallOrder;         // 0 = in order, 1 = shuffle
@@ -97,6 +99,16 @@ struct AudioSettings {
 constexpr uint8_t THEME_MIDNIGHT = 0;
 constexpr uint8_t THEME_DAYLIGHT = 1;
 constexpr uint8_t THEME_GLASS = 2;  // Midnight colours, glass tiles over a wallpaper
+constexpr uint8_t THEME_TACTULA = 3;
+constexpr uint8_t THEME_MINIMAL_CONSOLE = 4;
+constexpr uint8_t THEME_MAX = THEME_MINIMAL_CONSOLE;
+
+constexpr uint8_t TACTULA_RADIUS_MAX = 32;
+constexpr uint8_t TACTULA_PADDING_MAX = 20;
+
+constexpr bool themeUsesWallpaper(uint8_t theme) {
+  return theme == THEME_GLASS || theme == THEME_TACTULA;
+}
 
 // Network settings. NVS blob "net", layout shared with StatNode.
 struct NetworkSettings {

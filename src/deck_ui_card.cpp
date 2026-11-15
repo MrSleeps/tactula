@@ -622,7 +622,7 @@ void openModal(int tileIdx) {
   lv_obj_set_style_bg_color(c, lv_color_hex(C_PANEL), 0);
   lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
   lv_obj_set_style_radius(c, 22, 0);
-  if (s_theme == THEME_GLASS &&
+  if (themeUsesWallpaper(s_theme) &&
       (s_modalGlass = frostedCopy((w - cw) / 2, (h - ch) / 2, cw, ch, 22)))
     frostStyle(c, s_modalGlass);
   lv_obj_set_style_text_color(c, lv_color_hex(C_TEXT), 0);
@@ -803,7 +803,7 @@ void openConfirm(int tileIdx, bool hold) {
   lv_obj_set_style_bg_color(c, lv_color_hex(C_PANEL), 0);
   lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
   lv_obj_set_style_radius(c, 22, 0);
-  if (s_theme == THEME_GLASS &&
+  if (themeUsesWallpaper(s_theme) &&
       (s_modalGlass = frostedCopy((w - cw) / 2, (h - ch) / 2, cw, ch, 22)))
     frostStyle(c, s_modalGlass);
   lv_obj_set_style_text_color(c, lv_color_hex(C_TEXT), 0);

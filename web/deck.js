@@ -483,6 +483,14 @@
       "</select></div>";
   }
   let bedroomIcons = [];
+  let bedroomIconsMounted = false;
+  let bedroomIconsFromGallery = false;
+  window.addEventListener("tactula:png-icons", ({ detail }) => {
+    bedroomIconsFromGallery = true;
+    bedroomIcons = detail.names.slice().sort();
+    bedroomIconsMounted = detail.mounted;
+    if (deck && visible()) renderPage();
+  });
   /* Icon: style and the on icon (buttons, switches, sliders, sensors). */
   function iconFields(t, i) {
     let h = t.type === "nav" ?
@@ -514,7 +522,7 @@
         "</div></div>";
     }
     if (["action", "toggle", "slider", "sensor", "nav"].includes(t.type)) {
-      const files = typeof bedroomIcons !== "undefined" ? bedroomIcons : [];
+      const files = bedroomIcons;
       for (const [field, label, suffix] of [
         ["offImage", "Inactive image", "_off.png"],
         ...(t.type === "nav" ? [] : [["onImage", "Active image", "_on.png"]]),
@@ -522,7 +530,9 @@
         const saved = t[field] || "";
         const fallback = (t.id || "") + suffix;
         const options = files.filter((n) => n.endsWith(suffix));
-        if (saved && !options.includes(saved)) options.unshift(saved);
+        const missing = saved && !options.includes(saved);
+        // Keep the saved filename so re-uploading it restores the tile.
+        if (missing) options.unshift(saved);
         h += '<div class="field">' +
           lbl(t.type === "nav" ? "Navigation image (optional)" : label,
               t.type === "nav" ?
@@ -530,10 +540,10 @@
               "PNG on the microSD card. Upload images under Configuration → Icons → Custom PNG icons. None uses the tile ID filename automatically, falling back to its MDI icon.") +
           '<select data-img="' + i + '" data-imgkey="' + field + '">' +
           opt("", t.type === "nav" ? "Use selected MDI / Brand icon" : "Automatic (" + fallback + ")", !saved) +
-          options.map((n) => opt(n, n, n === saved)).join("") +
+          options.map((n) => opt(n, missing && bedroomIconsMounted && n === saved ? n + " (missing)" : n, n === saved)).join("") +
           '</select></div>';
       }
-      h += '<p class="field-hint wide">To use a different PNG, upload it under Configuration → Icons → Custom PNG icons, then reopen this editor.</p>';
+      h += '<p class="field-hint wide">To use a different PNG, upload it under Configuration → Icons → Custom PNG icons, then return to this editor.</p>';
     }
     return grp("Icon", h);
   }
@@ -1469,7 +1479,7 @@
       field('Heading (optional)', '<input data-group-key="label" data-group-i="' + i + '" value="' + esc(t.label || '') + '">') +
       field('Arrangement', select('flow', [['row','Row'],['column','Column'],['grid','Grid'],['custom','Custom (6 × 6)']], t.flow || 'column')) +
       field('Grid columns', select('columns', [1,2,3,4,5,6].map(n=>[String(n),String(n)]), t.columns || 2)) +
-      field('Background', select('surface', [['theme','Theme (glass in Glass theme)'],['solid','Solid'],['transparent','Transparent']], t.surface || 'theme')) +
+      field('Background', select('surface', [['theme','Theme (glass in Glass and Tactula)'],['solid','Solid'],['transparent','Transparent']], t.surface || 'theme')) +
       field('Padding (pixels)', number('padding', t.padding == null ? 8 : t.padding, 24)) +
       field('Spacing (pixels)', number('gap', t.gap == null ? 6 : t.gap, 24)) +
       field('Child backgrounds', select('plainChildren', [['true','Shared group background'],['false','Keep individual backgrounds']], t.plainChildren !== false)) +
@@ -4054,11 +4064,13 @@
     haStatus();
     icRefresh();
     brRefresh();
-    // Artwork already uploaded via Maintenance; no changes to existing PNG files.
     try {
       const listing = await api("/api/bedroom/icons");
-      bedroomIcons = (listing.files || []).map((f) => f.name).filter(Boolean).sort();
-    } catch (e) { bedroomIcons = []; }
+      if (!bedroomIconsFromGallery) {
+        bedroomIcons = [...new Set((listing.files || []).map((f) => f.name).filter(Boolean))].sort();
+        bedroomIconsMounted = !!listing.mounted;
+      }
+    } catch (e) {}
     setInterval(() => {
       if (visible()) {
         haStatus();

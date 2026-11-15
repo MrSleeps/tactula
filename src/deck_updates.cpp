@@ -131,7 +131,6 @@ void setError(const char* msg, bool preserveVerified = false) {
   }
   status.checking = false;
   status.lastCheckMs = millis();
-  running = false;
   nextAttempt = millis() + RETRY_MS;
   portEXIT_CRITICAL(&mux);
 }
@@ -210,7 +209,7 @@ bool validHash(const char* s) {
   return true;
 }
 
-void checkTask(void*) {
+void checkForUpdate() {
   // Snapshot the opted-in channel at the start of the HTTPS request.
   portENTER_CRITICAL(&mux);
   const bool useBeta = status.allowBeta;
@@ -218,13 +217,11 @@ void checkTask(void*) {
   // Require clock sync for X.509 certificate validity.
   if (time(nullptr) < 1700000000) {
     setError("Waiting for time synchronisation", true);
-    vTaskDelete(nullptr);
     return;
   }
   IPAddress mirrorAddress;
   if (WiFi.hostByName("firmware.mrsleeps.uk", mirrorAddress) != 1) {
     setError("Firmware mirror DNS lookup failed", true);
-    vTaskDelete(nullptr);
     return;
   }
   Serial.printf("[Tactula OTA] Mirror IP=%s, internal heap=%u, largest block=%u\n",
@@ -257,7 +254,6 @@ void checkTask(void*) {
     }
     http.end();
     setError(diagnostic, true);
-    vTaskDelete(nullptr);
     return;
   }
 
@@ -269,14 +265,12 @@ void checkTask(void*) {
   if (declaredLength < 1 || declaredLength > MAX_MANIFEST_BYTES) {
     http.end();
     setError("Mirror manifest size missing or too large", true);
-    vTaskDelete(nullptr);
     return;
   }
   String responseBody;
   if (!responseBody.reserve(declaredLength + 1)) {
     http.end();
     setError("Not enough memory for update manifest", true);
-    vTaskDelete(nullptr);
     return;
   }
   responseBody = http.getString();
@@ -286,7 +280,6 @@ void checkTask(void*) {
                 declaredLength, static_cast<unsigned>(receivedLength));
   if (receivedLength != static_cast<size_t>(declaredLength)) {
     setError("Mirror manifest download incomplete", true);
-    vTaskDelete(nullptr);
     return;
   }
   JsonDocument doc;
@@ -298,19 +291,16 @@ void checkTask(void*) {
     snprintf(diagnostic, sizeof(diagnostic),
              "Mirror manifest JSON invalid: %s", parseError.c_str());
     setError(diagnostic, true);
-    vTaskDelete(nullptr);
     return;
   }
   if ((doc["schema"] | 0) != 1 ||
       strcmp(doc["status"] | "", "published") != 0) {
     setError("Mirror release not published or manifest invalid");
-    vTaskDelete(nullptr);
     return;
   }
   const char* version = doc["version"] | "";
   if (!version[0] || strlen(version) >= sizeof(status.version)) {
     setError("Mirror manifest has invalid version");
-    vTaskDelete(nullptr);
     return;
   }
   // A preference change while TLS was active invalidates this response.
@@ -318,11 +308,10 @@ void checkTask(void*) {
   const bool channelChanged = status.allowBeta != useBeta;
   if (channelChanged) {
     status.checking = false;
-    running = false;
     requested = status.checksEnabled;
   }
   portEXIT_CRITICAL(&mux);
-  if (channelChanged) { vTaskDelete(nullptr); return; }
+  if (channelChanged) return;
 
   if (!newer(version)) {
     portENTER_CRITICAL(&mux);
@@ -331,10 +320,8 @@ void checkTask(void*) {
     status.error[0] = 0;
     status.lastCheckMs = millis();
     status.checking = false;
-    running = false;
     nextAttempt = millis() + INTERVAL_MS;
     portEXIT_CRITICAL(&mux);
-    vTaskDelete(nullptr);
     return;
   }
 #if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
@@ -370,16 +357,13 @@ void checkTask(void*) {
   }
   if (!matched) {
     setError("Mirror lacks verified board/edition OTA asset");
-    vTaskDelete(nullptr);
     return;
   }
   portENTER_CRITICAL(&mux);
   if (status.allowBeta != useBeta) {
     status.checking = false;
-    running = false;
     requested = status.checksEnabled;
     portEXIT_CRITICAL(&mux);
-    vTaskDelete(nullptr);
     return;
   }
   status.available = true;
@@ -400,8 +384,15 @@ void checkTask(void*) {
   status.error[0] = 0;
   status.checking = false;
   status.lastCheckMs = millis();
-  running = false;
   nextAttempt = millis() + INTERVAL_MS;
+  portEXIT_CRITICAL(&mux);
+}
+
+// Let C++ locals release their heap allocations before deleting the task.
+void checkTask(void*) {
+  checkForUpdate();
+  portENTER_CRITICAL(&mux);
+  running = false;
   portEXIT_CRITICAL(&mux);
   vTaskDelete(nullptr);
 }
@@ -519,7 +510,7 @@ bool installStagedFromTouch() {
   return ok;
 }
 
-void downloadTask(void*) {
+void downloadUpdate() {
   char digest[65], path[160];
   uint32_t expected = 0;
   portENTER_CRITICAL(&mux);
@@ -536,9 +527,7 @@ void downloadTask(void*) {
     status.promptOnStage = false;
     stagedPartition = nullptr;
     snprintf(status.error, sizeof(status.error), "%s", reason);
-    downloadRunning = false;
     portEXIT_CRITICAL(&mux);
-    vTaskDelete(nullptr);
   };
   if (!target || expected < 1024 || expected > target->size || !validHash(digest)) {
     fail("Image cannot fit inactive OTA partition");
@@ -548,13 +537,21 @@ void downloadTask(void*) {
     fail("Clock not synchronised; HTTPS unavailable");
     return;
   }
+  constexpr uint32_t transferTimeoutMs = 15000;
+  constexpr uint32_t internalRam = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+  const uint32_t started = millis();
+  const unsigned freeBefore = heap_caps_get_free_size(internalRam);
+  const unsigned largestBefore = heap_caps_get_largest_free_block(internalRam);
+
   // Only the known, hard-coded host serves bytes. No externally supplied URL.
   String url = String("https://firmware.mrsleeps.uk") + path;
   WiFiClientSecure client;
   client.setCACert(ROOT_CA);
-  client.setTimeout(15000);
+  client.setTimeout(transferTimeoutMs);
+  client.setHandshakeTimeout(15);
   HTTPClient http;
-  http.setTimeout(15000);
+  http.setConnectTimeout(transferTimeoutMs);
+  http.setTimeout(transferTimeoutMs);
   // Match manifest retrieval: request a non-chunked response with a fixed
   // Content-Length. ESP32 OTA must reject missing or mismatched file sizes.
   http.useHTTP10(true);
@@ -566,45 +563,88 @@ void downloadTask(void*) {
   if (httpStatus != HTTP_CODE_OK ||
       contentLength != static_cast<int>(expected)) {
     char diagnostic[112] = {};
-    snprintf(diagnostic, sizeof(diagnostic),
-             "Mirror image HTTP %d, length %d (expected %lu)",
-             httpStatus, contentLength, static_cast<unsigned long>(expected));
+    if (!begun) {
+      snprintf(diagnostic, sizeof(diagnostic), "Cannot initialise firmware HTTPS request");
+    } else if (httpStatus < 0) {
+      char tlsReason[96] = {};
+      const int tlsCode = client.lastError(tlsReason, sizeof(tlsReason));
+      snprintf(diagnostic, sizeof(diagnostic),
+               "Firmware HTTPS failed (HTTP %d, TLS %d, largest block %u B)",
+               httpStatus, tlsCode, largestBefore);
+      Serial.printf("[Tactula OTA] HTTPS failed after %lu ms, TLS %d (%s), "
+                    "internal free/largest before %u/%u B, now %u/%u B, "
+                    "Wi-Fi status %d, RSSI %ld dBm\n",
+                    static_cast<unsigned long>(millis() - started), tlsCode, tlsReason,
+                    freeBefore, largestBefore,
+                    static_cast<unsigned>(heap_caps_get_free_size(internalRam)),
+                    static_cast<unsigned>(heap_caps_get_largest_free_block(internalRam)),
+                    static_cast<int>(WiFi.status()), static_cast<long>(WiFi.RSSI()));
+    } else {
+      snprintf(diagnostic, sizeof(diagnostic),
+               "Mirror image HTTP %d, length %d (expected %lu)",
+               httpStatus, contentLength, static_cast<unsigned long>(expected));
+    }
     Serial.printf("[Tactula OTA] %s\n", diagnostic);
     http.end();
     fail(diagnostic);
     return;
   }
+  const uint32_t headersReceived = millis();
   esp_ota_handle_t otaHandle = 0;
-  if (esp_ota_begin(target, expected, &otaHandle) != ESP_OK) {
+  const esp_err_t beginResult = esp_ota_begin(target, expected, &otaHandle);
+  if (beginResult != ESP_OK) {
+    char diagnostic[112];
+    snprintf(diagnostic, sizeof(diagnostic), "Cannot initialise inactive OTA partition: %s",
+             esp_err_to_name(beginResult));
     http.end();
-    fail("Cannot initialise inactive OTA partition");
+    fail(diagnostic);
     return;
   }
+  const uint32_t transferStarted = millis();
   mbedtls_sha256_context hash;
   mbedtls_sha256_init(&hash);
   mbedtls_sha256_starts(&hash, 0);
   WiFiClient* stream = http.getStreamPtr();
   uint8_t buffer[4096];
   uint32_t total = 0;
-  uint32_t stalled = millis();
-  bool ok = stream != nullptr;
-  while (ok && total < expected) {
-    if (WiFi.status() != WL_CONNECTED) { ok = false; break; }
-    const size_t available = stream->available();
-    if (!available) {
-      if (millis() - stalled > 15000) { ok = false; break; }
-      vTaskDelay(pdMS_TO_TICKS(25));
+  uint32_t lastRead = transferStarted;
+  const char* failure = stream ? nullptr : "Firmware response stream unavailable";
+  while (!failure && total < expected) {
+    if (WiFi.status() != WL_CONNECTED) {
+      failure = "Wi-Fi disconnected during firmware download";
+      break;
+    }
+    const int available = stream->available();
+    if (available <= 0) {
+      if (!http.connected()) {
+        failure = "Firmware connection closed early";
+        break;
+      }
+      if (millis() - lastRead >= transferTimeoutMs) {
+        failure = "Firmware download stalled";
+        break;
+      }
+      vTaskDelay(1);
       continue;
     }
     const size_t size = std::min<size_t>(sizeof(buffer), std::min<size_t>(expected - total, available));
     const int count = stream->readBytes(buffer, size);
-    if (count <= 0 || esp_ota_write(otaHandle, buffer, count) != ESP_OK ||
-        mbedtls_sha256_update(&hash, buffer, count) != 0) {
-      ok = false;
+    if (count <= 0) {
+      failure = "Firmware response read failed";
+      break;
+    }
+    const esp_err_t writeResult = esp_ota_write(otaHandle, buffer, count);
+    if (writeResult != ESP_OK) {
+      Serial.printf("[Tactula OTA] Flash write failed: %s\n", esp_err_to_name(writeResult));
+      failure = "Firmware flash write failed";
+      break;
+    }
+    if (mbedtls_sha256_update(&hash, buffer, count) != 0) {
+      failure = "Firmware SHA-256 calculation failed";
       break;
     }
     total += static_cast<uint32_t>(count);
-    stalled = millis();
+    lastRead = millis();
     portENTER_CRITICAL(&mux);
     status.downloadedBytes = total;
     portEXIT_CRITICAL(&mux);
@@ -612,13 +652,22 @@ void downloadTask(void*) {
   }
   http.end();
   uint8_t bytes[32] = {};
-  if (mbedtls_sha256_finish(&hash, bytes) != 0) ok = false;
+  if (!failure && mbedtls_sha256_finish(&hash, bytes) != 0) {
+    failure = "Firmware SHA-256 calculation failed";
+  }
   mbedtls_sha256_free(&hash);
   char observed[65];
   for (int i = 0; i < 32; ++i) snprintf(observed + 2*i, 3, "%02x", bytes[i]);
-  if (!ok || total != expected || strcmp(observed, digest) != 0) {
+  Serial.printf("[Tactula OTA] %lu/%lu B, HTTPS %lu ms, flash erase %lu ms, transfer %lu ms\n",
+                static_cast<unsigned long>(total), static_cast<unsigned long>(expected),
+                static_cast<unsigned long>(headersReceived - started),
+                static_cast<unsigned long>(transferStarted - headersReceived),
+                static_cast<unsigned long>(millis() - transferStarted));
+  if (!failure && total != expected) failure = "Firmware download incomplete";
+  if (!failure && strcmp(observed, digest) != 0) failure = "Firmware SHA-256 mismatch";
+  if (failure) {
     esp_ota_abort(otaHandle);
-    fail("Download incomplete or SHA-256 mismatch");
+    fail(failure);
     return;
   }
   // esp_ota_end also validates the ESP application image. It does NOT
@@ -631,8 +680,14 @@ void downloadTask(void*) {
   stagedPartition = target;
   status.staged = true;
   status.downloading = false;
-  downloadRunning = false;
   status.error[0] = 0;
+  portEXIT_CRITICAL(&mux);
+}
+
+void downloadTask(void*) {
+  downloadUpdate();
+  portENTER_CRITICAL(&mux);
+  downloadRunning = false;
   portEXIT_CRITICAL(&mux);
   vTaskDelete(nullptr);
 }
@@ -709,6 +764,9 @@ void tick() {
     if (xTaskCreatePinnedToCore(checkTask, "update_check", 8192, nullptr,
                                 tskIDLE_PRIORITY + 1, nullptr, 0) != pdPASS) {
       setError("No memory for update check");
+      portENTER_CRITICAL(&mux);
+      running = false;
+      portEXIT_CRITICAL(&mux);
     }
   }
 }

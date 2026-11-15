@@ -232,6 +232,8 @@
     $("nightWakeLevelVal").textContent = pct("nightWakeLevel");
     $("ledBrightnessVal").textContent = pct("ledBrightness");
     $("ledNightBrightnessVal").textContent = pct("ledNightBrightness");
+    $("tactulaRadiusVal").textContent = $("tactulaRadius").value + " px";
+    $("tactulaPaddingVal").textContent = $("tactulaPadding").value + " px";
     $("glassTintVal").textContent = $("glassTint").value + "%";
     $("glassBlurVal").textContent = $("glassBlur").value === "0" ? "Off" : $("glassBlur").value + " px";
     $("glassDimVal").textContent = $("glassDim").value + "%";
@@ -247,6 +249,8 @@
     "nightWakeLevel",
     "ledBrightness",
     "ledNightBrightness",
+    "tactulaRadius",
+    "tactulaPadding",
     "glassTint",
     "glassBlur",
     "glassDim",
@@ -257,8 +261,12 @@
     "audioVolume",
   ].forEach((id) => $(id).addEventListener("input", updateRangeLabels));
   function updateGlassFields() {
-    const g = $("theme").value === "2";
-    $("glassLook").classList.toggle("hidden", !g);
+    const theme = $("theme").value;
+    const tactula = theme === "3";
+    $("glassLook").classList.toggle("hidden", theme !== "2" && !tactula);
+    $("tactulaLook").classList.toggle("hidden", !tactula);
+    $("glassBlurField").classList.toggle("hidden", tactula);
+    $("glassLookTitle").textContent = tactula ? "Tactula look" : "Glass look";
   }
   $("theme").addEventListener("change", updateGlassFields);
   // Animations: the presets as touch, on/off, page, card (as on the deck);
@@ -514,6 +522,8 @@
     setVal("dailyHour", c.display.dailyHour ?? 3);
     updateDailyFields();
     dailyStatus();
+    setVal("tactulaRadius", c.display.tactulaRadius ?? 22);
+    setVal("tactulaPadding", c.display.tactulaPadding ?? 9);
     setVal("glassTint", c.display.glassTint);
     setVal("glassBlur", c.display.glassBlur);
     setVal("glassDim", c.display.glassDim);
@@ -1025,19 +1035,22 @@
   // Bedroom PNG icons: upload to microSD, list, preview, and remove.
   const bedroomIconValid = (name) =>
     /^[a-z0-9_]+_(on|off)\.png$/.test(name) && name.length <= 64;
+  let bedroomIconListRequest = 0;
   async function loadBedroomIcons() {
+    const request = ++bedroomIconListRequest;
     const status = $("bedroomIconsStatus"), list = $("bedroomIconsList");
     try {
       const data = await getJson("/api/bedroom/icons");
+      if (request !== bedroomIconListRequest) return;
+      const names = [...new Set((data.files || []).map((file) => file.name).filter(bedroomIconValid))];
+      window.dispatchEvent(new CustomEvent("tactula:png-icons", { detail: { names, mounted: !!data.mounted } }));
       list.replaceChildren();
       const mounted = !!data.mounted;
       $("bedroomIconsBrowse").disabled = !mounted;
       status.textContent = mounted
-        ? "microSD connected • " + (data.files || []).length + " icon(s) saved"
+        ? "microSD connected • " + names.length + " icon(s) saved"
         : "microSD not mounted. Enable it above, save and restart before uploading.";
-      for (const entry of data.files || []) {
-        const name = String(entry.name || "");
-        if (!bedroomIconValid(name)) continue;
+      for (const name of names) {
         const card = document.createElement("div");
         card.style.cssText = "width:128px;padding:10px;border:1px solid var(--border,#444);border-radius:12px;text-align:center";
         const img = document.createElement("img");
@@ -1065,6 +1078,7 @@
         list.append(card);
       }
     } catch (e) {
+      if (request !== bedroomIconListRequest) return;
       status.textContent = "Could not read icons: " + e.message;
       $("bedroomIconsBrowse").disabled = true;
     }

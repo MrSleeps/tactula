@@ -333,7 +333,7 @@ void liquidDone(lv_anim_t* a) {
 // Before the tile changes state: hold back what the change would show at once.
 void startLiquid(TileRt& r, bool on) {
   onOffStop(r);
-  const bool glass = s_theme == THEME_GLASS && wallBlur();
+  const bool glass = themeUsesWallpaper(s_theme) && wallBlur();
   OnOff* q = new OnOff();
   q->on = on;
   // Still in the old state, so the current values are the ones to keep.
@@ -487,7 +487,7 @@ void sheenDone(lv_anim_t* a) {
 void startSheen(TileRt& r, bool on) {
   onOffStop(r);
   if (!lightImage(s_band, BAND_W, BAND_H, bandAlpha)) return;
-  const bool glass = s_theme == THEME_GLASS && wallBlur();
+  const bool glass = themeUsesWallpaper(s_theme) && wallBlur();
   const lv_style_prop_t prop = glass ? LV_STYLE_BG_OPA : LV_STYLE_BG_COLOR;
   OnOff* q = new OnOff();
   q->on = on;

@@ -212,6 +212,8 @@ static void handleApiConfig() {
   display["powerScale"] = dispSettings.powerScaleW;
   display["warnThreshold"] = dispSettings.warnThresholdPct;
   display["theme"] = dispSettings.theme;
+  display["tactulaRadius"] = dispSettings.tactulaRadius;
+  display["tactulaPadding"] = dispSettings.tactulaPadding;
   display["glassTint"] = dispSettings.glassTint;
   display["glassBlur"] = dispSettings.glassBlur;
   display["glassDim"] = dispSettings.glassDim;
@@ -315,6 +317,8 @@ static void handleConfigExport() {
   display["powerScale"] = dispSettings.powerScaleW;
   display["warnThreshold"] = dispSettings.warnThresholdPct;
   display["theme"] = dispSettings.theme;
+  display["tactulaRadius"] = dispSettings.tactulaRadius;
+  display["tactulaPadding"] = dispSettings.tactulaPadding;
   display["glassTint"] = dispSettings.glassTint;
   display["glassBlur"] = dispSettings.glassBlur;
   display["glassDim"] = dispSettings.glassDim;
@@ -520,10 +524,12 @@ static void handleConfigImport() {
   READ_INT(display, "tempScale", 1, 500, nextDisplay.tempScaleMax, uint16_t);
   READ_INT(display, "powerScale", 1, 65535, nextDisplay.powerScaleW, uint16_t);
   READ_INT(display, "warnThreshold", 0, 100, nextDisplay.warnThresholdPct, uint8_t);
-  READ_INT(display, "theme", 0, 2, nextDisplay.theme, uint8_t);
+  READ_INT(display, "theme", 0, THEME_MAX, nextDisplay.theme, uint8_t);
   // Backups from before the Glass sliders restore them to their defaults.
   DisplaySettings displayDefaults;
   defaultDisplaySettings(displayDefaults);
+  nextDisplay.tactulaRadius = displayDefaults.tactulaRadius;
+  nextDisplay.tactulaPadding = displayDefaults.tactulaPadding;
   nextDisplay.glassTint = displayDefaults.glassTint;
   nextDisplay.glassBlur = displayDefaults.glassBlur;
   nextDisplay.glassDim = displayDefaults.glassDim;
@@ -544,9 +550,13 @@ static void handleConfigImport() {
   nextDisplay.fxToggle = displayDefaults.fxToggle;
   nextDisplay.fxPage = displayDefaults.fxPage;
   nextDisplay.fxCard = displayDefaults.fxCard;
-  if (!display["glassTint"].isNull()) READ_INT(display, "glassTint", 0, 90, nextDisplay.glassTint, uint8_t);
+  if (!display["tactulaRadius"].isNull())
+    READ_INT(display, "tactulaRadius", 0, TACTULA_RADIUS_MAX, nextDisplay.tactulaRadius, uint8_t);
+  if (!display["tactulaPadding"].isNull())
+    READ_INT(display, "tactulaPadding", 0, TACTULA_PADDING_MAX, nextDisplay.tactulaPadding, uint8_t);
+  if (!display["glassTint"].isNull()) READ_INT(display, "glassTint", 0, 100, nextDisplay.glassTint, uint8_t);
   if (!display["glassBlur"].isNull()) READ_INT(display, "glassBlur", 0, 24, nextDisplay.glassBlur, uint8_t);
-  if (!display["glassDim"].isNull()) READ_INT(display, "glassDim", 0, 80, nextDisplay.glassDim, uint8_t);
+  if (!display["glassDim"].isNull()) READ_INT(display, "glassDim", 0, 100, nextDisplay.glassDim, uint8_t);
   if (!display["wallEvery"].isNull()) READ_INT(display, "wallEvery", 0, 60, nextDisplay.wallEvery, uint8_t);
   if (!display["wallOrder"].isNull()) READ_INT(display, "wallOrder", 0, 1, nextDisplay.wallOrder, uint8_t);
   if (!display["wallSource"].isNull()) {
@@ -1155,14 +1165,18 @@ static void handleSaveDisplay() {
   deck::wallInvalidateJobs();
   const uint8_t oldRotation = dispSettings.rotation;
   const uint8_t oldTheme = dispSettings.theme;
-  dispSettings.theme = (uint8_t)clampedArg("theme", dispSettings.theme, 0, 2);
+  const uint8_t oldRadius = dispSettings.tactulaRadius;
+  const uint8_t oldPadding = dispSettings.tactulaPadding;
+  dispSettings.tactulaRadius = (uint8_t)clampedArg("tactulaRadius", oldRadius, 0, TACTULA_RADIUS_MAX);
+  dispSettings.tactulaPadding = (uint8_t)clampedArg("tactulaPadding", oldPadding, 0, TACTULA_PADDING_MAX);
+  dispSettings.theme = (uint8_t)clampedArg("theme", dispSettings.theme, 0, THEME_MAX);
   const uint32_t oldGlass = dispSettings.glassOn << 24 | dispSettings.glassTint << 16 |
                             dispSettings.glassBlur << 8 | dispSettings.glassDim;
   const bool oldAuto = dispSettings.glassAutoText;
   dispSettings.glassAutoText = server.hasArg("glassAutoText");
-  dispSettings.glassTint = (uint8_t)clampedArg("glassTint", dispSettings.glassTint, 0, 90);
+  dispSettings.glassTint = (uint8_t)clampedArg("glassTint", dispSettings.glassTint, 0, 100);
   dispSettings.glassBlur = (uint8_t)clampedArg("glassBlur", dispSettings.glassBlur, 0, 24);
-  dispSettings.glassDim = (uint8_t)clampedArg("glassDim", dispSettings.glassDim, 0, 80);
+  dispSettings.glassDim = (uint8_t)clampedArg("glassDim", dispSettings.glassDim, 0, 100);
   dispSettings.glassOn = (uint8_t)clampedArg("glassOn", dispSettings.glassOn, 20, 100);
   const bool glassChanged = oldAuto != dispSettings.glassAutoText ||
                             oldGlass != (uint32_t)(dispSettings.glassOn << 24 | dispSettings.glassTint << 16 |
@@ -1180,7 +1194,9 @@ static void handleSaveDisplay() {
 
   saveSettings();
   if (dispSettings.rotation != oldRotation || dispSettings.theme != oldTheme) applyDisplaySettings();
-  else if (glassChanged) deckReloadWallpaper(false);
+  else if (glassChanged || (dispSettings.theme == THEME_TACTULA &&
+           (dispSettings.tactulaRadius != oldRadius || dispSettings.tactulaPadding != oldPadding)))
+    deckReloadWallpaper(false);
   sendJsonMessage(200, true, "Display settings applied.");
 }
 

@@ -10,7 +10,7 @@ lv_obj_t* makeRoot(int w, int h) {
   lv_obj_set_size(r, w, h);
   lv_obj_set_style_bg_color(r, lv_color_hex(C_BG), 0);
   lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
-  if (s_theme == THEME_GLASS && wallSharp()) lv_obj_set_style_bg_image_src(r, wallSharp(), 0);
+  if (themeUsesWallpaper(s_theme) && wallSharp()) lv_obj_set_style_bg_image_src(r, wallSharp(), 0);
   lv_obj_remove_flag(r, LV_OBJ_FLAG_SCROLLABLE);
   return r;
 }
@@ -939,6 +939,13 @@ void fitWeatherClock(TileRt& r, int cw, int ch) {
   lv_obj_set_size(r.sub, cw, roomH);
 }
 
+int tilePadding(int width, int height) {
+  const int side = std::min(width, height);
+  // Leave at least half the tile for content when the tile is very small.
+  if (s_theme == THEME_TACTULA) return std::min<int>(dispSettings.tactulaPadding, side / 4);
+  return side >= 80 ? 9 : side >= 56 ? 7 : 5;
+}
+
 void fitTile(TileRt& r) {
   const int w = lv_obj_get_width(r.obj), h = lv_obj_get_height(r.obj);
   if (w <= 0 || h <= 0 || (w == r.fitW && h == r.fitH)) return;
@@ -956,10 +963,7 @@ void fitTile(TileRt& r) {
     markPageStale(r.page);
     return;
   }
-  const int m = LV_MIN(w, h);
-  // The clock uses a large time line and a small date; regular tile padding
-  // needlessly makes a 2x1 clock too shallow for the 40px numerals.
-  const int pad = m >= 80 ? 9 : m >= 56 ? 7 : 5;
+  const int pad = tilePadding(w, h);
   lv_obj_set_style_pad_all(r.obj, pad, 0);
   const int cw = w - 2 * pad, ch = h - 2 * pad;
 #if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU

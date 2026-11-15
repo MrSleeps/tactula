@@ -30,17 +30,15 @@ void clearGlassCache() {
   }
 }
 
-// Theme colours (D11): Midnight (mockup A, default), Daylight, or Glass
-// (Midnight text, tiles of tinted glass over a wallpaper), set by
-// setPalette() before the pages are built.
+// Theme colours are set before the pages are built.
 uint8_t s_theme = 0;
 uint32_t C_BG, C_TILE, C_TILE_PRESSED, C_TILE_LINE, C_CHIP, C_TEXT, C_TEXT_ON, C_TITLE,
     C_CLOCK, C_OK, C_DIM, C_PANEL, C_TRACK, C_BUTTON;
 
 void setPalette(uint8_t theme) {
   clearGlassCache();
-  s_theme = theme <= THEME_GLASS ? theme : THEME_MIDNIGHT;
-  const bool day = s_theme == THEME_DAYLIGHT, glass = s_theme == THEME_GLASS;
+  s_theme = theme <= THEME_MAX ? theme : THEME_MIDNIGHT;
+  const bool day = s_theme == THEME_DAYLIGHT, glass = themeUsesWallpaper(s_theme);
   C_BG = day ? 0xF5F6FB : 0x0C1019;
   C_TILE = day ? 0xFFFFFF : glass ? 0x101622 : 0x171E2C;  // glass: the tint
   C_TILE_PRESSED = day ? 0xE9EDF6 : glass ? 0x151C2B : 0x252E43;
@@ -55,6 +53,30 @@ void setPalette(uint8_t theme) {
   C_PANEL = day ? 0xFFFFFF : 0x171E2C;
   C_TRACK = day ? 0xDFE4EF : 0x2B3445;
   C_BUTTON = day ? 0xE9EDF6 : 0x252E3D;
+  if (s_theme == THEME_TACTULA) {
+    C_TILE = 0x242344;
+    C_TILE_PRESSED = 0x312A59;
+    C_TILE_LINE = 0x7765C7;
+    C_CHIP = 0x312A59;
+    C_DIM = 0xA6B1C5;
+    C_PANEL = 0x171E2C;
+    C_TRACK = 0x393460;
+    C_BUTTON = 0x312A59;
+  } else if (s_theme == THEME_MINIMAL_CONSOLE) {
+    C_BG = 0x141616;
+    C_TILE = 0x212424;
+    C_TILE_PRESSED = 0x303535;
+    C_TILE_LINE = 0x3C4443;
+    C_CHIP = 0x262C2B;
+    C_TEXT = 0xF2F5F3;
+    C_TITLE = C_TEXT;
+    C_CLOCK = 0xCBD4D0;
+    C_OK = 0x8FD7C4;
+    C_DIM = 0xA5B2AC;
+    C_PANEL = 0x1D2120;
+    C_TRACK = 0x3C4642;
+    C_BUTTON = 0x303936;
+  }
 }
 
 // An icon in its round chip: on Daylight a light tint of the accent behind a
@@ -126,8 +148,10 @@ void flushWaitCb(lv_display_t*) {
   }
 }
 
-void indevRead(lv_indev_t*, lv_indev_data_t* data) {
+void indevRead(lv_indev_t* indev, lv_indev_data_t* data) {
   const TouchPoint p = touchForLvgl();
+  // Drop the press before LVGL handles the release from a swipe.
+  if (p.cancel) lv_indev_reset(indev, nullptr);
   data->point.x = p.x;
   data->point.y = p.y;
   data->state = p.pressed && !frameActive() ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
@@ -262,6 +286,7 @@ void layoutHeader(Page& p) {
     if (s_header) lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
   }
+  showObj(p.headerBand, s_header);
   if (p.updateBadge) {
     const auto st = firmwareUpdate::snapshot();
     if (s_header && st.checksEnabled && (st.showBadge || (st.staged && !st.promptOnStage)) && (st.available || st.staged))
@@ -376,6 +401,18 @@ void addTilesPage(const PageDef& def) {
   p = {};
   p.def = &def;
   p.root = makeRoot(w, h);
+  if (s_theme == THEME_TACTULA) {
+    p.headerBand = lv_obj_create(p.root);
+    lv_obj_remove_style_all(p.headerBand);
+    lv_obj_remove_flag(p.headerBand, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(p.headerBand, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(p.headerBand, w, HEADER_H);
+    lv_obj_set_style_bg_color(p.headerBand, lv_color_hex(C_PANEL), 0);
+    lv_obj_set_style_bg_opa(p.headerBand, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_side(p.headerBand, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_width(p.headerBand, 2, 0);
+    lv_obj_set_style_border_color(p.headerBand, lv_color_hex(C_OK), 0);
+  }
 
   lv_obj_t* t = lv_label_create(p.root);
   p.title = t;
@@ -544,7 +581,7 @@ void placePage(int page) {
     return;
   }
   // Re-bake only where tiles moved. A missing glass buffer falls back to full bake.
-  if (s_theme == THEME_GLASS && wallBlur()) bakeGlass(p, &changed);
+  if (themeUsesWallpaper(s_theme) && wallBlur()) bakeGlass(p, &changed);
   p.stale = true;
   s_zonesDirty = true;
 }
@@ -552,7 +589,7 @@ void placePage(int page) {
 void buildPages() {
   fxQuiet();  // tiles get their first state: no animations
   const int w = logicalW();
-  if (s_theme == THEME_GLASS) wallLoad(w, logicalH(), dispSettings.glassBlur, dispSettings.glassDim);
+  if (themeUsesWallpaper(s_theme)) wallLoad(w, logicalH(), dispSettings.glassBlur, dispSettings.glassDim);
   else wallFree();
   s_count = 0;
   s_tiles.clear();
@@ -597,7 +634,7 @@ void buildPages() {
   for (int i = 0; i < s_count; i++) lv_obj_set_pos(s_pages[i].root, i == active ? 0 : w, 0);
   unsigned baked = 0, reused = 0;
   uint32_t bakeMs = 0;
-  if (s_theme == THEME_GLASS) {
+  if (themeUsesWallpaper(s_theme)) {
     for (int i = 0; i < s_count; i++) {
       Page& p = s_pages[i];
       std::vector<uint32_t> key = glassKey(p);
@@ -618,7 +655,7 @@ void buildPages() {
   }
   // Drop removed or changed pages before allocating any replacement bakes.
   clearGlassCache();
-  if (s_theme == THEME_GLASS) {
+  if (themeUsesWallpaper(s_theme)) {
     for (int i = 0; i < s_count; i++) {
       if (s_pages[i].glass) continue;
       const uint32_t start = millis();
@@ -646,7 +683,7 @@ void destroyPages(bool keepGlass = false) {
   destroyQuickPanel();
   for (int i = 0; i < s_count; i++) {
     Page& p = s_pages[i];
-    if (keepGlass && s_theme == THEME_GLASS && p.glass && p.def && !p.glassKey.empty()) {
+    if (keepGlass && themeUsesWallpaper(s_theme) && p.glass && p.def && !p.glassKey.empty()) {
       GlassCacheEntry& c = s_glassCache[i];
       c.id = p.def->id;  // the config may be replaced before buildPages
       c.key.swap(p.glassKey);
@@ -817,7 +854,7 @@ void bakeWallpaperPage(int index) {
 }
 
 void tickWallpaper() {
-  const bool safe = s_count && s_theme == THEME_GLASS && getScreenState() == SCREEN_DECK &&
+  const bool safe = s_count && themeUsesWallpaper(s_theme) && getScreenState() == SCREEN_DECK &&
                     !displaySleepingForTouch() && !manualDisplayOff() && currentBacklightLevel() &&
                     !touchIsDown() && !s_qp.open && !s_modalCard && !s_ed.root &&
                     s_ed.pending == EditState::P_NONE && compMode() == COMP_NONE && !sh.owned;
@@ -1115,11 +1152,8 @@ void deckTick() {
     }
     releaseSwipe();
   }
-  // A swipe took the touch: make sure LVGL never turns it into a click.
-  if (touchTakeSwipeStarted()) {
-    lv_indev_reset(s_indev, nullptr);
-    fxCancelRipples();
-  }
+  // The input callback cancels the press. Clear its visual feedback here.
+  if (touchTakeSwipeStarted()) fxCancelRipples();
   panelSetPageFx(fxPage());
   // Cascade moves each page's grid columns; the header above moves as one.
   {
@@ -1280,7 +1314,7 @@ void deckApplyTheme(uint8_t theme) {
 
 void deckReloadWallpaper(bool fileChanged) {
   wallInvalidateJobs();
-  if (!s_disp || s_theme != THEME_GLASS) return;
+  if (!s_disp || !themeUsesWallpaper(s_theme)) return;
   stopGestures();
   destroyPages();
   if (fileChanged) wallFree();  // else wallLoad re-blurs only when blur or dimming changed

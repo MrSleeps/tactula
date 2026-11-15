@@ -243,7 +243,6 @@ uint32_t tileAccent(const TileDef& def) {
 
 // Per-tile look from deck.json, else the theme and display settings.
 uint32_t tileBg(const TileDef& d) { return d.hasBgColor ? d.bgColor : C_TILE; }
-uint32_t tileOnFill(const TileDef& d) { return d.hasOnColor ? d.onColor : tileAccent(d); }
 int tileTint(const TileDef& d) { return d.opacity >= 0 ? d.opacity : dispSettings.glassTint; }
 int tileOnOpa(const TileDef& d) { return d.onOpacity >= 0 ? d.onOpacity : dispSettings.glassOn; }
 
@@ -269,6 +268,14 @@ uint32_t lightTint(uint32_t rgb, uint32_t base, int alpha) {
   const uint32_t g = ((((rgb >> 8) & 255) * alpha + ((base >> 8) & 255) * inv) / 255);
   const uint32_t b = (((rgb & 255) * alpha + (base & 255) * inv) / 255);
   return (r << 16) | (g << 8) | b;
+}
+
+uint32_t tileOnFill(const TileDef& d) {
+  if (d.hasOnColor) return d.onColor;
+  const uint32_t accent = tileAccent(d);
+  if (s_theme == THEME_TACTULA && !d.hasColor) return C_OK;
+  if (s_theme == THEME_MINIMAL_CONSOLE) return lightTint(accent, tileBg(d), 100);
+  return accent;
 }
 
 // Sync the selected live colour parts with Home Assistant. Off and unavailable
@@ -299,17 +306,17 @@ void tileIconColor(TileRt& r, const HaEntity* e) {
     lv_obj_set_style_bg_color(r.obj, lv_color_hex(fill), LV_STATE_CHECKED);
     lv_obj_set_style_bg_color(r.obj, lv_color_mix(lv_color_hex(fill), lv_color_black(), 200),
                               LV_STATE_PRESSED | LV_STATE_CHECKED);
-    if (s_theme == THEME_GLASS && wallBlur() && tileOnOpa(d) < 50)
+    if (themeUsesWallpaper(s_theme) && wallBlur() && tileOnOpa(d) < 50)
       lv_obj_set_style_border_color(r.obj, lv_color_hex(fill), LV_STATE_CHECKED);
     if (r.fill) lv_obj_set_style_bg_color(r.fill, lv_color_hex(live ? fill : tileAccent(d)), 0);
     if (live && !d.hasOnTextColor) {
       const int lum = (((fill >> 16) & 255) * 299 + ((fill >> 8) & 255) * 587 +
                        (fill & 255) * 114) / 1000;
-      const bool glass = s_theme == THEME_GLASS && wallBlur();
+      const bool glass = themeUsesWallpaper(s_theme) && wallBlur();
       const bool darkText = lum * (glass ? tileOnOpa(d) : 100) / 100 >= 115;
       lv_obj_set_style_text_color(r.obj, lv_color_hex(darkText ? C_TEXT_ON : C_TEXT), LV_STATE_CHECKED);
     } else if (!d.hasOnTextColor) {
-      lv_obj_set_style_text_color(r.obj, lv_color_hex(onTextColor(d, s_theme == THEME_GLASS && wallBlur())),
+      lv_obj_set_style_text_color(r.obj, lv_color_hex(onTextColor(d, themeUsesWallpaper(s_theme) && wallBlur())),
                                   LV_STATE_CHECKED);
     }
   }
@@ -335,15 +342,16 @@ void tileIconColor(TileRt& r, const HaEntity* e) {
 void glassStyle(lv_obj_t* t, const TileDef& def) {
   const int onPct = tileOnOpa(def);
   const lv_opa_t on = (lv_opa_t)(onPct * 255 / 100);
-  const bool toggle = def.type == TILE_TOGGLE;
+  // Boxed children draw their tint over the single group surface.
+  const bool liveTint = def.type == TILE_TOGGLE || def.parent.length();
   const lv_opa_t off = (lv_opa_t)(tileTint(def) * 255 / 100);
-  lv_obj_set_style_bg_opa(t, toggle ? off : LV_OPA_TRANSP, 0);
-  lv_obj_set_style_bg_opa(t, toggle ? off : LV_OPA_30, LV_STATE_PRESSED);
+  lv_obj_set_style_bg_opa(t, liveTint ? off : LV_OPA_TRANSP, 0);
+  lv_obj_set_style_bg_opa(t, liveTint ? off : LV_OPA_30, LV_STATE_PRESSED);
   lv_obj_set_style_bg_opa(t, on, LV_STATE_CHECKED);
   lv_obj_set_style_bg_opa(t, on, LV_STATE_PRESSED | LV_STATE_CHECKED);
   lv_obj_set_style_border_width(t, 0, 0);
   // A faint fill alone hardly tells on from off: outline it in the accent.
-  if (onPct < 50) {
+  if (onPct < 50 && s_theme != THEME_TACTULA) {
     lv_obj_set_style_border_width(t, 2, LV_STATE_CHECKED);
     lv_obj_set_style_border_color(t, lv_color_hex(tileOnFill(def)), LV_STATE_CHECKED);
   }
@@ -374,13 +382,17 @@ bool tileBaked(const TileDef& def) {
 void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, int w, int h) {
   const String domain = entityDomain(def.entity);
   const uint32_t accent = tileAccent(def);
-  const bool glass = s_theme == THEME_GLASS && wallBlur() && tileBaked(def);
+  const bool boxedChild = s_theme == THEME_TACTULA && def.parent.length() && !tileBare(def);
+  const bool glass = themeUsesWallpaper(s_theme) && wallBlur() && (tileBaked(def) || boxedChild);
 
   lv_obj_t* t = lv_obj_create(grid);
   lv_obj_set_grid_cell(t, LV_GRID_ALIGN_STRETCH, col, w, LV_GRID_ALIGN_STRETCH, row, h);
   lv_obj_remove_flag(t, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_radius(t, 16, 0);
-  // Daylight tiles get a hairline, white on light grey is too soft alone.
+  int radius = 16;
+  if (s_theme == THEME_TACTULA) radius = dispSettings.tactulaRadius;
+  else if (s_theme == THEME_MINIMAL_CONSOLE) radius = 6;
+  lv_obj_set_style_radius(t, radius, 0);
+  // Light themes use a hairline to separate the tile from the page.
   lv_obj_set_style_border_width(t, s_theme == THEME_DAYLIGHT ? 1 : 0, 0);
   lv_obj_set_style_border_color(t, lv_color_hex(C_TILE_LINE), 0);
   lv_obj_set_style_pad_all(t, 9, 0);
@@ -402,6 +414,15 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_add_event_cb(t, fxPressed, LV_EVENT_RELEASED, nullptr);
   lv_obj_add_event_cb(t, fxPressed, LV_EVENT_PRESS_LOST, nullptr);
   if (glass) glassStyle(t, def);
+  if (s_theme == THEME_TACTULA && !tileBare(def)) {
+    // An inset outline preserves the content area and group geometry.
+    lv_obj_set_style_outline_width(t, 1, 0);
+    lv_obj_set_style_outline_pad(t, -1, 0);
+    lv_obj_set_style_outline_color(t, lv_color_hex(C_TILE_LINE), 0);
+    lv_obj_set_style_outline_width(t, 2, LV_STATE_CHECKED);
+    lv_obj_set_style_outline_pad(t, -2, LV_STATE_CHECKED);
+    lv_obj_set_style_outline_color(t, lv_color_hex(C_OK), LV_STATE_CHECKED);
+  }
   // Clock without a card: don't draw a tile fill, outline or shadow.
   // Glass-theme backgrounds are also omitted from bakeGlass().
   if (tileBare(def)) {
@@ -580,7 +601,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     lv_obj_remove_style_all(fill);
     lv_obj_add_flag(fill, (lv_obj_flag_t)(LV_OBJ_FLAG_FLOATING | LV_OBJ_FLAG_HIDDEN));
     lv_obj_remove_flag(fill, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
-    lv_obj_set_style_radius(fill, 16, 0);
+    lv_obj_set_style_radius(fill, radius, 0);
     lv_obj_set_style_bg_color(fill, lv_color_hex(accent), 0);
     lv_obj_set_style_bg_opa(fill, s_theme == THEME_DAYLIGHT ? LV_OPA_40 : LV_OPA_50, 0);
     lv_obj_add_flag(t, LV_OBJ_FLAG_PRESS_LOCK);  // the drag may leave the tile
@@ -593,7 +614,8 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_set_style_border_width(chip, 0, 0);
   lv_obj_set_style_pad_all(chip, 0, 0);
   styleIconChip(chip, accent);
-  if (def.iconPlain || def.type == TILE_NAV) lv_obj_set_style_bg_opa(chip, LV_OPA_TRANSP, 0);
+  if (def.iconPlain || def.type == TILE_NAV || s_theme == THEME_MINIMAL_CONSOLE)
+    lv_obj_set_style_bg_opa(chip, LV_OPA_TRANSP, 0);
   if (def.hasIconColor) lv_obj_set_style_text_color(chip, lv_color_hex(def.iconColor), 0);
   lv_obj_t* ic = lv_label_create(chip);
   lv_obj_center(ic);

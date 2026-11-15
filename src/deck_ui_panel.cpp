@@ -1,5 +1,6 @@
 // Deck UI: the quick panel and the frosted glass behind it.
 #include "deck_ui_int.h"
+#include "config.h"
 
 namespace deckui {
 
@@ -310,7 +311,7 @@ void frostStyle(lv_obj_t* o, lv_draw_buf_t* glass) {
 // Frost the panel from the page under its open place. Only while the page
 // alone is on screen; it is re-frosted when the panel goes stale.
 void qpFrost() {
-  if (s_theme != THEME_GLASS || !s_qp.box || s_qp.open || modalShown()) return;
+  if (!themeUsesWallpaper(s_theme) || !s_qp.box || s_qp.open || modalShown()) return;
   lv_draw_buf_t* g = frostedCopy(0, -QP_LIP, logicalW(), QP_H + QP_LIP, 20);
   if (!g) return;
   frostStyle(s_qp.box, g);
@@ -355,6 +356,11 @@ void buildQuickPanel() {
   s_qp.wifi = qpChip(chips);
   s_qp.ha = qpChip(chips);
   s_qp.ip = qpChip(chips);
+  // Show the running firmware version directly after the IP status chip.
+  lv_obj_t* versionChip = qpChip(chips);
+  lv_obj_t* versionText = lv_obj_get_child(versionChip, 0);
+  lv_label_set_text_fmt(versionText, "v%s", FW_VERSION);
+  lv_obj_set_style_text_color(versionText, lv_color_hex(C_CLOCK), 0);
 
   const int labelW = 108, valW = 46;
   const int slX = 16 + labelW, slW = w - slX - valW - 22;

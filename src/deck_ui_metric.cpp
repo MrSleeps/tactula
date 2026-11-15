@@ -52,7 +52,7 @@ void makeMetricContent(TileRt& r, lv_obj_t* t) {
   lv_label_set_text(r.name, d.noName ? "" : d.label.length() ? d.label.c_str() : tileLabel(d).c_str());
   // On glass the accent alone is hard to read: lift it toward white.
   const lv_color_t nameCol = lv_color_hex(accent);
-  lv_obj_set_style_text_color(r.name, s_theme == THEME_GLASS ? lv_color_mix(lv_color_white(), nameCol, 110) : nameCol, 0);
+  lv_obj_set_style_text_color(r.name, themeUsesWallpaper(s_theme) ? lv_color_mix(lv_color_white(), nameCol, 110) : nameCol, 0);
   lv_label_set_long_mode(r.name, LV_LABEL_LONG_MODE_DOTS);
 
   // Value and unit side by side, bottoms aligned.

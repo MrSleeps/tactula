@@ -39,7 +39,7 @@ void deckBedroomIconsChanged();
 void deckRefreshNow();
 // Rotation changed in the portal: re-layout everything at the new size.
 void deckApplyRotation(uint8_t rotation);
-// Switch the colour theme (THEME_MIDNIGHT / THEME_DAYLIGHT / THEME_GLASS);
+// Switch the display theme;
 // rebuilds the pages.
 void deckApplyTheme(uint8_t theme);
 // A wallpaper file was replaced or removed (fileChanged), or the Glass

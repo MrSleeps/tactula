@@ -215,7 +215,7 @@ bool capturePage() {
   if (lv_draw_buf_init(&buf, s_width, s_height, LV_COLOR_FORMAT_RGB565, s_width * 2,
                        s_page, FRAME_BYTES) != LV_RESULT_OK ||
       lv_snapshot_take_to_draw_buf(page.root, LV_COLOR_FORMAT_RGB565, &buf) != LV_RESULT_OK) return false;
-  const lv_image_dsc_t* sharp = s_theme == THEME_GLASS ? wallSharp() : nullptr;
+  const lv_image_dsc_t* sharp = themeUsesWallpaper(s_theme) ? wallSharp() : nullptr;
   const uint16_t color = lv_color_to_u16(lv_color_hex(C_BG));
   for (int y = 0; y < s_height; y++) {
     uint16_t* row = s_base + y * s_width;

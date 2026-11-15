@@ -579,7 +579,7 @@ void wallRequest(bool portrait, const String& name) {
   wallProtect(portrait, 1, s_source == 1 && name.length() ? "d/" + name : name);
   s_request[portrait] = true;
   s_retryMs = 0;
-  if (portrait != ((dispSettings.rotation & 1) == 0) || dispSettings.theme != THEME_GLASS)
+  if (portrait != ((dispSettings.rotation & 1) == 0) || !themeUsesWallpaper(dispSettings.theme))
     s_current[portrait] = name;
 }
 
@@ -655,7 +655,7 @@ bool wallPoll(int w, int h, bool idle, bool canSwitch) {
       discardJob();
     }
   }
-  if (jobState() != JOB_IDLE || dispSettings.theme != THEME_GLASS || !canSwitch) return false;
+  if (jobState() != JOB_IDLE || !themeUsesWallpaper(dispSettings.theme) || !canSwitch) return false;
   if (s_retryMs && now - s_retryMs < 30000) return false;
   initGallery(p);
   if (s_request[p] && s_automatic[p] && !idle) return false;

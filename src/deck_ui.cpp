@@ -227,8 +227,11 @@ static void openFirmwareConfirmation(lv_event_t*) {
     lv_label_set_text_fmt(version, "%s ready. The screen will restart.", st.version);
   else if (st.downloading)
     lv_label_set_text_fmt(version, "Downloading %s. Return here when ready.", st.version);
+  else if (st.error[0])
+    lv_label_set_text_fmt(version, "%s available, but not downloaded. Last error: %s",
+                          st.version, st.error);
   else
-    lv_label_set_text_fmt(version, "%s available. Download and verify it first.", st.version);
+    lv_label_set_text_fmt(version, "%s available, not yet downloaded to Tactula. Download and verify it first.", st.version);
   lv_label_set_long_mode(version, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(version, LV_PCT(100));
   lv_obj_set_style_text_color(version, lv_color_hex(C_DIM), 0);

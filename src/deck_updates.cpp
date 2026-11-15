@@ -555,11 +555,23 @@ void downloadTask(void*) {
   client.setTimeout(15000);
   HTTPClient http;
   http.setTimeout(15000);
+  // Match manifest retrieval: request a non-chunked response with a fixed
+  // Content-Length. ESP32 OTA must reject missing or mismatched file sizes.
+  http.useHTTP10(true);
   http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
-  if (!http.begin(client, url) || http.GET() != HTTP_CODE_OK ||
-      http.getSize() != static_cast<int>(expected)) {
+  http.setUserAgent("Tactula-OTA-Download/2.0");
+  const bool begun = http.begin(client, url);
+  const int httpStatus = begun ? http.GET() : -1;
+  const int contentLength = httpStatus == HTTP_CODE_OK ? http.getSize() : -1;
+  if (httpStatus != HTTP_CODE_OK ||
+      contentLength != static_cast<int>(expected)) {
+    char diagnostic[112] = {};
+    snprintf(diagnostic, sizeof(diagnostic),
+             "Mirror image HTTP %d, length %d (expected %lu)",
+             httpStatus, contentLength, static_cast<unsigned long>(expected));
+    Serial.printf("[Tactula OTA] %s\n", diagnostic);
     http.end();
-    fail("Mirror returned an invalid image or length");
+    fail(diagnostic);
     return;
   }
   esp_ota_handle_t otaHandle = 0;

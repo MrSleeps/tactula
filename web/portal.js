@@ -846,10 +846,14 @@
       fwAction.textContent = data.staged ? "Install firmware" : "Download verified OTA";
       fwAction.disabled = data.downloading || (!data.staged && !data.available);
       $("fwDownloadStatus").textContent = data.downloading
-        ? "Downloading and verifying: " + fmtBytes(data.downloadedBytes) + " / " + fmtBytes(data.totalBytes)
+        ? "Downloading to Tactula and verifying: " + fmtBytes(data.downloadedBytes) + " / " + fmtBytes(data.totalBytes)
         : data.staged
-          ? "Verified image staged. Select Install firmware to open the confirmation on the touchscreen."
-          : data.available ? "Download is ready; installation still requires a touchscreen confirmation." : "";
+          ? "Verified firmware stored in Tactula's inactive OTA partition. Select Install firmware to confirm on the touchscreen."
+          : data.error
+            ? "Firmware update error: " + data.error
+            : data.available
+              ? "Update found, but NOT downloaded to Tactula. Select Download verified OTA, then wait for verification before installing."
+              : "";
       $("fwUpdateStatus").textContent = data.checking
         ? "Checking the " + (data.allowBeta ? "beta" : "stable") + " firmware release feed..."
         : data.available

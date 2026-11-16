@@ -1,4 +1,5 @@
 // Guition deck: icon fonts. See deck_icons.h.
+#include "debug_log.h"
 #include "deck_icons.h"
 #include "deck_config.h"
 #include "deck_sd.h"
@@ -504,7 +505,7 @@ bool iconsLoad(const char* path, String& err) {
   s_index = index;
   s_count = count;
   registerFs();
-  Serial.printf("Deck: icon font %u bytes, %u icons\n", (unsigned)size, (unsigned)count);
+  debugSerial.printf("Deck: icon font %u bytes, %u icons\n", (unsigned)size, (unsigned)count);
   return true;
 }
 
@@ -536,7 +537,7 @@ bool brandLoad(String& err) {
   if (!readBrand(brandFontPath(), brandNamesPath(), next, err, false)) return false;
   freeFonts();
   s_brand.swap(next);
-  Serial.printf("Deck: brand font %u bytes, %u icons (%s)\n", (unsigned)s_brand.size,
+  debugSerial.printf("Deck: brand font %u bytes, %u icons (%s)\n", (unsigned)s_brand.size,
                 (unsigned)s_brand.count, s_brand.version.c_str());
   return true;
 }

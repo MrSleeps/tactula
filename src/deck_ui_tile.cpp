@@ -1,4 +1,5 @@
 // Deck UI: tile look and building a tile.
+#include "debug_log.h"
 #include "deck_ui_int.h"
 #include "deck_sd.h"
 #define LODEPNG_NO_COMPILE_CPP
@@ -203,7 +204,7 @@ static lv_draw_buf_t* loadTilePng(const String& path, bool explicitImage, bool& 
   File file = deck::wallFs().open(path, "r");
   opened = static_cast<bool>(file);
   if (!opened) {
-    if (explicitImage) Serial.printf("Deck: tile PNG open failed: %s\n", path.c_str());
+    if (explicitImage) debugSerial.printf("Deck: tile PNG open failed: %s\n", path.c_str());
     return nullptr;
   }
   // Match the upload limits, including files copied directly to the card.
@@ -211,7 +212,7 @@ static lv_draw_buf_t* loadTilePng(const String& path, bool explicitImage, bool& 
   uint8_t header[24];
   if (bytes < sizeof(header) || bytes > 512 * 1024 ||
       file.read(header, sizeof(header)) != sizeof(header)) {
-    Serial.printf("Deck: tile PNG size/header read failed: %s (%u bytes)\n",
+    debugSerial.printf("Deck: tile PNG size/header read failed: %s (%u bytes)\n",
                   path.c_str(), (unsigned)bytes);
     return nullptr;
   }
@@ -220,7 +221,7 @@ static lv_draw_buf_t* loadTilePng(const String& path, bool explicitImage, bool& 
   const uint32_t height = ((uint32_t)header[20] << 24) | ((uint32_t)header[21] << 16) |
                           ((uint32_t)header[22] << 8) | header[23];
   if (!width || !height || width > 512 || height > 512) {
-    Serial.printf("Deck: tile PNG dimensions invalid: %s\n", path.c_str());
+    debugSerial.printf("Deck: tile PNG dimensions invalid: %s\n", path.c_str());
     return nullptr;
   }
 
@@ -228,7 +229,7 @@ static lv_draw_buf_t* loadTilePng(const String& path, bool explicitImage, bool& 
   // discover its length and again to read it, through the brand font drive.
   auto* data = static_cast<uint8_t*>(lv_malloc(bytes));
   if (!data) {
-    Serial.printf("Deck: tile PNG input allocation failed: %s\n", path.c_str());
+    debugSerial.printf("Deck: tile PNG input allocation failed: %s\n", path.c_str());
     return nullptr;
   }
   memcpy(data, header, sizeof(header));
@@ -237,7 +238,7 @@ static lv_draw_buf_t* loadTilePng(const String& path, bool explicitImage, bool& 
   file.close();
   if (read != remaining) {
     lv_free(data);
-    Serial.printf("Deck: tile PNG short read: %s (%u/%u bytes)\n",
+    debugSerial.printf("Deck: tile PNG short read: %s (%u/%u bytes)\n",
                   path.c_str(), (unsigned)read, (unsigned)remaining);
     return nullptr;
   }
@@ -251,7 +252,7 @@ static lv_draw_buf_t* loadTilePng(const String& path, bool explicitImage, bool& 
   auto* pixels = reinterpret_cast<lv_draw_buf_t*>(decoded);
   if (error) {
     if (pixels) lv_draw_buf_destroy(pixels);
-    Serial.printf("Deck: tile PNG decode failed: %s (%ux%u, %u bytes, error %u: %s)\n",
+    debugSerial.printf("Deck: tile PNG decode failed: %s (%ux%u, %u bytes, error %u: %s)\n",
                   path.c_str(), (unsigned)width, (unsigned)height, (unsigned)bytes,
                   error, lodepng_error_text(error));
     return nullptr;
@@ -307,7 +308,7 @@ static void setTilePng(TileRt& r, const String& name, bool force) {
     if (!r.pngIcon) {
       lv_draw_buf_destroy(pixels);
       recordTilePngFailure(r);
-      Serial.printf("Deck: tile PNG widget allocation failed: %s\n", name.c_str());
+      debugSerial.printf("Deck: tile PNG widget allocation failed: %s\n", name.c_str());
       return;
     }
     lv_obj_remove_flag(r.pngIcon, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
@@ -321,7 +322,7 @@ static void setTilePng(TileRt& r, const String& name, bool force) {
     lv_draw_buf_destroy(pixels);
     hideTilePng(r);
     recordTilePngFailure(r);
-    Serial.printf("Deck: tile PNG rejected by LVGL: %s\n", name.c_str());
+    debugSerial.printf("Deck: tile PNG rejected by LVGL: %s\n", name.c_str());
     return;
   }
   dropTilePng(r.pngIcon);

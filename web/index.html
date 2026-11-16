@@ -149,6 +149,7 @@
               >
               <button type="button" class="nav-item" data-nav="network">Network</button
               ><button type="button" class="nav-item" data-nav="maintenance">Maintenance</button>
+              <button type="button" class="nav-item hidden" data-nav="logs" id="navLogs">Logs</button>
             </div>
           </nav>
           <div class="sidebar-spacer"></div>
@@ -275,6 +276,26 @@
                   <div><dt>WiFi signal</dt><dd id="diagRssi">--</dd></div>
                   <div><dt>Uptime</dt><dd id="diagUptime">--</dd></div>
                 </dl>
+                <label class="check-row standalone" style="margin-top: 12px">
+                  <input type="checkbox" id="debugMode" disabled /><span class="check-box"></span>
+                  <span class="check-text"><strong>Debug mode</strong>
+                    <span class="ct-hint" id="debugModeHint">Restarts the device and enables the Logs page.</span>
+                  </span>
+                </label>
+              </div>
+            </section>
+
+            <section class="page" data-page="logs">
+              <div class="page-header">
+                <h1 class="page-h1">Logs</h1>
+              </div>
+              <div class="card">
+                <div class="card-head">
+                  <p id="debugLogsStatus" class="field-hint" role="status">Connecting...</p>
+                  <button type="button" class="btn" id="debugLogsPause" aria-pressed="false">Pause</button>
+                </div>
+                <pre id="debugLogsOutput" tabindex="0" aria-label="Device log output"
+                  style="height: min(56vh, 520px); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere"></pre>
               </div>
             </section>
 

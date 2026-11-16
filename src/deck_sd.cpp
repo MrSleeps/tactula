@@ -1,3 +1,4 @@
+#include "debug_log.h"
 #include "deck_sd.h"
 #include "deck_wall.h"
 #include "deck_config.h"
@@ -180,7 +181,7 @@ void logf(const char* fmt, ...) {
   vsnprintf(line, sizeof(line), fmt, args);
   va_end(args);
   logLine(line);
-  Serial.printf("Deck: SD %s\n", line);
+  debugSerial.printf("Deck: SD %s\n", line);
 }
 
 // The card in SD mode with FatFs but without the VFS, for the probe and
@@ -325,17 +326,17 @@ sdmmc_card_t* mountCard() {
   if (!card && mmcErr == ESP_FAIL) {
     snprintf(error, sizeof(error), "SD %s: file system not accepted", esp_err_to_name(mmcErr));
     s_error = error;
-    Serial.printf("Deck: SD mount failed: %s\n", s_error);
+    debugSerial.printf("Deck: SD mount failed: %s\n", s_error);
     return nullptr;
   }
   if (!card) {
     snprintf(error, sizeof(error), "SD %s, SPI %s", esp_err_to_name(mmcErr), esp_err_to_name(spiErr));
     s_error = error;
-    Serial.printf("Deck: SD mount failed: %s\n", s_error);
+    debugSerial.printf("Deck: SD mount failed: %s\n", s_error);
     return nullptr;
   }
   s_error = "";
-  Serial.printf("Deck: SD card %s, %s, %llu MB\n", card->cid.name, s_mode,
+  debugSerial.printf("Deck: SD card %s, %s, %llu MB\n", card->cid.name, s_mode,
                 (unsigned long long)card->csd.capacity * card->csd.sector_size / 1048576);
   return card;
 }
@@ -422,7 +423,7 @@ void wallStorageBegin() {
     for (int d = 0; d < 2; d++) ok &= s_fs.exists(wallDir(p, d)) || s_fs.mkdir(wallDir(p, d));
   if (!ok) {
     s_error = "gallery folders unavailable";
-    Serial.println("Deck: SD gallery directories unavailable");
+    debugSerial.println("Deck: SD gallery directories unavailable");
     s_mounted = false;
     s_impl->mountpoint(nullptr);
     esp_vfs_fat_sdcard_unmount("/sd", card);
@@ -431,7 +432,7 @@ void wallStorageBegin() {
     return;
   }
   wallRebuildIndex();
-  Serial.println("Deck: SD galleries mounted");
+  debugSerial.println("Deck: SD galleries mounted");
 }
 
 void wallRebuildIndex() {

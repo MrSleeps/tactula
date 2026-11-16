@@ -1,3 +1,4 @@
+#include "debug_log.h"
 #include "haptic.h"
 #include "settings.h"
 #include "led.h"
@@ -30,7 +31,7 @@ static bool attachPin(uint8_t pin) {
   if (attachedPin == (int8_t)pin) return true;
   detachPin();
   if (!ledcAttach(pin, HAPTIC_PWM_FREQ, HAPTIC_PWM_RES)) {
-    Serial.printf("Haptic: could not attach PWM to GPIO %u\n", (unsigned)pin);
+    debugSerial.printf("Haptic: could not attach PWM to GPIO %u\n", (unsigned)pin);
     return false;
   }
   ledcWrite(pin, 0);
@@ -66,7 +67,7 @@ void sanitizeHapticPin() {
   hapticSettings.pulseMs = constrain(hapticSettings.pulseMs, HAPTIC_MIN_MS, HAPTIC_MAX_MS);
   // A disabled pin is only a remembered choice; initHaptic() checks it before parking.
   if (hapticSettings.enabled && !hapticPinAllowed(hapticSettings.pin)) {
-    Serial.printf("Haptic: GPIO %u is not allowed, disabling\n", (unsigned)hapticSettings.pin);
+    debugSerial.printf("Haptic: GPIO %u is not allowed, disabling\n", (unsigned)hapticSettings.pin);
     hapticSettings.enabled = false;
   }
 }
@@ -77,15 +78,15 @@ void initHaptic() {
   if (!hapticSettings.enabled) {
     // Hold a wired but disabled module's input low instead of floating.
     if (hapticPinAllowed(pin)) parkLow(pin);
-    Serial.println("Haptic: disabled");
+    debugSerial.println("Haptic: disabled");
     return;
   }
   if (!hapticPinAllowed(pin)) {
-    Serial.printf("Haptic: GPIO %u is not allowed on this board\n", (unsigned)pin);
+    debugSerial.printf("Haptic: GPIO %u is not allowed on this board\n", (unsigned)pin);
     return;
   }
   if (attachPin(pin))
-    Serial.printf("Haptic: GPIO %u, %u%%, %u ms\n", (unsigned)pin,
+    debugSerial.printf("Haptic: GPIO %u, %u%%, %u ms\n", (unsigned)pin,
                   (unsigned)hapticSettings.strength, (unsigned)hapticSettings.pulseMs);
 }
 

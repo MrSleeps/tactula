@@ -1,6 +1,7 @@
 // TouchDeck - firmware entry point.
 // Boot: settings -> display (splash) -> WiFi (STA or AP setup) -> web/OTA
 // server -> Home Assistant-powered deck pages. No PC companion is needed.
+#include "debug_log.h"
 #include <Arduino.h>
 #include <esp_task_wdt.h>
 #include <esp_heap_caps.h>
@@ -17,6 +18,7 @@
 #include "deck_daily.h"
 #include "deck_sd.h"
 #include "deck_updates.h"
+#include "tls_psram.h"
 #include <esp_ota_ops.h>
 #if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
 #include "deck_office_bambu.h"
@@ -34,13 +36,17 @@ SET_LOOP_TASK_STACK_SIZE(12 * 1024);
 
 void setup() {
   Serial.begin(115200);
+  debugLogBegin();
   delay(200);
-  Serial.println();
-  Serial.println(PRODUCT_NAME " " FW_VERSION " boot");
-  Serial.printf("Reset reason: %d\n", (int)esp_reset_reason());
+  debugSerial.println();
+  debugSerial.println(PRODUCT_NAME " " FW_VERSION " boot");
+  debugSerial.printf("Reset reason: %d\n", (int)esp_reset_reason());
   crashLogBegin();
   // Keep scarce internal RAM for DMA and WiFi: small objects alone stay internal.
   heap_caps_malloc_extmem_enable(128);
+
+  // Configure TLS before any network task can start in either edition.
+  if (!tlsPsramInstall()) debugSerial.println("TLS: could not install PSRAM allocator");
 
   loadSettings();
   firmwareUpdate::begin();
@@ -50,7 +56,7 @@ void setup() {
       esp_ota_get_state_partition(runningOta, &runningState) == ESP_OK &&
       runningState == ESP_OTA_IMG_PENDING_VERIFY) {
     sOtaBootValidationPending = true;
-    Serial.println("OTA: validating newly booted image");
+    debugSerial.println("OTA: validating newly booted image");
   }
   deck::wallStorageBegin();
   setScreenState(SCREEN_SPLASH);
@@ -111,7 +117,7 @@ void loop() {
   // provisional until the normal application loop remains healthy for 60s.
   if (sOtaBootValidationPending && millis() >= 60000) {
     if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
-      Serial.println("OTA: new firmware verified after healthy runtime");
+      debugSerial.println("OTA: new firmware verified after healthy runtime");
       sOtaBootValidationPending = false;
     }
   }

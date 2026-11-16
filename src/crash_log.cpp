@@ -1,3 +1,4 @@
+#include "debug_log.h"
 #include "crash_log.h"
 #include "config.h"
 #include <Preferences.h>
@@ -53,7 +54,7 @@ void crashLogBegin() {
     if (len < (int)sizeof(line) - 12)
       snprintf(line + len, sizeof(line) - len, "%s", s_rec.corrupt ? " |corrupt" : s_rec.more ? " ..." : "");
     s_last = line;
-    Serial.printf("Last crash: %s\n", line);
+    debugSerial.printf("Last crash: %s\n", line);
     if (prefs.begin(NVS_NAMESPACE, false)) {
       prefs.putString("crash", s_last);
       prefs.end();

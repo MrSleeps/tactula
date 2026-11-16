@@ -1,4 +1,5 @@
 // Guition deck: HTTP tile actions. See deck_http.h.
+#include "debug_log.h"
 #include "deck_http.h"
 #include <HTTPClient.h>
 #include <WiFi.h>
@@ -352,6 +353,7 @@ void task(void*) {
       if (j->ticket) body = copyText(text.c_str(), text.length());
     }
     Serial.printf("[http] %s %s -> %d %s\n", j->a.method.c_str(), j->a.url.c_str(), code, err.c_str());
+    debugLogNoteHttpAction(j->a.method.c_str(), code);
     if (j->ticket) {
       xSemaphoreTake(s_lock, portMAX_DELAY);
       TestResult& t = s_tests[s_testNext++ % 4];

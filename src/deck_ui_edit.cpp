@@ -1,4 +1,5 @@
 // Deck UI: page edit mode on the device and its entity picker.
+#include "debug_log.h"
 #include "deck_ui_int.h"
 
 namespace deckui {
@@ -728,7 +729,7 @@ void edOpen(int page) {
 
   setModalOpen(true);  // no swipes or quick panel under the editor
   panelSetPager(1, 0, 1, 0);  // and no page dots over it
-  Serial.printf("Deck: edit page '%s'\n", def.id.c_str());
+  debugSerial.printf("Deck: edit page '%s'\n", def.id.c_str());
 }
 
 void edClose() {
@@ -838,7 +839,7 @@ void edFinish() {
     deckToastShow("Page saved", 1500);
     return;
   }
-  Serial.printf("Deck: edit not saved: %s\n", err.c_str());
+  debugSerial.printf("Deck: edit not saved: %s\n", err.c_str());
   deckToastShow("Not saved", 1800);
 }
 

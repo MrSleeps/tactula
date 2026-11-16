@@ -1,4 +1,5 @@
 // Guition deck: Bambu printers from Home Assistant. See deck_bambu_ha.h.
+#include "debug_log.h"
 #include "deck_bambu_ha.h"
 #include <ArduinoJson.h>
 #include <esp_heap_caps.h>
@@ -314,7 +315,7 @@ void lookupDone(uint32_t tag, bool ok, const HaRegEntry* list, size_t count, con
       p.err[0] = 0;
       if (p.powered) resetState(p);
     }
-    Serial.printf("Printer %s: HA lookup %u entities, %u used, %u AMS\n", p.id.c_str(),
+    debugSerial.printf("Printer %s: HA lookup %u entities, %u used, %u AMS\n", p.id.c_str(),
                   (unsigned)count, (unsigned)n, (unsigned)l.amsCount);
     ++s_version;
   }

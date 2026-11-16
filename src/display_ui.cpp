@@ -1,3 +1,4 @@
+#include "debug_log.h"
 #include "display_ui.h"
 #include "config.h"
 #include "settings.h"
@@ -176,7 +177,7 @@ void updateBacklightControl() {
 void initDisplay() {
   // Panel bring-up wants the rails settled after power-on.
   delay(500);
-  if (!deckBegin(dispSettings.rotation)) Serial.println("Display: deck pipeline init FAILED");
+  if (!deckBegin(dispSettings.rotation)) debugSerial.println("Display: deck pipeline init FAILED");
   displayTick();  // the splash is on the panel before the light comes on
   pinMode(BACKLIGHT_PIN, OUTPUT);
   setBacklight(brightness);

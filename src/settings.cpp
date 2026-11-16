@@ -1,3 +1,4 @@
+#include "debug_log.h"
 #include "settings.h"
 #include "config.h"
 #include "led.h"       // sanitizeLedPin()
@@ -63,7 +64,7 @@ static void migrateFromStatNode() {
     dispSettings.tempScaleMax = old.tempScaleMax;
     dispSettings.powerScaleW = old.powerScaleW;
     dispSettings.warnThresholdPct = old.warnThresholdPct;
-    Serial.println("Settings: display settings taken over from StatNode");
+    debugSerial.println("Settings: display settings taken over from StatNode");
   }
   // "rot" marks the migration done, so it is written last and the legacy keys
   // go only after every new key is stored.

@@ -9,6 +9,7 @@ struct State {
   bool allowBeta = false;
   bool available = false;
   bool checking = false;
+  bool checkPending = false;
   bool autoDownload = false;
   bool downloading = false;
   bool staged = false;

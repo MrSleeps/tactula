@@ -1,4 +1,5 @@
 // Guition deck configuration loader. See deck_config.h for the schema.
+#include "debug_log.h"
 #include "deck_config.h"
 #include "config.h"
 #if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
@@ -185,7 +186,7 @@ bool isInternalFsPartitionErased() {
   const esp_partition_t* part = esp_partition_find_first(
       ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "spiffs");
   if (!part || part->size == 0) {
-    Serial.println("Deck: internal flash partition not found");
+    debugSerial.println("Deck: internal flash partition not found");
     return false;
   }
   uint8_t buf[512];
@@ -193,7 +194,7 @@ bool isInternalFsPartitionErased() {
     const size_t remaining = size_t(part->size - offset);
     const size_t count = remaining < sizeof(buf) ? remaining : sizeof(buf);
     if (esp_partition_read(part, offset, buf, count) != ESP_OK) {
-      Serial.println("Deck: flash read failed; refusing automatic format");
+      debugSerial.println("Deck: flash read failed; refusing automatic format");
       return false;
     }
     for (size_t i = 0; i < count; ++i) {
@@ -210,12 +211,12 @@ bool mountFs() {
     s_fsOk = LittleFS.begin(false, "/littlefs", 14, "spiffs");
     if (!s_fsOk) {
       if (isInternalFsPartitionErased()) {
-        Serial.println("Deck: brand-new blank internal flash; initializing LittleFS");
+        debugSerial.println("Deck: brand-new blank internal flash; initializing LittleFS");
         s_fsOk = LittleFS.begin(true, "/littlefs", 14, "spiffs");
-        Serial.println(s_fsOk ? "Deck: internal flash ready" :
+        debugSerial.println(s_fsOk ? "Deck: internal flash ready" :
                                "Deck: automatic LittleFS initialization FAILED");
       } else {
-        Serial.println("Deck: LittleFS mount FAILED; existing/unknown data preserved");
+        debugSerial.println("Deck: LittleFS mount FAILED; existing/unknown data preserved");
       }
     }
   }
@@ -677,17 +678,17 @@ bool deckFsInitialize(String& err) {
     err = "Internal flash is already mounted; no initialization needed.";
     return false;
   }
-  Serial.println("Deck: explicit user-requested internal flash LittleFS format");
+  debugSerial.println("Deck: explicit user-requested internal flash LittleFS format");
   // formatOnFail=true is deliberate here ONLY, after the user confirms the
   // destructive operation in Maintenance; never enable it during boot.
   s_fsOk = LittleFS.begin(true, "/littlefs", 14, "spiffs");
   s_fsTried = true;
   if (!s_fsOk) {
     err = "Internal flash initialization failed. Check the partition table and serial log.";
-    Serial.println("Deck: explicit LittleFS initialization FAILED");
+    debugSerial.println("Deck: explicit LittleFS initialization FAILED");
     return false;
   }
-  Serial.println("Deck: LittleFS initialized and mounted");
+  debugSerial.println("Deck: LittleFS initialized and mounted");
   return true;
 }
 
@@ -853,7 +854,7 @@ bool deckEnsureBambuStarterPages(String& err) {
   serializeJson(doc, updated);
   DeckConfig checked;
   if (!deckConfigStore(updated, checked, err)) return false;
-  Serial.println("Deck: saved editable Bambu starter pages in /deck.json");
+  debugSerial.println("Deck: saved editable Bambu starter pages in /deck.json");
   return true;
 }
 #endif
@@ -906,7 +907,7 @@ bool deckConfigRecoverTiles(const String& original, DeckConfig& out, String& war
       warning = "Recovered saved pages; skipped " + String(skipped) +
                 " invalid tile(s). First: " + firstProblem +
                 ". Saved file unchanged.";
-      Serial.printf("Deck: runtime recovered after skipping %u tile(s): %s\n",
+      debugSerial.printf("Deck: runtime recovered after skipping %u tile(s): %s\n",
                     skipped, firstProblem.c_str());
       return true;
     }
@@ -954,14 +955,14 @@ bool deckConfigLoad(DeckConfig& out, String* source, String* err) {
         return true;
       }
       if (err) *err = why;
-      Serial.printf("Deck: %s failed validation (%s)\n", CONFIG_PATH, why.c_str());
+      debugSerial.printf("Deck: %s failed validation (%s)\n", CONFIG_PATH, why.c_str());
       String recoveryWarning;
       if (deckConfigRecoverTiles(text, out, recoveryWarning)) {
         if (source) *source = "/deck.json (recovered)";
         if (err) *err = recoveryWarning;
         return true;
       }
-      Serial.println("Deck: runtime recovery failed; original saved layout preserved");
+      debugSerial.println("Deck: runtime recovery failed; original saved layout preserved");
     }
   }
   if (source) *source = "built-in";

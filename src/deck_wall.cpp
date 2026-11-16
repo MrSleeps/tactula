@@ -1,4 +1,5 @@
 // Guition deck: Glass theme wallpaper. See deck_wall.h.
+#include "debug_log.h"
 #include "deck_wall.h"
 #include <src/misc/cache/instance/lv_image_cache.h>
 #include "deck_config.h"
@@ -9,6 +10,7 @@
 #include <Preferences.h>
 #include <esp_random.h>
 #include <algorithm>
+#include <memory>
 #include "settings.h"
 #include "config.h"
 #include <src/libs/tjpgd/tjpgd.h>
@@ -296,22 +298,35 @@ namespace {
 bool prepareImage(WallJob& job) {
   const int w = job.w, h = job.h;
   const size_t n = (size_t)w * h;
-  job.sharp = (uint16_t*)heap_caps_malloc(n * 2, MALLOC_CAP_SPIRAM);
-  job.blurred = (uint8_t*)heap_caps_malloc(n * 3, MALLOC_CAP_SPIRAM);
-  uint8_t* planes = (uint8_t*)heap_caps_malloc(n * 4, MALLOC_CAP_SPIRAM);
-  if (!job.sharp || !job.blurred || !planes) {
-    Serial.println("Deck: wallpaper PSRAM allocation failed");
-    free(planes);
+  const auto allocationFailed = [](size_t bytes) {
+    constexpr auto caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+    debugSerial.printf("Deck: wallpaper PSRAM allocation failed (requested %u B, free %u B, largest %u B)\n",
+                       static_cast<unsigned>(bytes),
+                       static_cast<unsigned>(heap_caps_get_free_size(caps)),
+                       static_cast<unsigned>(heap_caps_get_largest_free_block(caps)));
     return false;
+  };
+  job.sharp = (uint16_t*)heap_caps_malloc(n * 2, MALLOC_CAP_SPIRAM);
+  if (!job.sharp) return allocationFailed(n * 2);
+  job.blurred = (uint8_t*)heap_caps_malloc(n * 3, MALLOC_CAP_SPIRAM);
+  if (!job.blurred) return allocationFailed(n * 3);
+
+  // Each channel can fit into a separate free block on a fragmented heap.
+  using Plane = std::unique_ptr<uint8_t, decltype(&free)>;
+  Plane channels[] = {Plane(nullptr, free), Plane(nullptr, free), Plane(nullptr, free)};
+  for (auto& channel : channels) {
+    channel.reset(static_cast<uint8_t*>(heap_caps_malloc(n, MALLOC_CAP_SPIRAM)));
+    if (!channel) return allocationFailed(n);
   }
-  uint8_t *r = planes, *g = planes + n, *b = planes + 2 * n, *tmp = planes + 3 * n;
+  uint8_t* r = channels[0].get();
+  uint8_t* g = channels[1].get();
+  uint8_t* b = channels[2].get();
   uint32_t start = millis();
   const bool jpeg = job.name[0];
   const bool loaded = jpeg ? jpegLoad(job.path, w, h, r, g, b)
                            : loadFile(r, g, b, w, h);
   if (jpeg && !loaded) {
-    Serial.printf("Deck: wallpaper decode failed: %s\n", job.name);
-    free(planes);
+    debugSerial.printf("Deck: wallpaper decode failed: %s\n", job.name);
     return false;
   }
   if (!loaded) gradient(r, g, b, w, h);
@@ -326,16 +341,14 @@ bool prepareImage(WallJob& job) {
       const int i = y * w + x;
       job.sharp[i] = wallDither565(r[i] * keep >> 8, g[i] * keep >> 8, b[i] * keep >> 8, x, y);
     }
-  uint8_t* ch[3] = {b, g, r};
-  for (int c = 0; c < 3; c++) {
-    blurPlane(ch[c], tmp, w, h, job.blur);
-    // The older Glass implementation left blurred wallpaper undimmed, so
-    // bright photos still washed out text on translucent tile backgrounds.
-    // Darken during the existing blur-to-RGB888 copy; no extra buffer/pass.
-    for (size_t i = 0; i < n; i++) job.blurred[i * 3 + c] = ch[c][i] * keep >> 8;
+  // During blur the output has no pixels yet, so use its first plane as scratch.
+  for (auto& channel : channels) blurPlane(channel.get(), job.blurred, w, h, job.blur);
+  for (size_t i = 0; i < n; ++i) {
+    job.blurred[3 * i] = b[i] * keep >> 8;
+    job.blurred[3 * i + 1] = g[i] * keep >> 8;
+    job.blurred[3 * i + 2] = r[i] * keep >> 8;
   }
-  free(planes);
-  Serial.printf("Deck: wallpaper %s decode %lu ms, dim+blur %lu ms\n",
+  debugSerial.printf("Deck: wallpaper %s decode %lu ms, dim+blur %lu ms\n",
                 jpeg ? job.name : loaded ? "legacy" : "gradient",
                 (unsigned long)decodeMs, (unsigned long)(millis() - start));
   return true;
@@ -699,7 +712,7 @@ void wallCommit() {
   const uint32_t start = millis();
   installImage(s_job);
   discardJob();
-  Serial.printf("Deck: wallpaper swap %lu ms\n", (unsigned long)(millis() - start));
+  debugSerial.printf("Deck: wallpaper swap %lu ms\n", (unsigned long)(millis() - start));
 }
 
 void wallRestartTimer() { s_changedMs = millis(); }

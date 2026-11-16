@@ -1,4 +1,5 @@
 // Guition deck: Home Assistant client. See deck_ha.h.
+#include "debug_log.h"
 #include "deck_ha.h"
 #include "deck_config.h"
 #include "deck_panel.h"
@@ -542,10 +543,10 @@ void handleText(const uint8_t* payload, size_t len) {
     s_subscribedGen = 0;  // subscribe from scratch on every connection
     s_subIds.clear();
     setLink(HA_CONNECTED);
-    Serial.printf("HA: connected, Home Assistant %s\n", (const char*)(doc["ha_version"] | "?"));
+    debugSerial.printf("HA: connected, Home Assistant %s\n", (const char*)(doc["ha_version"] | "?"));
   } else if (!strcmp(type, "auth_invalid")) {
     setLink(HA_AUTH_FAILED, String("token rejected: ") + (const char*)(doc["message"] | ""));
-    Serial.println("HA: authentication failed, waiting for new settings");
+    debugSerial.println("HA: authentication failed, waiting for new settings");
     s_ws.disconnect();
   } else if (!strcmp(type, "event")) {
     applyEvent(doc["event"].as<JsonObjectConst>());
@@ -567,7 +568,7 @@ void handleText(const uint8_t* payload, size_t len) {
       s_pending.erase(s_pending.begin() + i);
       return;
     }
-    if (!ok) Serial.printf("HA: request %u failed: %s\n", (unsigned)id,
+    if (!ok) debugSerial.printf("HA: request %u failed: %s\n", (unsigned)id,
                            (const char*)(doc["error"]["message"] | "?"));
   }
 }
@@ -723,7 +724,7 @@ void haTask(void*) {
       s_ws.enableHeartbeat(25000, 10000, 2);
       s_started = true;
       setLink(HA_CONNECTING);
-      Serial.printf("HA: connecting to %s:%u\n", host.c_str(), (unsigned)port);
+      debugSerial.printf("HA: connecting to %s:%u\n", host.c_str(), (unsigned)port);
     }
     s_ws.loop();
     static uint32_t lastHistory = 0;
@@ -1215,7 +1216,7 @@ void regStep() {
     regFinish(false, err.c_str());
     return;
   }
-  Serial.printf("HA: registry lookup, %u entities (template %u ms)\n", (unsigned)s_reg->count,
+  debugSerial.printf("HA: registry lookup, %u entities (template %u ms)\n", (unsigned)s_reg->count,
                 (unsigned)(millis() - t0));
   if (!s_reg->count) regFinish(true, "");
   else regSendBatch();
@@ -1439,7 +1440,7 @@ void historyTask(void*) {
       }
     }
     heap_caps_free(result);
-    if (!ok) Serial.printf("HA: history %s (%uh) failed: %s\n", key.entity.c_str(), key.hours, err.c_str());
+    if (!ok) debugSerial.printf("HA: history %s (%uh) failed: %s\n", key.entity.c_str(), key.hours, err.c_str());
     vTaskDelay(pdMS_TO_TICKS(20));
   }
 }
@@ -1689,11 +1690,11 @@ bool haFetchEntityList(String& outJson, bool refresh, String& err) {
   size_t count = 0;
   String why;
   if (!fetchViaTemplate(list, count, why)) {
-    Serial.printf("HA: template list failed (%s), falling back to /api/states\n", why.c_str());
+    debugSerial.printf("HA: template list failed (%s), falling back to /api/states\n", why.c_str());
     if (!fetchViaStates(list, count, err)) return false;
   }
-  if (!storeList(list, count, outJson)) Serial.println("HA: could not cache the entity list");
-  Serial.printf("HA: entity list updated, %u entities, %u bytes, %u ms\n", (unsigned)count,
+  if (!storeList(list, count, outJson)) debugSerial.println("HA: could not cache the entity list");
+  debugSerial.printf("HA: entity list updated, %u entities, %u bytes, %u ms\n", (unsigned)count,
                 (unsigned)outJson.length(), (unsigned)(millis() - t0));
   return true;
 }

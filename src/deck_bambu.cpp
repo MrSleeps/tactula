@@ -1,4 +1,5 @@
 // Guition deck: Bambu LAN printers. See deck_bambu.h.
+#include "debug_log.h"
 #include "deck_bambu.h"
 #include <ArduinoJson.h>
 #include <PubSubClient.h>
@@ -723,13 +724,13 @@ void task(void*) {
     }
     if (quit) break;
     if (millis() - lastStackLog >= 180000) {
-      Serial.printf("[bambu] stack free minimum: %u bytes\n", (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+      debugSerial.printf("[bambu] stack free minimum: %u bytes\n", (unsigned)uxTaskGetStackHighWaterMark(nullptr));
       lastStackLog = millis();
     }
     s_stackFree = uxTaskGetStackHighWaterMark(nullptr);
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20));
   }
-  Serial.printf("[bambu] stopped, stack free minimum: %u bytes\n", (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+  debugSerial.printf("[bambu] stopped, stack free minimum: %u bytes\n", (unsigned)uxTaskGetStackHighWaterMark(nullptr));
   vTaskDelete(nullptr);
 }
 

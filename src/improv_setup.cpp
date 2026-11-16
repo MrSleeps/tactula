@@ -1,3 +1,4 @@
+#include "debug_log.h"
 #include "improv_setup.h"
 
 #include <Arduino.h>
@@ -32,13 +33,13 @@ static String buildDeviceName() {
 }
 
 static void onImprovError(ImprovTypes::Error err) {
-  Serial.printf("Improv: error %d\n", (int)err);
+  debugSerial.printf("Improv: error %d\n", (int)err);
 }
 
 static void onImprovConnected(const char *ssid, const char *password) {
   // Library has already established STA via our custom connect callback.
   // Persist credentials so the next boot skips Improv entirely.
-  Serial.printf("Improv: connected as %s, saving credentials\n", ssid);
+  debugSerial.printf("Improv: connected as %s, saving credentials\n", ssid);
   strlcpy(wifiSSID, ssid, sizeof(wifiSSID));
   strlcpy(wifiPass, password, sizeof(wifiPass));
   saveSettings();
@@ -48,7 +49,7 @@ static void onImprovConnected(const char *ssid, const char *password) {
 // Custom connect keeps WIFI_AP_STA mode intact so the captive portal AP
 // (already running) stays reachable while we attempt the STA connection.
 static bool improvCustomConnect(const char *ssid, const char *password) {
-  Serial.printf("Improv: attempting STA connect to %s\n", ssid);
+  debugSerial.printf("Improv: attempting STA connect to %s\n", ssid);
   WiFi.begin(ssid, password);
   const uint32_t deadline = millis() + 15000;  // 15s STA connect timeout
   while (WiFi.status() != WL_CONNECTED &&
@@ -76,7 +77,7 @@ void improvSetupBegin(uint32_t windowMs) {
   improvSucceeded = false;
   improvInited = true;
 
-  Serial.printf("Improv: listening on Serial for up to %lus "
+  debugSerial.printf("Improv: listening on Serial for up to %lus "
                 "(AP captive portal stays up in parallel)\n",
                 (unsigned long)(windowMs / 1000));
 }
@@ -100,5 +101,5 @@ bool improvSetupExpired() {
 void improvSetupEnd() {
   if (!improvInited) return;
   improvInited = false;
-  Serial.println("Improv: setup window closed (AP stays up)");
+  debugSerial.println("Improv: setup window closed (AP stays up)");
 }

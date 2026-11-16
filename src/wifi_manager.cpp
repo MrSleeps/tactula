@@ -1,3 +1,4 @@
+#include "debug_log.h"
 #include "wifi_manager.h"
 #include "settings.h"
 #include "display_ui.h"
@@ -84,7 +85,7 @@ static void startAP() {
   lastStaProbe = millis();
   staProbing = false;
 
-  Serial.printf("AP started: %s (IP: %s)\n", ssidBuf,
+  debugSerial.printf("AP started: %s (IP: %s)\n", ssidBuf,
                 WiFi.softAPIP().toString().c_str());
   setScreenState(SCREEN_AP_MODE);
 }
@@ -98,7 +99,7 @@ static void applyStaticNetworkConfig() {
   bool snOk = sn.fromString(netSettings.subnet);
 
   if (!ipOk || !gwOk || !snOk) {
-    Serial.printf("Static IP config invalid, falling back to DHCP (ip=%d gw=%d sn=%d)\n",
+    debugSerial.printf("Static IP config invalid, falling back to DHCP (ip=%d gw=%d sn=%d)\n",
                   (int)ipOk, (int)gwOk, (int)snOk);
     return;
   }
@@ -107,7 +108,7 @@ static void applyStaticNetworkConfig() {
   if (customDns) {
     if (!dns.fromString(netSettings.dns)) {
       dns = gw;
-      Serial.printf("Static IP: invalid DNS '%s', falling back to gateway %s\n",
+      debugSerial.printf("Static IP: invalid DNS '%s', falling back to gateway %s\n",
                     netSettings.dns, netSettings.gateway);
     }
   } else {
@@ -117,11 +118,11 @@ static void applyStaticNetworkConfig() {
   String dnsStr = dns.toString();
   bool applied = WiFi.config(ip, gw, sn, dns);
   if (applied) {
-    Serial.printf("Static IP: %s GW: %s SN: %s DNS: %s\n",
+    debugSerial.printf("Static IP: %s GW: %s SN: %s DNS: %s\n",
                   netSettings.staticIP, netSettings.gateway,
                   netSettings.subnet, dnsStr.c_str());
   } else {
-    Serial.printf("Static IP: WiFi.config() failed for IP=%s GW=%s SN=%s DNS=%s\n",
+    debugSerial.printf("Static IP: WiFi.config() failed for IP=%s GW=%s SN=%s DNS=%s\n",
                   netSettings.staticIP, netSettings.gateway,
                   netSettings.subnet, dnsStr.c_str());
   }
@@ -141,14 +142,14 @@ static void startMDNS() {
   MDNS.end();
   if (MDNS.begin(host)) {
     MDNS.addService("http", "tcp", 80);
-    Serial.printf("mDNS started: http://%s.local\n", host);
+    debugSerial.printf("mDNS started: http://%s.local\n", host);
   } else {
-    Serial.println("mDNS start failed");
+    debugSerial.println("mDNS start failed");
   }
 }
 
 static void completeWiFiStartup() {
-  Serial.printf("WiFi connected! IP: %s\n",
+  debugSerial.printf("WiFi connected! IP: %s\n",
                 WiFi.localIP().toString().c_str());
   stopAP();
   apMode = false;
@@ -158,7 +159,7 @@ static void completeWiFiStartup() {
 
   // Sync time via NTP with automatic DST
   configTzTime(netSettings.timezoneStr, "pool.ntp.org", "time.nist.gov");
-  Serial.printf("NTP configured: %s\n", netSettings.timezoneStr);
+  debugSerial.printf("NTP configured: %s\n", netSettings.timezoneStr);
 
   startMDNS();
 
@@ -195,14 +196,14 @@ void startWiFiDuringSplash() {
   char host[sizeof(netSettings.hostname)];
   sanitizeHostname(netSettings.hostname, host, sizeof(host));
   if (!WiFi.setHostname(host))
-    Serial.printf("WiFi: failed to set DHCP hostname %s\n", host);
+    debugSerial.printf("WiFi: failed to set DHCP hostname %s\n", host);
   else
-    Serial.printf("WiFi DHCP hostname: %s\n", host);
+    debugSerial.printf("WiFi DHCP hostname: %s\n", host);
 
   if (strlen(wifiSSID) == 0) return;
 
   registerWiFiDiagnostics();
-  Serial.printf("WiFi: starting background connect during splash: %s\n", wifiSSID);
+  debugSerial.printf("WiFi: starting background connect during splash: %s\n", wifiSSID);
   beginStaConnectAttempt();
   splashStaStarted = true;
   splashStaStartMs = millis();
@@ -215,7 +216,7 @@ void initWiFi() {
     setScreenState(SCREEN_CONNECTING_WIFI);
 
     if (splashStaStarted && WiFi.status() == WL_CONNECTED) {
-      Serial.println("WiFi connected during splash");
+      debugSerial.println("WiFi connected during splash");
       completeWiFiStartup();
       return;
     }
@@ -224,10 +225,10 @@ void initWiFi() {
       unsigned long start = millis();
 
       if (attempt == 1 && splashStaStarted) {
-        Serial.printf("Connecting to WiFi: %s (attempt 1/3, continued after splash)\n", wifiSSID);
+        debugSerial.printf("Connecting to WiFi: %s (attempt 1/3, continued after splash)\n", wifiSSID);
         start = splashStaStartMs;
       } else {
-        Serial.printf("Connecting to WiFi: %s (attempt %d/3)\n", wifiSSID, attempt);
+        debugSerial.printf("Connecting to WiFi: %s (attempt %d/3)\n", wifiSSID, attempt);
         beginStaConnectAttempt();
       }
 
@@ -238,7 +239,7 @@ void initWiFi() {
       }
       if (WiFi.status() == WL_CONNECTED) break;
 
-      Serial.println("WiFi attempt failed, retrying...");
+      debugSerial.println("WiFi attempt failed, retrying...");
       WiFi.disconnect(true);
       splashStaStarted = false;
       for (int i = 0; i < 50; i++) {
@@ -253,7 +254,7 @@ void initWiFi() {
     }
 
     splashStaStarted = false;
-    Serial.println("WiFi connection failed, starting AP");
+    debugSerial.println("WiFi connection failed, starting AP");
   }
 
   // No credentials or connection failed — bring AP up immediately so the
@@ -295,7 +296,7 @@ void handleWiFi() {
     // STA via our custom connect callback; restart so the device boots
     // cleanly into the configured WiFi without the dual-mode hangover.
     if (improvSetupTick()) {
-      Serial.println("Improv: credentials received, restarting");
+      debugSerial.println("Improv: credentials received, restarting");
       Serial.flush();
       delay(200);  // let any pending serial response reach the browser
       ESP.restart();
@@ -308,7 +309,7 @@ void handleWiFi() {
     unsigned long now = millis();
     if (!staProbing && now - lastStaProbe >= WIFI_STA_PROBE_INTERVAL) {
       // Start a non-blocking STA probe; result checked after WIFI_STA_PROBE_CHECK_MS
-      Serial.println("AP mode: probing STA connection...");
+      debugSerial.println("AP mode: probing STA connection...");
       configureStaConnection();
       WiFi.begin(wifiSSID, wifiPass);
       staProbing = true;
@@ -316,7 +317,7 @@ void handleWiFi() {
     } else if (staProbing && now - probeStartTime >= WIFI_STA_PROBE_CHECK_MS) {
       // Check result of the in-flight probe
       if (WiFi.status() == WL_CONNECTED) {
-        Serial.printf("STA probe succeeded, IP: %s — leaving AP mode\n",
+        debugSerial.printf("STA probe succeeded, IP: %s — leaving AP mode\n",
                       WiFi.localIP().toString().c_str());
         stopAP();
         WiFi.mode(WIFI_STA);
@@ -331,7 +332,7 @@ void handleWiFi() {
         startMDNS();
         setScreenState(SCREEN_WIFI_CONNECTED);
       } else {
-        Serial.println("STA probe failed, staying in AP mode");
+        debugSerial.println("STA probe failed, staying in AP mode");
         WiFi.disconnect(false);
         staProbing = false;
         lastStaProbe = now;  // reset the 2-min cycle
@@ -346,7 +347,7 @@ void handleWiFi() {
       disconnectTime = millis();
       lastReconnectAttempt = 0;
       reconnectAttempts = 0;
-      Serial.println("WiFi disconnected, will try to reconnect...");
+      debugSerial.println("WiFi disconnected, will try to reconnect...");
     }
 
     // Try to reconnect using the current backoff interval (non-blocking)
@@ -358,7 +359,7 @@ void handleWiFi() {
       const char* phase = reconnectAttempts <= WIFI_BACKOFF_PHASE2_START ? "phase1"
                         : reconnectAttempts <= WIFI_BACKOFF_PHASE3_START ? "phase2"
                         : "phase3";
-      Serial.printf("WiFi reconnect attempt %d (%s, interval %lus)\n",
+      debugSerial.printf("WiFi reconnect attempt %d (%s, interval %lus)\n",
                     reconnectAttempts, phase, reconnectInterval() / 1000UL);
 
       // Record when we first enter phase 3
@@ -371,7 +372,7 @@ void handleWiFi() {
       if (reconnectAttempts > WIFI_BACKOFF_PHASE3_START &&
           phase3StartTime > 0 &&
           millis() - phase3StartTime >= WIFI_AP_FALLBACK_MS) {
-        Serial.println("Phase 3 timeout — falling back to AP mode");
+        debugSerial.println("Phase 3 timeout — falling back to AP mode");
         startAP();
         return;
       }
@@ -382,7 +383,7 @@ void handleWiFi() {
     }
   } else {
     if (disconnectTime > 0) {
-      Serial.println("WiFi reconnected!");
+      debugSerial.println("WiFi reconnected!");
       startMDNS();  // re-announce; responder may not survive a link drop
     }
     disconnectTime = 0;

@@ -1,5 +1,6 @@
 // Guition JC3248W535 display pipeline. See deck_panel.h for the contract and
 // the measured panel facts behind it.
+#include "debug_log.h"
 #include "deck_panel.h"
 #include <driver/spi_master.h>
 #include <driver/gpio.h>
@@ -217,7 +218,7 @@ void panelInitSequence() {
         delay(op[++i]);
         break;
       default:
-        Serial.printf("Deck panel: unknown init op %u at %u\n", op[i], (unsigned)i);
+        debugSerial.printf("Deck panel: unknown init op %u at %u\n", op[i], (unsigned)i);
         break;
     }
   }
@@ -1512,7 +1513,7 @@ bool panelBegin(uint8_t rotation) {
                                                      MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
   }
   if (!s_fb[0] || !s_fb[1] || !s_bounce[0] || !s_bounce[1]) {
-    Serial.println("Deck panel: buffer allocation FAILED");
+    debugSerial.println("Deck panel: buffer allocation FAILED");
     return false;
   }
   memset(s_fb[0], 0, FRAME_BYTES);
@@ -1548,7 +1549,7 @@ bool panelBegin(uint8_t rotation) {
   // network load (measured: ~30 fps slides instead of 60).
   xTaskCreatePinnedToCore(helperTask, "deck_build", 3072, nullptr, 15, &s_helper, 0);
   xTaskCreatePinnedToCore(flushTask, "deck_flush", 4096, nullptr, 20, &s_task, 1);
-  Serial.printf("Deck panel: up, rotation %u, internal free %u, largest %u\n",
+  debugSerial.printf("Deck panel: up, rotation %u, internal free %u, largest %u\n",
                 (unsigned)s_rot,
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));

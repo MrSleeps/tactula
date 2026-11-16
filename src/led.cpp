@@ -1,3 +1,4 @@
+#include "debug_log.h"
 #include "led.h"
 #include "config.h"
 #include "settings.h"
@@ -61,7 +62,7 @@ void sanitizeLedPin() {
   // its own ledPinAllowed() check, so an unvalidated pin can never be poked.
   if (!ledSettings.enabled) return;
   if (!ledPinAllowed(ledSettings.pin)) {
-    Serial.printf("LED: GPIO %u is not allowed on this board, disabling\n",
+    debugSerial.printf("LED: GPIO %u is not allowed on this board, disabling\n",
                   (unsigned)ledSettings.pin);
     ledSettings.enabled = 0;
     ledSettings.pin = LED_DEFAULT_PIN;
@@ -97,7 +98,7 @@ static bool attachPin(uint8_t pin) {
   if (attachedPin == (int8_t)pin) return true;
   detachAndForceLow();
   if (!ledcAttach(pin, LED_PWM_FREQ, LED_PWM_RES)) {
-    Serial.printf("LED: could not attach PWM to GPIO %u\n", (unsigned)pin);
+    debugSerial.printf("LED: could not attach PWM to GPIO %u\n", (unsigned)pin);
     return false;
   }
   attachedPin = (int8_t)pin;
@@ -129,18 +130,18 @@ void initLed() {
       pinMode(saved, OUTPUT);
       digitalWrite(saved, LOW);
     }
-    Serial.println("LED: disabled");
+    debugSerial.println("LED: disabled");
     return;
   }
   if (!ledPinAllowed(ledSettings.pin)) {
-    Serial.printf("LED: GPIO %u is not allowed on this board\n",
+    debugSerial.printf("LED: GPIO %u is not allowed on this board\n",
                   (unsigned)ledSettings.pin);
     detachAndForceLow();
     return;
   }
   if (!attachPin(ledSettings.pin)) return;
   writeDuty(ledSettings.brightness);
-  Serial.printf("LED: GPIO %u at brightness %u\n",
+  debugSerial.printf("LED: GPIO %u at brightness %u\n",
                 (unsigned)ledSettings.pin, (unsigned)ledSettings.brightness);
 }
 

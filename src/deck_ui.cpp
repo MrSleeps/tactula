@@ -1,4 +1,5 @@
 // Guition JC3248W535 deck UI. See deck_ui.h for the threading contract.
+#include "debug_log.h"
 #include "deck_ui_int.h"
 #include "deck_mqtt.h"
 #if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
@@ -218,7 +219,7 @@ static void closeFirmwareConfirm(lv_event_t*) {
 static void approveFirmwareFromTouch(lv_event_t*) {
   const bool approved = firmwareUpdate::installStagedFromTouch();
   closeFirmwareConfirm(nullptr);
-  if (!approved) Serial.println("Update: staged image no longer ready");
+  if (!approved) debugSerial.println("Update: staged image no longer ready");
 }
 static void downloadFirmwareFromTouch(lv_event_t*) {
   // Queue a verified OTA download; the firmware is never installed without
@@ -499,7 +500,7 @@ void addTilesPage(const PageDef& def) {
           parent = group.groupBody;
     }
     const Cell& c = cells[i];
-    if (!c.placed && !c.off) Serial.printf("Deck: page '%s' has no room for tile '%s'\n",
+    if (!c.placed && !c.off) debugSerial.printf("Deck: page '%s' has no room for tile '%s'\n",
                        def.id.c_str(), def.tiles[i].id.c_str());
     makeTile(parent, def.tiles[i], page, c.placed ? c.x : 0, c.placed ? c.y : 0, c.w, c.h);
     if (!c.placed) {
@@ -663,7 +664,7 @@ void buildPages() {
       bakeMs += millis() - start;
     }
   }
-  Serial.printf("Deck: glass %u baked, %u reused, %lu ms\n", baked, reused, (unsigned long)bakeMs);
+  debugSerial.printf("Deck: glass %u baked, %u reused, %lu ms\n", baked, reused, (unsigned long)bakeMs);
   s_lastMinute = -1;
   s_lastWifi = -1;
   buildQuickPanel();
@@ -850,7 +851,7 @@ void bakeWallpaperPage(int index) {
   }
   p.wallBake = false;
   p.stale = true;
-  Serial.printf("Deck: wallpaper page %d bake %lu ms\n", index, (unsigned long)(millis() - start));
+  debugSerial.printf("Deck: wallpaper page %d bake %lu ms\n", index, (unsigned long)(millis() - start));
 }
 
 void tickWallpaper() {
@@ -1017,7 +1018,7 @@ void whenSync() {
       }
     }
     if (!pd.shown && pd.autoShow && !autoTo.length()) autoTo = pd.id;
-    Serial.printf("Deck: page '%s' %s\n", pd.id.c_str(), pd.shown ? "hides" : "shows");
+    debugSerial.printf("Deck: page '%s' %s\n", pd.id.c_str(), pd.shown ? "hides" : "shows");
     flip = true;
   }
   if (!flip) {
@@ -1025,7 +1026,7 @@ void whenSync() {
       bool moved = false;
       for (TileDef& t : pd.tiles) {
         if (t.when.kind == WHEN_ALWAYS || whenWanted(t) == t.shown) continue;
-        Serial.printf("Deck: tile '%s' %s\n", t.id.c_str(), t.shown ? "hides" : "shows");
+        debugSerial.printf("Deck: tile '%s' %s\n", t.id.c_str(), t.shown ? "hides" : "shows");
         t.shown = !t.shown;
         moved = true;
       }
@@ -1063,7 +1064,7 @@ void logStats() {
   s_lastStats = now;
   const PanelStats p = panelTakeStats();
   if (!p.frames && !s_waitTimeouts) return;
-  Serial.printf("Deck: frames=%u comp=%u flush=%u/%uus build=%uus te_late=%u te_to=%u "
+  debugSerial.printf("Deck: frames=%u comp=%u flush=%u/%uus build=%uus te_late=%u te_to=%u "
                 "lv_drop=%u gap_max=%uus wait_to=%u snap_max=%uus int_free=%u\n",
                 (unsigned)p.frames, (unsigned)p.compFrames, (unsigned)p.flushUsAvg,
                 (unsigned)p.flushUsMax, (unsigned)p.buildUsAvg, (unsigned)p.teLate,
@@ -1091,7 +1092,7 @@ bool deckBegin(uint8_t rotation) {
   deckConfigLoad(s_cfg, &source, &err);
   s_deckBootSource = source;
   s_deckBootError = err;
-  Serial.printf("Deck: config from %s, %u pages%s%s\n", source.c_str(),
+  debugSerial.printf("Deck: config from %s, %u pages%s%s\n", source.c_str(),
                 (unsigned)s_cfg.pages.size(), err.length() ? ", error: " : "",
                 err.c_str());
 
@@ -1120,8 +1121,8 @@ bool deckBegin(uint8_t rotation) {
   lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(scr, LV_SCROLLBAR_MODE_OFF);
 
-  if (!iconsLoad(iconsPath(), err)) Serial.printf("Deck: icons: %s\n", err.c_str());
-  if (wallOnSd() && !brandLoad(err)) Serial.printf("Deck: brand icons: %s\n", err.c_str());
+  if (!iconsLoad(iconsPath(), err)) debugSerial.printf("Deck: icons: %s\n", err.c_str());
+  if (wallOnSd() && !brandLoad(err)) debugSerial.printf("Deck: brand icons: %s\n", err.c_str());
   {
     Preferences prefs;
     if (prefs.begin("deckui", true)) {
@@ -1132,7 +1133,7 @@ bool deckBegin(uint8_t rotation) {
   haBegin();
   buildPages();
   touchBegin();
-  Serial.printf("Deck: LVGL %d.%d.%d up, %d pages, %dx%d\n", LVGL_VERSION_MAJOR,
+  debugSerial.printf("Deck: LVGL %d.%d.%d up, %d pages, %dx%d\n", LVGL_VERSION_MAJOR,
                 LVGL_VERSION_MINOR, LVGL_VERSION_PATCH, s_count, logicalW(), logicalH());
   return true;
 }
@@ -1368,7 +1369,7 @@ bool deckApplyConfig(const String& text, String& err) {
   s_deckBootError = "";
   s_gen++;
   lv_obj_invalidate(lv_screen_active());
-  Serial.printf("Deck: new config applied, %u pages\n", (unsigned)s_cfg.pages.size());
+  debugSerial.printf("Deck: new config applied, %u pages\n", (unsigned)s_cfg.pages.size());
   return true;
 }
 
@@ -1379,7 +1380,7 @@ void deckRefreshPrinterPage() {
   deckConfigText(saved);
   DeckConfig next;
   if (!deckConfigParse(saved.c_str(), saved.length(), next, &error)) {
-    Serial.printf("Deck: printer page refresh rejected: %s\n", error.c_str());
+    debugSerial.printf("Deck: printer page refresh rejected: %s\n", error.c_str());
     return;
   }
   // Generated Bambu tiles exist only in memory. Keep the currently shown
@@ -1391,7 +1392,7 @@ void deckRefreshPrinterPage() {
   buildPages();
   s_gen++;
   lv_obj_invalidate(lv_screen_active());
-  Serial.printf("Deck: printer configuration changed, %u pages\n",
+  debugSerial.printf("Deck: printer configuration changed, %u pages\n",
                 (unsigned)s_cfg.pages.size());
 }
 #endif

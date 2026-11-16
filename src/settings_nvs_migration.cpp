@@ -1,6 +1,7 @@
 // Settings migration from the original bedroomdeck namespace to touchdeck.
 // Never clear the source: it provides a fallback until a new firmware is
 // verified, and users may still be running an older image in the other slot.
+#include "debug_log.h"
 #include "settings_nvs_migration.h"
 #include <Arduino.h>
 #include <nvs.h>
@@ -74,12 +75,12 @@ bool migrateSettingsNamespace() {
   const esp_err_t oldErr = nvs_open(OLD_NS, NVS_READONLY, &old);
   if (oldErr == ESP_ERR_NVS_NOT_FOUND) return true; // Fresh installation.
   if (oldErr != ESP_OK) {
-    Serial.println("Settings: legacy NVS unavailable, using new namespace");
+    debugSerial.println("Settings: legacy NVS unavailable, using new namespace");
     return true;
   }
   if (nvs_open(NEW_NS, NVS_READWRITE, &newer) != ESP_OK) {
     nvs_close(old);
-    Serial.println("Settings: migration deferred; using legacy settings");
+    debugSerial.println("Settings: migration deferred; using legacy settings");
     return false;
   }
 
@@ -108,7 +109,7 @@ bool migrateSettingsNamespace() {
   }
   nvs_close(newer);
   nvs_close(old);
-  Serial.println(ok ? "Settings: NVS migration to touchdeck completed"
+  debugSerial.println(ok ? "Settings: NVS migration to touchdeck completed"
                     : "Settings: NVS migration deferred; using legacy settings");
   return ok;
 }

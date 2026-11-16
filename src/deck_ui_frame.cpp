@@ -1,4 +1,5 @@
 // Idle photo frame: loop owns LVGL and buffers; the worker only decodes JPEGs.
+#include "debug_log.h"
 #include "deck_ui_int.h"
 #include <esp_random.h>
 
@@ -277,7 +278,7 @@ void recordAnimation(const PanelStats& stats, bool cancelled) {
   s_lastStats = stats;
   s_lastAnimation = s_animation;
   s_lastCancelled = cancelled;
-  Serial.printf("Deck frame: %s%s frames=%u avg=%uus max=%uus gap=%uus\n", s_lastAnimation,
+  debugSerial.printf("Deck frame: %s%s frames=%u avg=%uus max=%uus gap=%uus\n", s_lastAnimation,
                 cancelled ? " cancelled" : "", (unsigned)stats.frames, (unsigned)stats.frameUsAvg,
                 (unsigned)stats.frameUsMax, (unsigned)stats.gapMaxUs);
 }

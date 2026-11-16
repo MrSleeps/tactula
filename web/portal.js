@@ -45,6 +45,105 @@
     return data;
   }
 
+  let debugModeEnabled = false;
+  let debugLogsAvailable = false;
+  let debugLogsPaused = false;
+  let debugLogsReading = false;
+  let debugLogCursor = 0;
+  let debugLogDecoder = new TextDecoder();
+  const debugMode = $("debugMode");
+  const debugModeHint = $("debugModeHint");
+  const debugLogStatus = $("debugLogsStatus");
+  const debugLogOutput = $("debugLogsOutput");
+
+  async function loadDebugStatus() {
+    try {
+      const state = await getJson("/api/debug", { cache: "no-store" });
+      debugModeEnabled = state.enabled;
+      debugLogsAvailable = state.available;
+      debugMode.checked = debugModeEnabled;
+      debugMode.disabled = false;
+      $("navLogs").classList.toggle("hidden", !debugLogsAvailable);
+      debugModeHint.textContent = state.enabled && !state.available
+        ? "Running without log capture. The device could not allocate the log buffer."
+        : "Restarts the device and applies your change.";
+    } catch {
+      debugModeHint.textContent = "Could not read debug mode.";
+    }
+  }
+
+  debugMode.addEventListener("change", async () => {
+    const enabled = debugMode.checked;
+    debugMode.disabled = true;
+    try {
+      const response = await getJson("/api/debug", {
+        method: "POST",
+        body: new URLSearchParams({ enabled: enabled ? "1" : "0" }),
+      });
+      if (!response.restarting) {
+        await loadDebugStatus();
+        return;
+      }
+      debugModeHint.textContent = "Restarting…";
+      for (let attempt = 0; attempt < 20; ++attempt) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        try {
+          const state = await getJson("/api/debug", {
+            cache: "no-store", signal: AbortSignal.timeout(1500),
+          });
+          if (state.enabled === enabled) {
+            try { localStorage.setItem("sn_page", state.available ? "logs" : "overview"); } catch {}
+            location.reload();
+            return;
+          }
+        } catch {}
+      }
+      debugModeHint.textContent = "Waiting for the device. Reload this page when it is online.";
+    } catch (e) {
+      debugMode.checked = debugModeEnabled;
+      debugMode.disabled = false;
+      showToast(e.message, true);
+    }
+  });
+
+  async function readDebugLogs() {
+    if (!debugLogsAvailable || debugLogsPaused || debugLogsReading || document.hidden ||
+        document.querySelector(".page.active")?.dataset.page !== "logs") return;
+    debugLogsReading = true;
+    try {
+      const r = await fetch("/api/debug/logs?after=" + debugLogCursor, { cache: "no-store" });
+      if (!r.ok) throw new Error("Logs unavailable");
+      const cursor = Number(r.headers.get("X-Log-Cursor"));
+      const bytes = await r.arrayBuffer();
+      if (cursor < debugLogCursor) {
+        debugLogOutput.textContent = "";
+        debugLogDecoder = new TextDecoder();
+      }
+      debugLogCursor = cursor;
+      if (bytes.byteLength) {
+        const nearBottom = debugLogOutput.scrollHeight - debugLogOutput.scrollTop -
+            debugLogOutput.clientHeight < 24;
+        const text = debugLogDecoder.decode(bytes, { stream: true });
+        debugLogOutput.textContent = (debugLogOutput.textContent + text).slice(-24 * 1024);
+        if (nearBottom) debugLogOutput.scrollTop = debugLogOutput.scrollHeight;
+      }
+      debugLogStatus.textContent = debugLogsPaused ? "Paused" : "Live";
+    } catch {
+      debugLogStatus.textContent = "Connection lost. Retrying…";
+    } finally {
+      debugLogsReading = false;
+    }
+  }
+
+  $("debugLogsPause").addEventListener("click", (e) => {
+    debugLogsPaused = !debugLogsPaused;
+    e.currentTarget.textContent = debugLogsPaused ? "Resume" : "Pause";
+    e.currentTarget.setAttribute("aria-pressed", String(debugLogsPaused));
+    debugLogStatus.textContent = debugLogsPaused ? "Paused" : "Connecting…";
+    if (!debugLogsPaused) readDebugLogs();
+  });
+  setInterval(readDebugLogs, 2000);
+
   // Firmware changes are detected through the existing 2-second status poll.
   // Allow 30 seconds for OTA reboot, then reload only while the API is online.
   let observedFirmwareVersion = null;
@@ -169,11 +268,13 @@
       if (!printerAvailable) return false;
       refreshPrinter();
     }
+    if (name === "logs" && !debugLogsAvailable) return false;
     if (name === "maintenance") loadFlashStorage();
     if (name === "icons") loadBedroomIcons();
     if (name === "security") loadAuthStatus();
     qa(".page").forEach((p) => p.classList.toggle("active", p.dataset.page === name));
     if (name === "overview") refreshOverviewBambuConnection();
+    if (name === "logs") readDebugLogs();
     qa(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.nav === name));
     const button = document.querySelector('.nav-item[data-nav="' + name + '"]');
     $("crumb").textContent = button ? button.textContent.replace(/\s+/g, " ").trim() : "tactula";
@@ -844,9 +945,12 @@
 
 
   // Firmware release checks are independent of the manual OTA upload.
-  async function refreshFirmwareUpdateStatus() {
+  let firmwareStatusRequest = 0;
+  async function refreshFirmwareUpdateStatus(options) {
+    const request = ++firmwareStatusRequest;
     try {
-      const data = await getJson("/api/firmware/updates?t=" + Date.now());
+      const data = await getJson("/api/firmware/updates?t=" + Date.now(), options);
+      if (request !== firmwareStatusRequest) return data;
       $("fwChecksEnabled").checked = !!data.checksEnabled;
       $("fwShowBadge").checked = !!data.showBadge;
       $("fwAutoDownload").checked = !!data.autoDownload;
@@ -866,13 +970,18 @@
               : "";
       $("fwUpdateStatus").textContent = data.checking
         ? "Checking the " + (data.allowBeta ? "beta" : "stable") + " firmware release feed..."
+        : data.checkPending
+          ? "Update check queued..."
         : data.available
           ? "Update available: " + data.latest + " (installed: " + data.current + ")"
           : data.error
             ? "Update check: " + data.error
             : "Installed: " + data.current + " · No newer compatible release found.";
+      return data;
     } catch (error) {
-      $("fwUpdateStatus").textContent = "Unable to read firmware update status.";
+      if (request === firmwareStatusRequest)
+        $("fwUpdateStatus").textContent = "Unable to read firmware update status.";
+      return null;
     }
   }
   async function saveFirmwareUpdatePreferences() {
@@ -916,11 +1025,21 @@
     }
   });
   $("fwCheckNow").addEventListener("click", async () => {
+    const button = $("fwCheckNow");
+    button.disabled = true;
     try {
       await getJson("/api/firmware/updates/check", { method: "POST" });
       $("fwUpdateStatus").textContent = "Update check requested...";
+      const deadline = Date.now() + 45000;
+      while (Date.now() < deadline) {
+        const data = await refreshFirmwareUpdateStatus({ signal: AbortSignal.timeout(5000) });
+        if (data && !data.checkPending && !data.checking) break;
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
     } catch (error) {
       showToast("Cannot start update check", true);
+    } finally {
+      button.disabled = false;
     }
   });
   refreshFirmwareUpdateStatus();
@@ -1796,7 +1915,8 @@
     });
   }).observe(document.body, { childList: true, subtree: true });
   (async () => {
-    await loadConfig();
+    await Promise.all([loadConfig(), loadDebugStatus()]);
+    if (initial === "logs" && !debugLogsAvailable) initial = "overview";
     if (initial === "printer" && !printerAvailable) initial = "overview";
     await showPage(initial);
   })();

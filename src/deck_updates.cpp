@@ -2,6 +2,7 @@
 // authenticated with a trusted root; board/variant, size, version and digest
 // are checked before an update can be advertised. Installing firmware needs a
 // separate signed-update / authenticated-control implementation.
+#include "debug_log.h"
 #include "deck_updates.h"
 #include "config.h"
 #include "web_server.h"
@@ -209,7 +210,11 @@ bool validHash(const char* s) {
   return true;
 }
 
-void checkForUpdate() {
+struct CheckTiming {
+  uint32_t dns = 0, headers = 0, body = 0;
+};
+
+void checkForUpdate(CheckTiming& timing) {
   // Snapshot the opted-in channel at the start of the HTTPS request.
   portENTER_CRITICAL(&mux);
   const bool useBeta = status.allowBeta;
@@ -220,11 +225,14 @@ void checkForUpdate() {
     return;
   }
   IPAddress mirrorAddress;
-  if (WiFi.hostByName("firmware.mrsleeps.uk", mirrorAddress) != 1) {
+  const uint32_t dnsStarted = millis();
+  const bool resolved = WiFi.hostByName("firmware.mrsleeps.uk", mirrorAddress) == 1;
+  timing.dns = millis() - dnsStarted;
+  if (!resolved) {
     setError("Firmware mirror DNS lookup failed", true);
     return;
   }
-  Serial.printf("[Tactula OTA] Mirror IP=%s, internal heap=%u, largest block=%u\n",
+  debugSerial.printf("[Tactula OTA] Mirror IP=%s, internal heap=%u, largest block=%u\n",
                 mirrorAddress.toString().c_str(),
                 static_cast<unsigned>(ESP.getFreeHeap()),
                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
@@ -238,8 +246,10 @@ void checkForUpdate() {
   http.useHTTP10(true);  // Static manifest: require nonchunked Content-Length.
   http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
   http.setUserAgent("Tactula-Update-Check/2.0");
+  const uint32_t requestStarted = millis();
   const bool begun = http.begin(client, useBeta ? BETA_MANIFEST_URL : STABLE_MANIFEST_URL);
   const int httpStatus = begun ? http.GET() : -1;
+  timing.headers = millis() - requestStarted;
   if (!begun || httpStatus != HTTP_CODE_OK) {
     char diagnostic[112] = {};
     if (httpStatus > 0) {
@@ -247,7 +257,7 @@ void checkForUpdate() {
     } else {
       char tlsReason[96] = {};
       const int tlsCode = client.lastError(tlsReason, sizeof(tlsReason));
-      Serial.printf("[Tactula OTA] Mirror HTTPS failure: HTTP=%d TLS=%d (%s)\n",
+      debugSerial.printf("[Tactula OTA] Mirror HTTPS failure: HTTP=%d TLS=%d (%s)\n",
                     httpStatus, tlsCode, tlsReason);
       snprintf(diagnostic, sizeof(diagnostic),
                "Mirror HTTPS failed TLS %d (HTTP %d)", tlsCode, httpStatus);
@@ -273,10 +283,12 @@ void checkForUpdate() {
     setError("Not enough memory for update manifest", true);
     return;
   }
+  const uint32_t bodyStarted = millis();
   responseBody = http.getString();
+  timing.body = millis() - bodyStarted;
   const size_t receivedLength = responseBody.length();
   http.end();
-  Serial.printf("[Tactula OTA] Manifest expected=%d received=%u\n",
+  debugSerial.printf("[Tactula OTA] Manifest expected=%d received=%u\n",
                 declaredLength, static_cast<unsigned>(receivedLength));
   if (receivedLength != static_cast<size_t>(declaredLength)) {
     setError("Mirror manifest download incomplete", true);
@@ -388,9 +400,35 @@ void checkForUpdate() {
   portEXIT_CRITICAL(&mux);
 }
 
-// Let C++ locals release their heap allocations before deleting the task.
+struct CheckHeap {
+  size_t internalFree, internalLargest, psramFree, psramLargest;
+};
+
+CheckHeap checkHeap() {
+  constexpr auto internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+  constexpr auto psram = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+  return {heap_caps_get_free_size(internal), heap_caps_get_largest_free_block(internal),
+          heap_caps_get_free_size(psram), heap_caps_get_largest_free_block(psram)};
+}
+
+// Compare both samples with the check task's stack still allocated.
+// checkForUpdate() destroys its HTTPS and JSON objects before returning.
 void checkTask(void*) {
-  checkForUpdate();
+  const CheckHeap before = checkHeap();
+  CheckTiming timing;
+  const uint32_t started = millis();
+  checkForUpdate(timing);
+  const uint32_t elapsed = millis() - started;
+  const CheckHeap after = checkHeap();
+  debugSerial.printf("[Tactula OTA] Check timing: DNS %lu ms, HTTPS headers %lu ms, body %lu ms, total %lu ms\n",
+                     static_cast<unsigned long>(timing.dns), static_cast<unsigned long>(timing.headers),
+                     static_cast<unsigned long>(timing.body), static_cast<unsigned long>(elapsed));
+  debugSerial.printf("[Tactula OTA] Check heap free/largest (bytes): "
+                "internal %u/%u -> %u/%u, PSRAM %u/%u -> %u/%u\n",
+                static_cast<unsigned>(before.internalFree), static_cast<unsigned>(before.internalLargest),
+                static_cast<unsigned>(after.internalFree), static_cast<unsigned>(after.internalLargest),
+                static_cast<unsigned>(before.psramFree), static_cast<unsigned>(before.psramLargest),
+                static_cast<unsigned>(after.psramFree), static_cast<unsigned>(after.psramLargest));
   portENTER_CRITICAL(&mux);
   running = false;
   portEXIT_CRITICAL(&mux);
@@ -417,6 +455,7 @@ void begin() {
 State snapshot() {
   portENTER_CRITICAL(&mux);
   State result = status;
+  result.checkPending = requested;
   portEXIT_CRITICAL(&mux);
   return result;
 }
@@ -571,7 +610,7 @@ void downloadUpdate() {
       snprintf(diagnostic, sizeof(diagnostic),
                "Firmware HTTPS failed (HTTP %d, TLS %d, largest block %u B)",
                httpStatus, tlsCode, largestBefore);
-      Serial.printf("[Tactula OTA] HTTPS failed after %lu ms, TLS %d (%s), "
+      debugSerial.printf("[Tactula OTA] HTTPS failed after %lu ms, TLS %d (%s), "
                     "internal free/largest before %u/%u B, now %u/%u B, "
                     "Wi-Fi status %d, RSSI %ld dBm\n",
                     static_cast<unsigned long>(millis() - started), tlsCode, tlsReason,
@@ -584,7 +623,7 @@ void downloadUpdate() {
                "Mirror image HTTP %d, length %d (expected %lu)",
                httpStatus, contentLength, static_cast<unsigned long>(expected));
     }
-    Serial.printf("[Tactula OTA] %s\n", diagnostic);
+    debugSerial.printf("[Tactula OTA] %s\n", diagnostic);
     http.end();
     fail(diagnostic);
     return;
@@ -635,7 +674,7 @@ void downloadUpdate() {
     }
     const esp_err_t writeResult = esp_ota_write(otaHandle, buffer, count);
     if (writeResult != ESP_OK) {
-      Serial.printf("[Tactula OTA] Flash write failed: %s\n", esp_err_to_name(writeResult));
+      debugSerial.printf("[Tactula OTA] Flash write failed: %s\n", esp_err_to_name(writeResult));
       failure = "Firmware flash write failed";
       break;
     }
@@ -658,7 +697,7 @@ void downloadUpdate() {
   mbedtls_sha256_free(&hash);
   char observed[65];
   for (int i = 0; i < 32; ++i) snprintf(observed + 2*i, 3, "%02x", bytes[i]);
-  Serial.printf("[Tactula OTA] %lu/%lu B, HTTPS %lu ms, flash erase %lu ms, transfer %lu ms\n",
+  debugSerial.printf("[Tactula OTA] %lu/%lu B, HTTPS %lu ms, flash erase %lu ms, transfer %lu ms\n",
                 static_cast<unsigned long>(total), static_cast<unsigned long>(expected),
                 static_cast<unsigned long>(headersReceived - started),
                 static_cast<unsigned long>(transferStarted - headersReceived),
@@ -741,7 +780,7 @@ void tick() {
       char reason[sizeof(status.error)];
       snprintf(reason, sizeof(reason), "Cannot activate staged firmware: %s (0x%04X)",
                esp_err_to_name(result), static_cast<unsigned>(result));
-      Serial.printf("OTA: %s; target=%s offset=0x%lx size=%lu\n",
+      debugSerial.printf("OTA: %s; target=%s offset=0x%lx size=%lu\n",
                     reason, bootTarget ? bootTarget->label : "none",
                     bootTarget ? static_cast<unsigned long>(bootTarget->address) : 0UL,
                     bootTarget ? static_cast<unsigned long>(bootTarget->size) : 0UL);

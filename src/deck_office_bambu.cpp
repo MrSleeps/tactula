@@ -1,5 +1,6 @@
 // Office-only Bambu controller. Secrets are stored in NVS and never sent to
 // a browser, serialized into deck.json, or included in configuration backups.
+#include "debug_log.h"
 #include "deck_office_bambu.h"
 #include "deck_bambu.h"
 #include "deck_bambu_ha.h"
@@ -70,7 +71,7 @@ void officeBambuBegin() {
   if (s_enabled) {
     String layoutError;
     if (!deckEnsureBambuStarterPages(layoutError))
-      Serial.printf("Bambu: could not persist starter pages: %s\n", layoutError.c_str());
+      debugSerial.printf("Bambu: could not persist starter pages: %s\n", layoutError.c_str());
   }
 }
 
@@ -179,7 +180,7 @@ bool officeBambuSave(bool enabled, const String& source, const String& address,
   if (enabled) {
     String layoutError;
     if (!deckEnsureBambuStarterPages(layoutError))
-      Serial.printf("Bambu: could not persist starter pages: %s\n", layoutError.c_str());
+      debugSerial.printf("Bambu: could not persist starter pages: %s\n", layoutError.c_str());
   }
   // Refresh after any enabled save as well: first-time template storage and
   // source/serial edits should appear immediately without a reboot.
@@ -258,7 +259,7 @@ String officeBambuJson() {
     }
   }
   if (doc.overflowed()) {
-    Serial.println("Bambu: status JSON overflow (PSRAM) — response omitted");
+    debugSerial.println("Bambu: status JSON overflow (PSRAM) — response omitted");
     return R"json({"status":"unavailable","error":"Could not allocate status JSON"})json";
   }
   String out;

@@ -1,6 +1,7 @@
 // TouchDeck web portal, JSON APIs, live screen capture, OTA update, and
 // captive-portal redirects. Static UI assets are streamed from PROGMEM in
 // bounded chunks so the full page is never assembled in heap.
+#include "debug_log.h"
 #include "web_server.h"
 #include "settings.h"
 #include "deck_auth.h"
@@ -2443,7 +2444,7 @@ static void otaShowProgress(uint32_t done, bool force) {
 static void otaFail(const String& message) {
   otaError = message;
   otaInProgress = false;
-  Serial.printf("OTA: failed: %s\n", message.c_str());
+  debugSerial.printf("OTA: failed: %s\n", message.c_str());
   deck::sysOtaResult(false, message.c_str());
   deckRefreshNow();
   otaFailedAt = millis();
@@ -2469,7 +2470,7 @@ static void handleOtaUpload() {
     deck::sysScreenRelayout();  // a retry right after a failure starts clean
     displayTick();
     otaShowProgress(0, true);
-    Serial.printf("OTA: start, file=%s\n", upload.filename.c_str());
+    debugSerial.printf("OTA: start, file=%s\n", upload.filename.c_str());
 
     const esp_partition_t* partition = esp_ota_get_next_update_partition(NULL);
     if (!partition) {
@@ -2508,7 +2509,7 @@ static void handleOtaUpload() {
   } else if (upload.status == UPLOAD_FILE_END) {
     if (!otaInProgress) return;
     if (Update.end(true)) {
-      Serial.printf("OTA: success, %u bytes\n", upload.totalSize);
+      debugSerial.printf("OTA: success, %u bytes\n", upload.totalSize);
       otaInProgress = false;
       otaSucceeded = true;
       deck::sysOtaResult(true, "");
@@ -2616,6 +2617,7 @@ static void handleUpdateStatus() {
   doc["checksEnabled"] = st.checksEnabled;
   doc["showBadge"] = st.showBadge;
   doc["checking"] = st.checking;
+  doc["checkPending"] = st.checkPending;
   doc["autoDownload"] = st.autoDownload;
   doc["allowBeta"] = st.allowBeta;
   doc["channel"] = st.allowBeta ? "beta" : "stable";
@@ -2747,6 +2749,53 @@ static void handleAuthSave() {
   sendJsonMessage(200, true, "Authentication enabled. Browser login required.");
 }
 
+static void handleDebugStatus() {
+  JsonDocument doc;
+  doc["enabled"] = debugLogRequested();
+  doc["available"] = debugLogActive();
+  String response;
+  serializeJson(doc, response);
+  server.sendHeader("Cache-Control", "no-store");
+  server.send(200, "application/json", response);
+}
+
+static void handleDebugSave() {
+  const String enabled = server.arg("enabled");
+  if (enabled != "0" && enabled != "1") {
+    sendJsonMessage(400, false, "Expected enabled=0 or enabled=1.");
+    return;
+  }
+  if (restartAt || otaInProgress) {
+    sendJsonMessage(409, false, "A firmware upload or restart is in progress.");
+    return;
+  }
+  const bool requested = enabled == "1";
+  if (requested == debugLogRequested()) {
+    sendJsonMessage(200, true, "Debug mode is already set.");
+    return;
+  }
+  if (!debugLogSave(requested)) {
+    sendJsonMessage(500, false, "Could not save debug mode.");
+    return;
+  }
+  sendJsonMessage(200, true, "Debug mode saved. Restarting...", true);
+  scheduleRestart(1000);
+}
+
+static void handleDebugLogs() {
+  server.sendHeader("Cache-Control", "no-store");
+  if (!debugLogActive()) {
+    server.send(404, "text/plain", "Debug logs unavailable");
+    return;
+  }
+  uint32_t cursor = strtoul(server.arg("after").c_str(), nullptr, 10);
+  char chunk[2048];
+  const size_t count = debugLogRead(cursor, chunk, sizeof(chunk) - 1);
+  chunk[count] = '\0';
+  server.sendHeader("X-Log-Cursor", String(cursor));
+  server.send(200, "text/plain; charset=utf-8", chunk);
+}
+
 void initWebServer() {
   deckAuth::begin();
   server.on("/generate_204", HTTP_GET, handleCaptiveDetect);
@@ -2755,6 +2804,9 @@ void initWebServer() {
   server.on("/hotspot-detect.html", HTTP_GET, handleCaptiveDetect);
   server.on("/canonical.html", HTTP_GET, handleCaptiveDetect);
 
+  authOn("/api/debug", HTTP_GET, handleDebugStatus);
+  authOn("/api/debug", HTTP_POST, handleDebugSave);
+  authOn("/api/debug/logs", HTTP_GET, handleDebugLogs);
   authOn("/api/auth", HTTP_GET, handleAuthStatus);
   authOn("/api/auth", HTTP_POST, handleAuthSave);
   authOn("/", HTTP_GET, handleRoot);
@@ -2850,7 +2902,7 @@ void initWebServer() {
 
   server.onNotFound(handleNotFound);
   server.begin();
-  Serial.println("Web server started on :80");
+  debugSerial.println("Web server started on :80");
 }
 
 void handleWebServer() {
@@ -2869,7 +2921,7 @@ void handleWebServer() {
     if (getScreenState() == SCREEN_OTA_UPDATE) setScreenState(otaPrevScreen);
   }
   if (restartAt != 0 && millis() >= restartAt) {
-    Serial.println("Rebooting...");
+    debugSerial.println("Rebooting...");
     Serial.flush();
     if (eraseWifiAtRestart) {
       WiFi.disconnect(true, true);

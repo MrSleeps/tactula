@@ -103,6 +103,7 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.wallOrder        = 0;
   ds.wallDaily        = false;
   ds.wallSource       = 0;
+  ds.dailyMirror      = 0;
   ds.sdCard           = false;
   ds.dailyMax         = 100;
   ds.dailyHour        = 3;
@@ -185,6 +186,7 @@ void loadSettings() {
   dispSettings.wallSource = prefs.isKey("wsrc") ? min<uint8_t>(prefs.getUChar("wsrc", 0), 2)
                                                : prefs.getBool("wdaily", false) ? 1 : 0;
   dispSettings.wallDaily = dispSettings.wallSource != 0;
+  dispSettings.dailyMirror = prefs.getBool("dmirror", false);
   dispSettings.sdCard = prefs.getBool("sdon", false);
   dispSettings.dailyMax = prefs.getUShort("dmax", 100);
   if (!validDailyMax(dispSettings.dailyMax)) dispSettings.dailyMax = 100;
@@ -291,6 +293,7 @@ void saveSettings() {
   prefs.putUChar("worder", dispSettings.wallOrder);
   prefs.putBool("wdaily", dispSettings.wallSource != 0);
   prefs.putUChar("wsrc", dispSettings.wallSource);
+  prefs.putBool("dmirror", dispSettings.dailyMirror != 0);
   prefs.putBool("sdon", dispSettings.sdCard);
   prefs.putUShort("dmax", dispSettings.dailyMax);
   prefs.putUChar("dhour", dispSettings.dailyHour);

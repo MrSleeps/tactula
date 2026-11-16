@@ -1,5 +1,6 @@
 // Guition deck: daily wallpapers. See deck_daily.h.
 #include "deck_daily.h"
+#include "debug_log.h"
 #include "deck_wall.h"
 #include "deck_config.h"
 #include "deck_touch.h"
@@ -7,6 +8,7 @@
 #include "settings.h"
 #include "config.h"
 #include "tls_psram.h"
+#include "firmware_mirror_ca.h"
 #include <HTTPClient.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -32,6 +34,9 @@ const DecompFn romDecomp = (DecompFn)0x40000864;
 
 constexpr const char* API_URL =
     "https://fd.api.iris.microsoft.com/v4/api/selection?placement=88000820&bcnt=4&country=US&locale=en-US&fmt=json";
+constexpr char MIRROR_BASE[] = "https://firmware.mrsleeps.uk/tactula/spotlight/";
+constexpr size_t MAX_MIRROR_FEED = 4096;
+constexpr size_t MAX_MIRROR_PICTURES = 48;
 const char* tempPath() { return wallTemp(true); }
 constexpr int MAX_API_CALLS = 12;  // 4 candidates each; some are progressive JPEGs
 constexpr int MAX_LOG = 2 * DAILY_MAX_COUNT;
@@ -86,7 +91,7 @@ struct LogEntry {
 };
 
 struct Status {
-  bool running;
+  bool running, mirror;
   int want[2], got[2], apiCalls, removed, archiveMax;
   uint32_t startMs, totalMs, minInternal;
   char step[40], error[64];
@@ -125,6 +130,26 @@ void setError(const char* text) {
   update([&](Status& s) { strlcpy(s.error, text, sizeof(s.error)); });
 }
 
+// HTTPClient reports a generic negative code for some socket and TLS errors.
+int logSpotlightRequestFailure(const char* stage, int httpCode, WiFiClientSecure& tls) {
+  if (httpCode > 0) {
+    debugSerial.printf("[Spotlight] %s returned HTTP %d\n", stage, httpCode);
+    return 0;
+  }
+  char reason[96] = {};
+  const int tlsCode = tls.lastError(reason, sizeof(reason));
+  constexpr auto internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+  constexpr auto psram = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+  debugSerial.printf("[Spotlight] %s failed: HTTP %d, TLS %d (%s), RSSI %ld dBm, "
+                     "internal free/largest %u/%u B, PSRAM free/largest %u/%u B\n",
+                     stage, httpCode, tlsCode, reason, static_cast<long>(WiFi.RSSI()),
+                     static_cast<unsigned>(heap_caps_get_free_size(internal)),
+                     static_cast<unsigned>(heap_caps_get_largest_free_block(internal)),
+                     static_cast<unsigned>(heap_caps_get_free_size(psram)),
+                     static_cast<unsigned>(heap_caps_get_largest_free_block(psram)));
+  return tlsCode;
+}
+
 struct Pick {
   String url;
   bool portrait;
@@ -137,13 +162,20 @@ bool fetchApi(std::vector<Pick>& picks) {
   HTTPClient http;
   http.useHTTP10(true);
   http.setTimeout(15000);
-  if (!http.begin(tls, API_URL)) return false;
+  if (!http.begin(tls, API_URL)) {
+    setError("Could not initialise Spotlight request");
+    return false;
+  }
   const int code = http.GET();
   sampleRam();
   if (code != 200) {
+    const int tlsCode = logSpotlightRequestFailure("Feed request", code, tls);
     http.end();
-    char text[40];
-    snprintf(text, sizeof(text), code < 0 ? "Spotlight unreachable (%d)" : "Spotlight HTTP %d", code);
+    char text[64];
+    if (tlsCode < 0)
+      snprintf(text, sizeof(text), "Spotlight HTTPS failed (HTTP %d, TLS %d)", code, tlsCode);
+    else
+      snprintf(text, sizeof(text), code < 0 ? "Spotlight unreachable (%d)" : "Spotlight HTTP %d", code);
     setError(text);
     return false;
   }
@@ -166,6 +198,66 @@ bool fetchApi(std::vector<Pick>& picks) {
       if (urls[p] && !strncmp(urls[p], "https://", 8)) picks.push_back({urls[p], p == 1});
   }
   return true;
+}
+
+bool mirrorPictureName(const char* name, bool portrait) {
+  if (!name || strlen(name) != 30 || name[0] != (portrait ? 'p' : 'l') ||
+      name[1] != '-' || strcmp(name + 26, ".jpg") != 0) return false;
+  for (int i = 2; i < 26; ++i)
+    if (!((name[i] >= '0' && name[i] <= '9') || (name[i] >= 'a' && name[i] <= 'f')))
+      return false;
+  return true;
+}
+
+bool fetchMirrorFeed(std::vector<Pick>& picks) {
+  WiFiClientSecure tls;
+  tls.setCACert(FIRMWARE_MIRROR_CA);
+  HTTPClient http;
+  http.useHTTP10(true);
+  http.setTimeout(15000);
+  const bool begun = http.begin(tls, String(MIRROR_BASE) + "current.json");
+  const int code = begun ? http.GET() : -1;
+  sampleRam();
+  if (code != 200) {
+    char reason[64];
+    if (code < 0) {
+      char detail[48];
+      const int tlsCode = tls.lastError(detail, sizeof(detail));
+      snprintf(reason, sizeof(reason), "Tactula mirror HTTPS failed (HTTP %d, TLS %d)", code, tlsCode);
+    } else {
+      snprintf(reason, sizeof(reason), "Tactula mirror HTTP %d", code);
+    }
+    http.end();
+    setError(reason);
+    return false;
+  }
+  const int bytes = http.getSize();
+  if (bytes < 1 || static_cast<size_t>(bytes) > MAX_MIRROR_FEED) {
+    http.end();
+    setError("Tactula mirror feed size missing or too large");
+    return false;
+  }
+  JsonDocument doc(psramJson());
+  const auto error = deserializeJson(doc, http.getStream(), DeserializationOption::NestingLimit(4));
+  http.end();
+  if (error || (doc["schema"] | 0) != 1) {
+    setError("Invalid Tactula mirror feed");
+    return false;
+  }
+  for (const bool portrait : {false, true}) {
+    const auto names = doc[portrait ? "p" : "l"].as<JsonArrayConst>();
+    if (names.size() > MAX_MIRROR_PICTURES) {
+      setError("Too many pictures in Tactula mirror feed");
+      return false;
+    }
+    for (const JsonVariantConst value : names) {
+      const char* name = value.as<const char*>();
+      if (mirrorPictureName(name, portrait)) picks.push_back({String(MIRROR_BASE) + name, portrait});
+    }
+  }
+  if (!picks.empty()) return true;
+  setError("Tactula mirror feed has no usable pictures");
+  return false;
 }
 
 struct Decode {
@@ -333,9 +425,13 @@ bool fetchImage(const Pick& pick, const String& name, LogEntry& log, bool* offli
   const int code = http.GET();
   sampleRam();
   if (code != 200) {
+    const int tlsCode = logSpotlightRequestFailure("Picture request", code, tls);
     http.end();
     *offline = code < 0;
-    snprintf(log.error, sizeof(log.error), "HTTP %d", code);
+    if (tlsCode < 0)
+      snprintf(log.error, sizeof(log.error), "TLS %d", tlsCode);
+    else
+      snprintf(log.error, sizeof(log.error), "HTTP %d", code);
     return false;
   }
   Decode d = {http.getStreamPtr(), nullptr, 0, 0, 0, 0};
@@ -392,12 +488,59 @@ bool fetchImage(const Pick& pick, const String& name, LogEntry& log, bool* offli
   return ok;
 }
 
+bool fetchMirroredImage(const Pick& pick, const String& name, LogEntry& log, bool* offline) {
+  WiFiClientSecure tls;
+  tls.setCACert(FIRMWARE_MIRROR_CA);
+  HTTPClient http;
+  http.useHTTP10(true);
+  http.setTimeout(15000);
+  const bool begun = http.begin(tls, pick.url);
+  const int code = begun ? http.GET() : -1;
+  sampleRam();
+  if (code != 200) {
+    *offline = code < 0;
+    snprintf(log.error, sizeof(log.error), "Mirror HTTP %d", code);
+    http.end();
+    return false;
+  }
+  const int bytes = http.getSize();
+  if (bytes < 1 || static_cast<size_t>(bytes) > WALL_MAX_JPEG) {
+    strlcpy(log.error, "bad mirror JPEG length", sizeof(log.error));
+    http.end();
+    return false;
+  }
+
+  File out = wallFs().open(tempPath(), "w");
+  const bool opened = static_cast<bool>(out);
+  const int copied = opened ? http.writeToStream(&out) : -1;
+  log.bytesOut = opened ? out.position() : 0;
+  log.bytesIn = copied > 0 ? copied : 0;
+  out.close();
+  http.end();
+  bool ok = opened && copied == bytes && log.bytesOut == static_cast<uint32_t>(bytes);
+  if (!ok) {
+    *offline = opened && copied < 0;
+    strlcpy(log.error, opened ? "mirror download cut" : "could not open file", sizeof(log.error));
+  } else if (!wallValidateJpeg(tempPath(), pick.portrait)) {
+    strlcpy(log.error, "invalid mirror JPEG", sizeof(log.error));
+    ok = false;
+  } else if (!wallFs().rename(tempPath(), dailyPath(pick.portrait, name))) {
+    strlcpy(log.error, "could not store", sizeof(log.error));
+    ok = false;
+  }
+  wallFs().remove(tempPath());
+  if (ok) wallIndexChanged(pick.portrait, true, name);
+  return ok;
+}
+
 void runTask(void*) {
   int want[2], archiveMax;
+  bool mirror;
   portENTER_CRITICAL(&s_mux);
   want[0] = s_status->want[0];
   want[1] = s_status->want[1];
   archiveMax = s_status->archiveMax;
+  mirror = s_status->mirror;
   portEXIT_CRITICAL(&s_mux);
   if (!tlsPsramInstall()) setError("TLS setup failed");
   else {
@@ -414,11 +557,12 @@ void runTask(void*) {
           seen.push_back((uint64_t)(uint32_t)f.id | (uint64_t)p << 32);
     bool stop = false;
     int got[2] = {}, offlineRun = 0;
-    for (int call = 0; call < MAX_API_CALLS && !stop && (got[0] < want[0] || got[1] < want[1]); call++) {
-      setStep("Asking Spotlight");
+    const int feedRequests = mirror ? 1 : MAX_API_CALLS;
+    for (int call = 0; call < feedRequests && !stop && (got[0] < want[0] || got[1] < want[1]); call++) {
+      setStep(mirror ? "Reading Tactula mirror" : "Asking Spotlight");
       update([](Status& s) { s.apiCalls++; });
       std::vector<Pick> picks;
-      if (!fetchApi(picks)) break;
+      if (!(mirror ? fetchMirrorFeed(picks) : fetchApi(picks))) break;
       for (const Pick& pick : picks) {
         const bool p = pick.portrait;
         if (got[p] >= want[p]) continue;
@@ -439,7 +583,8 @@ void runTask(void*) {
         bool offline = false;
         if (wallFs().exists(dailyPath(p, name))) log.ok = true;
         else if (!makeRoom(p, keep[p])) strlcpy(log.error, "flash full", sizeof(log.error));
-        else log.ok = fetchImage(pick, name, log, &offline);
+        else log.ok = mirror ? fetchMirroredImage(pick, name, log, &offline)
+                             : fetchImage(pick, name, log, &offline);
         log.ms = millis() - start;
         if (log.ok) {
           keep[p].push_back(wallId(name));
@@ -529,6 +674,7 @@ bool dailyStart() {
   if (!busy) {
     memset(s_status, 0, sizeof(Status));
     s_status->running = true;
+    s_status->mirror = dispSettings.dailyMirror != 0;
     const int count = std::min<int>(dispSettings.dailyCount, wallOnSd() ? 32 : 16);
     s_status->want[0] = wants(0) ? count : 0;
     s_status->want[1] = wants(1) ? count : 0;

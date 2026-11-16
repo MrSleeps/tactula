@@ -47,6 +47,7 @@ struct DisplaySettings {
   uint8_t  wallEvery;         // Wallpaper interval in minutes, 0 = off
   uint8_t  wallOrder;         // 0 = in order, 1 = shuffle
   bool     wallDaily;         // Daily downloads enabled
+  uint8_t  dailyMirror;       // 0 = Microsoft direct, 1 = Tactula mirror
   uint8_t  wallSource;        // 0 = own, 1 = daily, 2 = both
   bool     sdCard;
   uint16_t dailyMax;          // SD archive per orientation: 50, 100, 200 or 500

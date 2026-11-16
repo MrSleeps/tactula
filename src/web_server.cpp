@@ -222,6 +222,7 @@ static void handleApiConfig() {
   display["wallOrder"] = dispSettings.wallOrder;
   display["wallDaily"] = dispSettings.wallSource != 0;
   display["wallSource"] = dispSettings.wallSource;
+  display["dailyMirror"] = dispSettings.dailyMirror;
   display["sdCard"] = dispSettings.sdCard;
   display["dailyMax"] = dispSettings.dailyMax;
   display["dailyHour"] = dispSettings.dailyHour;
@@ -327,6 +328,7 @@ static void handleConfigExport() {
   display["wallOrder"] = dispSettings.wallOrder;
   display["wallDaily"] = dispSettings.wallSource != 0;
   display["wallSource"] = dispSettings.wallSource;
+  display["dailyMirror"] = dispSettings.dailyMirror;
   display["sdCard"] = dispSettings.sdCard;
   display["dailyMax"] = dispSettings.dailyMax;
   display["dailyHour"] = dispSettings.dailyHour;
@@ -538,6 +540,7 @@ static void handleConfigImport() {
   nextDisplay.wallOrder = displayDefaults.wallOrder;
   nextDisplay.wallDaily = displayDefaults.wallDaily;
   nextDisplay.wallSource = 0;
+  nextDisplay.dailyMirror = displayDefaults.dailyMirror;
   nextDisplay.sdCard = false;
   nextDisplay.dailyMax = 100;
   nextDisplay.dailyHour = displayDefaults.dailyHour;
@@ -567,6 +570,7 @@ static void handleConfigImport() {
     nextDisplay.wallSource = nextDisplay.wallDaily ? 1 : 0;
   }
   nextDisplay.wallDaily = nextDisplay.wallSource != 0;
+  if (!display["dailyMirror"].isNull()) READ_INT(display, "dailyMirror", 0, 1, nextDisplay.dailyMirror, uint8_t);
   if (!display["sdCard"].isNull()) READ_BOOL(display, "sdCard", nextDisplay.sdCard);
   if (!display["dailyMax"].isNull()) READ_INT(display, "dailyMax", 50, 500, nextDisplay.dailyMax, uint16_t);
   if (!validDailyMax(nextDisplay.dailyMax)) {
@@ -1136,6 +1140,11 @@ static void handleSaveWallpapers() {
     sendJsonMessage(400, false, "invalid wallSource");
     return;
   }
+  const String mirror = server.arg("dailyMirror");
+  if (server.hasArg("dailyMirror") && mirror != "0" && mirror != "1") {
+    sendJsonMessage(400, false, "invalid dailyMirror");
+    return;
+  }
   int dailyMax = dispSettings.dailyMax;
   if (server.hasArg("dailyMax")) {
     dailyMax = server.arg("dailyMax").toInt();
@@ -1150,6 +1159,8 @@ static void handleSaveWallpapers() {
   dispSettings.wallOrder = order;
   const uint8_t oldSource = deck::wallSource();
   const uint32_t oldPlan = dispSettings.dailyOrient << 8 | dispSettings.dailyCount;
+  const bool mirrorChanged = server.hasArg("dailyMirror") && dispSettings.dailyMirror != (mirror == "1");
+  if (server.hasArg("dailyMirror")) dispSettings.dailyMirror = mirror == "1";
   if (server.hasArg("wallSource")) dispSettings.wallSource = server.arg("wallSource").toInt();
   dispSettings.wallDaily = dispSettings.wallSource != 0;
   dispSettings.dailyHour = (uint8_t)clampedArg("dailyHour", dispSettings.dailyHour, 0, 23);
@@ -1158,7 +1169,8 @@ static void handleSaveWallpapers() {
   saveSettings();
   if (dispSettings.wallSource != oldSource) deck::wallSetSource(dispSettings.wallSource);
   // A new plan fetches again today instead of waiting for the hour.
-  if (oldPlan != (uint32_t)(dispSettings.dailyOrient << 8 | dispSettings.dailyCount)) deck::dailyReplan();
+  if (mirrorChanged || oldPlan != (uint32_t)(dispSettings.dailyOrient << 8 | dispSettings.dailyCount))
+    deck::dailyReplan();
   sendJsonMessage(200, true, "Wallpaper settings applied.");
 }
 

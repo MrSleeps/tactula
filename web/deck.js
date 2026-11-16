@@ -491,61 +491,56 @@
     bedroomIconsMounted = detail.mounted;
     if (deck && visible()) renderPage();
   });
-  /* Icon: style and the on icon (buttons, switches, sliders, sensors). */
+  const useTileIcon = "icon";
   function iconFields(t, i) {
-    let h = t.type === "nav" ?
-      '<div class="field wide">' +
-      lbl("Navigation icon", "Choose any installed Material Design Icon (mdi:) or Custom Brand Icon (phu:). The icon is centred on the touchscreen tile. Choosing an icon clears any selected PNG image.") +
-      '<div class="dk-row"><button type="button" class="btn" data-nav-icon="' + i +
-      '">Choose MDI / Brand icon</button>' +
-      '<span class="dk-tsub" style="margin:0;overflow-wrap:anywhere">' +
-      esc(t.icon || "Automatic arrow icon") + '</span></div></div>' :
-      '<div class="field">' +
+    const nav = t.type === "nav";
+    let h = nav ? "" : '<div class="field">' +
       lbl("Icon style", "Without a circle the icon fills its place.") +
-      '<select data-is="' +
-      i +
-      '">' +
+      '<select data-is="' + i + '">' +
       opt("", "In a circle", t.iconStyle !== "plain") +
       opt("plain", "No circle", t.iconStyle === "plain") +
       "</select></div>";
-    if (t.type === "toggle" || t.type === "action" || t.statusEntity) {
-      const cp = iconCp(t.onIcon);
-      h +=
-        '<div class="field">' +
-        lbl("On icon", "The icon while the tile is on. Same = the tile's own icon.") +
-        '<div class="dk-row"><button type="button" class="btn dk-oib" data-oi="' +
-        i +
-        '">' +
-        (cp ? "<i>" + String.fromCodePoint(cp) + "</i>" + esc(t.onIcon) : t.onIcon ? esc(t.onIcon) : "Same") +
-        "</button>" +
-        (t.onIcon ? '<button type="button" class="btn" data-oia="' + i + '">Same</button>' : "") +
-        "</div></div>";
-    }
-    if (["action", "toggle", "slider", "sensor", "nav"].includes(t.type)) {
-      const files = bedroomIcons;
-      for (const [field, label, suffix] of [
-        ["offImage", "Inactive image", "_off.png"],
-        ...(t.type === "nav" ? [] : [["onImage", "Active image", "_on.png"]]),
-      ]) {
-        const saved = t[field] || "";
-        const fallback = (t.id || "") + suffix;
-        const options = files.filter((n) => n.endsWith(suffix));
-        const missing = saved && !options.includes(saved);
-        // Keep the saved filename so re-uploading it restores the tile.
-        if (missing) options.unshift(saved);
-        h += '<div class="field">' +
-          lbl(t.type === "nav" ? "Navigation image (optional)" : label,
-              t.type === "nav" ?
-              "Choose a PNG uploaded under Configuration → Icons → Custom PNG icons (ending _off.png). This takes priority over the MDI/brand icon. Select Use icon to show the chosen icon instead." :
-              "PNG on the microSD card. Upload images under Configuration → Icons → Custom PNG icons. None uses the tile ID filename automatically, falling back to its MDI icon.") +
+    let showUploadHint = false;
+    for (const [field, state, suffix] of [
+      ["offImage", nav ? "Navigation" : "Inactive", "_off.png"],
+      ...(nav ? [] : [["onImage", "Active", "_on.png"]]),
+    ]) {
+      const active = field === "onImage";
+      const saved = t[field];
+      const fallback = t.id + suffix;
+      // Old tiles with no explicit selection can still use a tile-ID PNG.
+      const useImage = saved === undefined
+        ? !nav && bedroomIcons.includes(fallback)
+        : saved !== useTileIcon;
+      h += '<div class="field">' + lbl(state + " appearance") +
+        '<select data-artwork="' + i + '" data-artwork-key="' + field + '">' +
+        opt("icon", "Use icon", !useImage) + opt("image", "Use image", useImage) +
+        '</select></div>';
+
+      if (useImage) {
+        showUploadHint = true;
+        const selected = saved || "";
+        const options = bedroomIcons.filter((n) => n.endsWith(suffix));
+        const missing = selected && !options.includes(selected);
+        if (missing) options.unshift(selected);
+        h += '<div class="field">' + lbl(state + " image") +
           '<select data-img="' + i + '" data-imgkey="' + field + '">' +
-          opt("", t.type === "nav" ? "Use selected MDI / Brand icon" : "Automatic (" + fallback + ")", !saved) +
-          options.map((n) => opt(n, missing && bedroomIconsMounted && n === saved ? n + " (missing)" : n, n === saved)).join("") +
+          opt("", nav ? "Choose an image" : "Automatic (" + fallback + ")", !selected) +
+          options.map((n) => opt(n, missing && bedroomIconsMounted && n === selected ? n + " (missing)" : n, n === selected)).join("") +
           '</select></div>';
+      } else {
+        const icon = active ? t.onIcon : t.icon;
+        h += '<div class="field">' + lbl(state + " icon") +
+          '<div class="dk-row"><button type="button" class="btn" ' +
+          (active ? 'data-oi="' : 'data-ic="') + i + '">' +
+          esc(icon || (active ? "Same as tile icon" : "Choose MDI / Brand icon")) +
+          '</button></div></div>';
       }
-      h += '<p class="field-hint wide">To use a different PNG, upload it under Configuration → Icons → Custom PNG icons, then return to this editor.</p>';
     }
-    return grp("Icon", h);
+    if (showUploadHint) {
+      h += '<p class="field-hint wide">Upload PNGs under Configuration → Icons → Custom PNG icons.</p>';
+    }
+    return grp("Appearance", h);
   }
   /* Tiles with an icon chip: icon style and icon colours apply. */
   const iconTile = (t) => ["action", "toggle", "slider", "sensor", "nav"].includes(t.type);
@@ -2323,8 +2318,6 @@
     );
     el.querySelectorAll("[data-e]").forEach((x) => (x.onclick = () => openPicker(+x.dataset.e)));
     el.querySelectorAll("[data-ic]").forEach((x) => (x.onclick = () => openIcons(+x.dataset.ic)));
-    el.querySelectorAll("[data-nav-icon]").forEach((x) =>
-      (x.onclick = () => openIcons(+x.dataset.navIcon)));
     el.querySelectorAll("[data-u]").forEach(
       (x) =>
         (x.onclick = () => {
@@ -2467,14 +2460,6 @@
         }),
     );
     el.querySelectorAll("[data-oi]").forEach((x) => (x.onclick = () => openIcons(+x.dataset.oi, "onIcon")));
-    el.querySelectorAll("[data-oia]").forEach(
-      (x) =>
-        (x.onclick = () => {
-          delete p.tiles[+x.dataset.oia].onIcon;
-          setDirty(true);
-          renderPage();
-        }),
-    );
     el.querySelectorAll("[data-lc]").forEach((x) => {
       x.onchange = () => {
         const t = p.tiles[+x.dataset.lc];
@@ -2913,11 +2898,17 @@
         renderPage();
       };
     });
+    el.querySelectorAll("[data-artwork]").forEach((x) => {
+      x.onchange = () => {
+        p.tiles[+x.dataset.artwork][x.dataset.artworkKey] = x.value === "icon" ? useTileIcon : "";
+        setDirty(true);
+        renderPage();
+      };
+    });
     el.querySelectorAll("[data-img]").forEach((x) => {
       x.onchange = () => {
         const t = p.tiles[+x.dataset.img], k = x.dataset.imgkey;
-        if (x.value) t[k] = x.value;
-        else delete t[k];
+        t[k] = x.value;
         setDirty(true);
       };
     });
@@ -3943,9 +3934,7 @@
     const t = pages()[cur].tiles[icFor];
     if (v) t[icKey] = v;
     else delete t[icKey];
-    // On a navigation tile explicitly selecting an icon means we should
-    // display it, not keep an older PNG selection covering it.
-    if (t.type === "nav" && icKey === "icon") delete t.offImage;
+    if (t.type === "nav" && icKey === "icon") t.offImage = useTileIcon;
     setDirty(true);
     $("dkIcPick").classList.remove("show");
     renderPage();

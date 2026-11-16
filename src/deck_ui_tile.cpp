@@ -1,6 +1,8 @@
 // Deck UI: tile look and building a tile.
 #include "deck_ui_int.h"
 #include "deck_sd.h"
+#define LODEPNG_NO_COMPILE_CPP
+#include <src/libs/lodepng/lodepng.h>
 #include <math.h>
 
 namespace deckui {
@@ -176,61 +178,193 @@ void fitPngIcon(TileRt& r) {
   lv_obj_align(r.pngIcon, LV_ALIGN_CENTER, 0, -reserved / 2);
 }
 
-void updatePngIcon(TileRt& r, bool on) {
-  // Navigation icons are explicit: without a chosen PNG, always show the
-  // selected MDI/brand icon rather than silently loading an id_off.png file.
-  if (!r.icon || !r.chip || !r.def || !deck::wallOnSd() ||
-      (r.def->type == TILE_NAV && !r.def->offImage.length())) {
-    const bool wasPng = r.pngIcon && !lv_obj_has_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN);
-    if (r.pngIcon) lv_obj_add_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN);
-    if (r.icon) lv_obj_remove_flag(r.icon, LV_OBJ_FLAG_HIDDEN);
-    if (wasPng && r.fitW > 0) { r.fitW = 0; fitTile(r); }
+static void dropTilePng(lv_obj_t* image) {
+  auto* pixels = static_cast<lv_draw_buf_t*>(lv_obj_get_user_data(image));
+  if (!pixels) return;
+  lv_obj_set_user_data(image, nullptr);
+  lv_image_cache_drop(pixels);
+  lv_draw_buf_destroy(pixels);
+}
+
+static void hideTilePng(TileRt& r) {
+  const bool wasPng = r.pngIcon && !lv_obj_has_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN);
+  if (r.pngIcon) {
+    lv_obj_add_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN);
+    lv_image_set_src(r.pngIcon, nullptr);
+    dropTilePng(r.pngIcon);
+  }
+  r.pngSource = "";
+  r.pngWidth = r.pngHeight = 0;
+  if (r.icon) lv_obj_remove_flag(r.icon, LV_OBJ_FLAG_HIDDEN);
+  if (wasPng && r.fitW > 0) { r.fitW = 0; fitTile(r); }
+}
+
+static lv_draw_buf_t* loadTilePng(const String& path, bool explicitImage, bool& opened) {
+  File file = deck::wallFs().open(path, "r");
+  opened = static_cast<bool>(file);
+  if (!opened) {
+    if (explicitImage) Serial.printf("Deck: tile PNG open failed: %s\n", path.c_str());
+    return nullptr;
+  }
+  // Match the upload limits, including files copied directly to the card.
+  const size_t bytes = file.size();
+  uint8_t header[24];
+  if (bytes < sizeof(header) || bytes > 512 * 1024 ||
+      file.read(header, sizeof(header)) != sizeof(header)) {
+    Serial.printf("Deck: tile PNG size/header read failed: %s (%u bytes)\n",
+                  path.c_str(), (unsigned)bytes);
+    return nullptr;
+  }
+  const uint32_t width = ((uint32_t)header[16] << 24) | ((uint32_t)header[17] << 16) |
+                         ((uint32_t)header[18] << 8) | header[19];
+  const uint32_t height = ((uint32_t)header[20] << 24) | ((uint32_t)header[21] << 16) |
+                          ((uint32_t)header[22] << 8) | header[23];
+  if (!width || !height || width > 512 || height > 512) {
+    Serial.printf("Deck: tile PNG dimensions invalid: %s\n", path.c_str());
+    return nullptr;
+  }
+
+  // Read once through Arduino FS. LVGL's file decoder reopens the file to
+  // discover its length and again to read it, through the brand font drive.
+  auto* data = static_cast<uint8_t*>(lv_malloc(bytes));
+  if (!data) {
+    Serial.printf("Deck: tile PNG input allocation failed: %s\n", path.c_str());
+    return nullptr;
+  }
+  memcpy(data, header, sizeof(header));
+  const size_t remaining = bytes - sizeof(header);
+  const size_t read = file.read(data + sizeof(header), remaining);
+  file.close();
+  if (read != remaining) {
+    lv_free(data);
+    Serial.printf("Deck: tile PNG short read: %s (%u/%u bytes)\n",
+                  path.c_str(), (unsigned)read, (unsigned)remaining);
+    return nullptr;
+  }
+
+  // LVGL 9.5's bundled LodePNG returns an LVGL draw buffer. Keep that
+  // allocation instead of cloning the decoded image before closing a decoder.
+  unsigned char* decoded = nullptr;
+  unsigned w = 0, h = 0;
+  const unsigned error = lodepng_decode32(&decoded, &w, &h, data, bytes);
+  lv_free(data);
+  auto* pixels = reinterpret_cast<lv_draw_buf_t*>(decoded);
+  if (error) {
+    if (pixels) lv_draw_buf_destroy(pixels);
+    Serial.printf("Deck: tile PNG decode failed: %s (%ux%u, %u bytes, error %u: %s)\n",
+                  path.c_str(), (unsigned)width, (unsigned)height, (unsigned)bytes,
+                  error, lodepng_error_text(error));
+    return nullptr;
+  }
+
+  // LodePNG produces RGBA. LVGL's ARGB8888 has blue first in memory on ESP32.
+  for (unsigned y = 0; y < h; ++y) {
+    uint8_t* const row = pixels->data + y * pixels->header.stride;
+    for (unsigned x = 0; x < w; ++x) std::swap(row[4 * x], row[4 * x + 2]);
+  }
+  return pixels;
+}
+
+static String tilePngName(const TileDef& def, bool on) {
+  const String& selected = on ? def.onImage : def.offImage;
+  if (!selected.isEmpty()) return selected;  // includes the explicit "icon" choice
+  if (def.type == TILE_NAV) return {};
+  return def.id + (on ? "_on.png" : "_off.png");
+}
+
+constexpr uint8_t TILE_PNG_MAX_ATTEMPTS = 4;
+constexpr uint32_t TILE_PNG_RETRY_MS = 1500;
+
+static void recordTilePngFailure(TileRt& r) {
+  ++r.pngFailures;
+  r.pngFailedAt = millis();
+}
+
+static void setTilePng(TileRt& r, const String& name, bool force) {
+  if (!deck::wallOnSd() || !bedroomPngName(name)) {
+    hideTilePng(r);
     return;
   }
-  const String name = on
-      ? (r.def->onImage.length() ? r.def->onImage : r.def->id + "_on.png")
-      : (r.def->offImage.length() ? r.def->offImage : r.def->id + "_off.png");
-  if (!bedroomPngName(name)) {
-    if (r.pngIcon) lv_obj_add_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN);
-    r.pngSource = "";
-    lv_obj_remove_flag(r.icon, LV_OBJ_FLAG_HIDDEN);
-    return;
-  }
+  if (!force && r.pngSource == name) return;
+
   const String path = String("/touchdeck/icons/bedroom/") + name;
-  if (!deck::wallFs().exists(path)) {
-    const bool wasPng = r.pngIcon && !lv_obj_has_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN);
-    if (r.pngIcon) lv_obj_add_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN);
-    r.pngSource = "";
-    lv_obj_remove_flag(r.icon, LV_OBJ_FLAG_HIDDEN);
-    if (wasPng && r.fitW > 0) { r.fitW = 0; fitTile(r); }
+  const String& selected = r.pngState == 1 ? r.def->onImage : r.def->offImage;
+  const bool explicitImage = !selected.isEmpty();
+  bool opened = false;
+  lv_draw_buf_t* pixels = loadTilePng(path, explicitImage, opened);
+  if (!pixels) {
+    // Missing tile-ID files are normal. Retry deliberate selections and
+    // files that could be opened but failed to read, decode or allocate.
+    if (explicitImage || opened || r.pngFailures) recordTilePngFailure(r);
+    // A failed replacement must not evict an image already on screen.
+    // An absent file (including a deliberate deletion) still falls back.
+    if (!opened || r.pngSource != name) hideTilePng(r);
     return;
   }
-  deck::iconsRegisterSdFs();
-  const String source = "B:" + path;
-  lv_image_header_t info = {};
-  if (lv_image_decoder_get_info(source.c_str(), &info) != LV_RESULT_OK ||
-      info.w == 0 || info.h == 0) {
-    if (r.pngIcon) lv_obj_add_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_remove_flag(r.icon, LV_OBJ_FLAG_HIDDEN);
-    return;
-  }
+
   if (!r.pngIcon) {
     r.pngIcon = lv_image_create(r.obj);
+    if (!r.pngIcon) {
+      lv_draw_buf_destroy(pixels);
+      recordTilePngFailure(r);
+      Serial.printf("Deck: tile PNG widget allocation failed: %s\n", name.c_str());
+      return;
+    }
     lv_obj_remove_flag(r.pngIcon, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    lv_obj_add_event_cb(r.pngIcon, [](lv_event_t* e) {
+      dropTilePng(lv_event_get_target_obj(e));
+    }, LV_EVENT_DELETE, nullptr);
   }
-  // Remember the PNG's natural dimensions. fitButton will size the chip to
-  // its tile, and fitPngIcon will centre and scale the image within it.
-  const bool wasPng = r.pngIcon && !lv_obj_has_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN);
-  r.pngWidth = info.w;
-  r.pngHeight = info.h;
-  if (r.pngSource != source) {
-    lv_image_set_src(r.pngIcon, source.c_str());
-    r.pngSource = source;
+  const bool wasPng = !r.pngSource.isEmpty();
+  lv_image_set_src(r.pngIcon, pixels);
+  if (lv_image_get_src(r.pngIcon) != pixels) {
+    lv_draw_buf_destroy(pixels);
+    hideTilePng(r);
+    recordTilePngFailure(r);
+    Serial.printf("Deck: tile PNG rejected by LVGL: %s\n", name.c_str());
+    return;
   }
+  dropTilePng(r.pngIcon);
+  lv_obj_set_user_data(r.pngIcon, pixels);
+  r.pngFailures = 0;
+  r.pngSource = name;
+  r.pngWidth = pixels->header.w;
+  r.pngHeight = pixels->header.h;
   fitPngIcon(r);
   lv_obj_remove_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(r.icon, LV_OBJ_FLAG_HIDDEN);
   if (!wasPng && r.fitW > 0) { r.fitW = 0; fitTile(r); }
+}
+
+void updatePngIcon(TileRt& r, bool on) {
+  if (!r.icon || !r.chip || !r.def) return;
+  const int8_t state = on ? 1 : 0;
+  if (r.pngState == state && r.pngFailures) return;
+  r.pngState = state;
+  r.pngFailures = 0;
+  setTilePng(r, tilePngName(*r.def, on), false);
+}
+
+void refreshTilePngs(const std::vector<String>& names) {
+  for (TileRt& r : s_tiles) {
+    if (r.pngState < 0) continue;
+    const String name = tilePngName(*r.def, r.pngState == 1);
+    if (std::find(names.begin(), names.end(), name) == names.end()) continue;
+    r.pngFailures = 0;
+    setTilePng(r, name, true);
+    markPageStale(r.page);
+  }
+}
+
+void retryTilePngs() {
+  const uint32_t now = millis();
+  for (TileRt& r : s_tiles) {
+    if (!r.pngFailures || r.pngFailures >= TILE_PNG_MAX_ATTEMPTS ||
+        now - r.pngFailedAt < TILE_PNG_RETRY_MS) continue;
+    setTilePng(r, tilePngName(*r.def, r.pngState == 1), true);
+    markPageStale(r.page);
+    return;  // Limit SD and decoding work to one retry per loop pass.
+  }
 }
 
 void markPageStale(int page) {
@@ -644,7 +778,6 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   r.chip = chip;
   r.iconPx = iconPx;
   r.iconCp = showIcon(ic, def, nullptr, false, iconPx, 0);
-  updatePngIcon(r, false);
   r.fill = fill;
   if (def.type == TILE_SENSOR) {
     r.detail = makeDetail(t, def);

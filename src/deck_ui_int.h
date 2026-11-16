@@ -68,7 +68,10 @@ struct TileRt {
   lv_obj_t* sub;
   lv_obj_t* icon;
   lv_obj_t* pngIcon;    // optional transparent PNG from microSD, on top of MDI fallback
-  String pngSource;    // last image path, avoids decoding on every HA refresh
+  String pngSource;    // loaded filename, avoids decoding on every HA refresh
+  int8_t pngState = -1;  // -1 before state sync; otherwise 0 = inactive, 1 = active
+  uint32_t pngFailedAt = 0;
+  uint8_t pngFailures = 0;
   uint16_t pngWidth = 0, pngHeight = 0;  // native PNG size for fitting
   lv_obj_t* chip;
   int iconPx;
@@ -398,6 +401,8 @@ uint32_t domainColor(const String& domain);
 uint32_t showIcon(lv_obj_t* label, const TileDef& d, const HaEntity* e, bool on, int px, uint32_t shown);
 void tileIconColor(TileRt& r, const HaEntity* e = nullptr);
 void updatePngIcon(TileRt& r, bool on);
+void refreshTilePngs(const std::vector<String>& names);
+void retryTilePngs();
 void fitPngIcon(TileRt& r);
 String tileLabel(const TileDef& t);
 String tileSub(const TileRt& r);

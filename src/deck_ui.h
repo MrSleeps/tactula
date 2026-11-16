@@ -33,8 +33,8 @@ void deckPresenceJson(JsonObject out);
 bool deckFrameCommand(const String& op);
 void deckFrameJson(JsonObject out);
 // Notify the deck that a bedroom PNG was added, replaced or removed.
-// The refresh is deferred until touch/swipe is idle, preserving the current page.
-void deckBedroomIconsChanged();
+// Refresh affected tile widgets once touch/swipe is idle.
+void deckBedroomIconsChanged(const String& name);
 // Render pending LVGL changes now, from inside a long web handler (OTA).
 void deckRefreshNow();
 // Rotation changed in the portal: re-layout everything at the new size.

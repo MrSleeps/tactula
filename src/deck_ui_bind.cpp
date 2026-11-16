@@ -945,7 +945,12 @@ void collectEntities() {
   haSetHistory(histories);
   s_historySeen = 0;
   s_haSeen = 0;  // re-apply everything to the new widgets
-  for (TileRt& r : s_tiles) applyHaToTile(r, true);
+  for (TileRt& r : s_tiles) {
+    applyHaToTile(r, true);
+    // Navigation, local controls and entities without a known state use
+    // inactive artwork. Known entities have already selected their artwork.
+    if (r.pngState < 0) updatePngIcon(r, false);
+  }
 }
 
 void runAction(TileRt& r, const TileAction& a) {

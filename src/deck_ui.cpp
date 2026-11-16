@@ -93,8 +93,8 @@ lv_indev_t* s_indev = nullptr;
 DeckConfig s_cfg;
 Page s_pages[MAX_PAGES];
 std::vector<TileRt> s_tiles;
-// A web upload/delete can happen while a gesture is active. Rebuild lazily.
-static bool s_bedroomIconsRefreshPending = false;
+// A web upload/delete can happen while a gesture is active. Refresh when idle.
+static std::vector<String> s_changedTilePngs;
 int s_count = 0;
 uint32_t s_gen = 1;
 uint32_t s_lastSnapMs = 0;
@@ -1231,18 +1231,13 @@ void deckTick() {
     return;
   }
 
-  // A PNG may have appeared, changed in-place, or been deleted on the SD card.
-  // Recreate tile image widgets when idle, after dropping cached decoded PNGs.
-  // This happens on the loop task (the same task as the web server and LVGL).
-  if (s_bedroomIconsRefreshPending && canRebuild()) {
-    s_bedroomIconsRefreshPending = false;
-    stopGestures();
-    s_keepPage = activePageId();
-    destroyPages(true);
-    lv_image_cache_drop(nullptr);  // drop all stale file-backed PNG decodes
-    buildPages();
-    s_gen++;
-    lv_obj_invalidate(lv_screen_active());
+  // Update the artwork in place, on the same loop task as the web server.
+  if (canRebuild() && compMode() == COMP_NONE) {
+    if (!s_changedTilePngs.empty()) {
+      refreshTilePngs(s_changedTilePngs);
+      s_changedTilePngs.clear();
+    }
+    if (!systemScreen && wallOnSd()) retryTilePngs();
   }
   if (s_ed.pending != EditState::P_NONE) edFinish();
   tickWallpaper();
@@ -1270,10 +1265,10 @@ void deckToast(const char* text) {
   if (s_disp) deckToastShow(text, 1800);
 }
 
-void deckBedroomIconsChanged() {
-  // Never rebuild inside a multipart upload handler. deckTick() waits until
-  // the user isn't touching the screen, preserving their current page.
-  s_bedroomIconsRefreshPending = true;
+void deckBedroomIconsChanged(const String& name) {
+  if (std::find(s_changedTilePngs.begin(), s_changedTilePngs.end(), name) ==
+      s_changedTilePngs.end())
+    s_changedTilePngs.push_back(name);
 }
 
 void deckRefreshNow() {

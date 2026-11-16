@@ -1804,20 +1804,25 @@ static void bedroomIconCleanup() {
   bedroomIconComplete = false;
   bedroomIconError = "";
 }
-static bool bedroomIconValidPng() {
+static const char* bedroomIconPngError(const String& name) {
   static const uint8_t signature[] = {137,80,78,71,13,10,26,10};
-  if (bedroomIconHeaderLen < 24 || memcmp(bedroomIconHeader, signature, 8) != 0) return false;
+  if (bedroomIconHeaderLen < 24 || memcmp(bedroomIconHeader, signature, 8) != 0) return "invalid PNG header";
   // First chunk must be a 13-byte IHDR; width/height are big endian.
   if (bedroomIconHeader[8] != 0 || bedroomIconHeader[9] != 0 ||
       bedroomIconHeader[10] != 0 || bedroomIconHeader[11] != 13 ||
-      memcmp(bedroomIconHeader + 12, "IHDR", 4) != 0) return false;
+      memcmp(bedroomIconHeader + 12, "IHDR", 4) != 0) return "invalid PNG header";
   const uint32_t width = ((uint32_t)bedroomIconHeader[16] << 24) |
       ((uint32_t)bedroomIconHeader[17] << 16) |
       ((uint32_t)bedroomIconHeader[18] << 8) | bedroomIconHeader[19];
   const uint32_t height = ((uint32_t)bedroomIconHeader[20] << 24) |
       ((uint32_t)bedroomIconHeader[21] << 16) |
       ((uint32_t)bedroomIconHeader[22] << 8) | bedroomIconHeader[23];
-  return width >= 1 && height >= 1 && width <= 512 && height <= 512;
+  if (!width || !height) return "invalid PNG dimensions";
+  // Animated Skycons weather packs use eight 64 px frames in one strip.
+  if (name.startsWith("wc_sky_") && name.endsWith("_off.png") &&
+      width == 512 && height == 64) return nullptr;
+  if (width > 160 || height > 160) return "PNG dimensions must be 160x160 pixels or smaller";
+  return nullptr;
 }
 
 static void handleBedroomIconList() {
@@ -1896,10 +1901,14 @@ static void handleBedroomIconUpload() {
   } else if (up.status == UPLOAD_FILE_END || up.status == UPLOAD_FILE_ABORTED) {
     if (bedroomIconUpload) bedroomIconUpload.close();
     if (up.status == UPLOAD_FILE_ABORTED) bedroomIconError = "upload aborted";
-    bedroomIconComplete = up.status == UPLOAD_FILE_END &&
-        bedroomIconBytes == up.totalSize && bedroomIconBytes > 32 &&
-        bedroomIconValidPng() && !bedroomIconError.length();
-    if (!bedroomIconComplete && !bedroomIconError.length()) bedroomIconError = "invalid or incomplete PNG (max 512x512)";
+    if (bedroomIconError.isEmpty()) {
+      if (bedroomIconBytes != up.totalSize || bedroomIconBytes <= 32) {
+        bedroomIconError = "incomplete PNG upload";
+      } else if (const char* error = bedroomIconPngError(server.arg("n"))) {
+        bedroomIconError = error;
+      }
+    }
+    bedroomIconComplete = up.status == UPLOAD_FILE_END && bedroomIconError.isEmpty();
   }
 }
 static void handleBedroomIconFinish() {
@@ -1925,7 +1934,7 @@ static void handleBedroomIconFinish() {
   if (err.length()) {
     sendJsonMessage(400, false, err.c_str());
   } else {
-    deckBedroomIconsChanged();
+    deckBedroomIconsChanged(name);
     sendJsonMessage(200, true, "Icon uploaded; display refreshing.");
   }
 }
@@ -1935,7 +1944,7 @@ static void handleBedroomIconDelete() {
   else if (!bedroomIconName(name)) sendJsonMessage(400, false, "invalid filename");
   else if (!deck::wallFs().remove(bedroomIconPath(name))) sendJsonMessage(404, false, "icon not found");
   else {
-    deckBedroomIconsChanged();
+    deckBedroomIconsChanged(name);
     sendJsonMessage(200, true, "Icon deleted; display refreshing.");
   }
 }

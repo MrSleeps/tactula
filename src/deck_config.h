@@ -163,7 +163,7 @@ struct TileDef {
   String onIcon;            // toggle: the icon while on, "" = icon
   String statusEntity;      // optional HA status entity for visual state
   String activeState = "on";
-  String onImage, offImage; // PNG filenames on microSD
+  String onImage, offImage; // microSD PNG filename, empty for legacy automatic, or "icon"
   uint8_t lightColorMode = 0; // "lightColor": fixed=0, icon=1, background=2, both=3
   HttpSensorDef http;
   String unit;  // HTTP sensor: unit for JSON numbers only

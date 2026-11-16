@@ -1096,6 +1096,23 @@
       return;
     }
     $("bedroomIconsBrowse").disabled = true;
+    try {
+      for (const file of files) {
+        // PNG's leading IHDR chunk stores width and height as big-endian values.
+        const header = new DataView(await file.slice(0, 24).arrayBuffer());
+        if (header.getUint32(0) !== 0x89504e47 || header.getUint32(4) !== 0x0d0a1a0a ||
+            header.getUint32(8) !== 13 || header.getUint32(12) !== 0x49484452)
+          throw new Error(file.name + ": invalid PNG header");
+        const width = header.getUint32(16), height = header.getUint32(20);
+        if (!width || !height || width > 160 || height > 160)
+          throw new Error(file.name + ": " + width + "×" + height + " pixels. Maximum is 160×160.");
+      }
+    } catch (e) {
+      showToast(e.message, true);
+      $("bedroomIconsFiles").value = "";
+      $("bedroomIconsBrowse").disabled = false;
+      return;
+    }
     let uploaded = 0;
     for (const file of files) {
       try {

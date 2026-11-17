@@ -30,6 +30,7 @@ bool wallValidName(const String& name);
 // Galleries: own uploads or daily downloads.
 const char* wallDir(bool portrait, bool daily);
 bool wallDaily();
+// Gallery mode (own, downloaded, or both). Spotlight and Tactula feed share the downloaded gallery.
 // Loop task only, after dispSettings.wallSource changed.
 uint8_t wallSource();
 void wallSetSource(uint8_t source);

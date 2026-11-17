@@ -384,7 +384,15 @@
   $("tileFx").addEventListener("change", updateFxFields);
   for (let h = 0; h < 24; h++) $("dailyHour").add(new Option(String(h).padStart(2, "0") + ":00", h));
   function updateDailyFields() {
-    $("dailyFields").classList.toggle("hidden", $("wallSource").value === "0");
+    const source = $("wallSource").value;
+    const curated = source === "3";
+    $("dailyFields").classList.toggle("hidden", source === "0");
+    $("spotlightSourceField").classList.toggle("hidden", curated);
+    $("dailyMirror").disabled = curated || source === "0";
+    for (const id of ["dailyFeedId", "dailyFeedBase"]) {
+      $(id + "Field").classList.toggle("hidden", !curated);
+      $(id).disabled = !curated;
+    }
   }
   $("wallSource").addEventListener("change", updateDailyFields);
   function updateNightFields() {
@@ -613,14 +621,15 @@
     setVal("brightness", c.display.brightness);
     setVal("wallEvery", c.display.wallEvery ?? 5);
     setVal("wallOrder", c.display.wallOrder ?? 0);
-    setVal("wallSource", c.display.wallSource ?? (c.display.wallDaily ? 1 : 0));
+    const pictureSource = c.display.wallSource ?? (c.display.wallDaily ? 1 : 0);
+    setVal("wallSource", pictureSource);
     setCheck("sdCard", c.display.sdCard ?? false);
     $("sdSave").disabled = true;
     setVal("dailyMax", c.display.dailyMax ?? 100);
-    setWallSource(c.display.wallSource ?? (c.display.wallDaily ? 1 : 0));
+    setWallSource(pictureSource === 3 ? 1 : pictureSource);
     setVal("dailyMirror", c.display.dailyMirror ?? 0);
     setVal("dailyFeedId", c.display.dailyFeedId ?? "");
-    updateCuratedFeedField();
+    setVal("dailyFeedBase", c.display.dailyFeedBase ?? "");
     setVal("dailyOrient", c.display.dailyOrient ?? 0);
     setVal("dailyCount", c.display.dailyCount ?? 12);
     setVal("dailyHour", c.display.dailyHour ?? 3);

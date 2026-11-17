@@ -165,7 +165,7 @@ const char* pinKey(bool portrait) {
 
 void loadSource() {
   if (s_sourceLoaded) return;
-  s_source = dispSettings.wallSource;
+  s_source = dispSettings.wallSource == WALL_SOURCE_FEED ? 1 : dispSettings.wallSource;
   s_sourceLoaded = true;
 }
 
@@ -566,6 +566,7 @@ bool wallDaily() { return wallSource() != 0; }
 
 void wallSetSource(uint8_t source) {
   loadSource();
+  if (source == WALL_SOURCE_FEED) source = 1;
   if (s_source == source) return;
   s_source = source;
   wallInvalidateJobs();

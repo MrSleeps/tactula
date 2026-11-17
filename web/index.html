@@ -550,32 +550,37 @@
                           <option value="0">My pictures</option>
                           <option value="1">Daily pictures (Windows Spotlight)</option>
                           <option value="2">Both</option>
+                          <option value="3">Tactula feed</option>
                         </select>
                       </div>
                       <p class="field-hint" data-tip>
-                        Daily downloads Windows Spotlight pictures once a day. Internal storage replaces the
-                        previous set; microSD keeps an archive. Both mixes daily and your own pictures.
+                        Daily pictures downloads Windows Spotlight. Both mixes Spotlight with your own pictures.
+                        Tactula feed downloads from a feed server. Internal storage replaces each complete set,
+                        and microSD keeps an archive.
                       </p>
                     </div>
                   </div>
                   <p id="sdWallState" class="field-hint" role="status"></p>
                   <div id="dailyFields" class="hidden" style="margin-top: 14px">
                     <div class="grid-2">
-                      <div class="field">
+                      <div class="field" id="spotlightSourceField">
                         <label class="field-label" for="dailyMirror">Spotlight download source</label>
                         <div class="select-wrap">
                           <select id="dailyMirror" name="dailyMirror">
                             <option value="0">Microsoft direct</option>
                             <option value="1">Tactula mirror</option>
-                            <option value="2">My curated feed</option>
                           </select>
                         </div>
-                        <p class="field-hint">Choose My curated feed to download your selected image collections from firmware.mrsleeps.uk.</p>
                       </div>
                       <div class="field hidden" id="dailyFeedIdField">
-                        <label class="field-label" for="dailyFeedId">Curated feed ID</label>
-                        <input id="dailyFeedId" name="dailyFeedId" type="text" maxlength="64" autocomplete="off" spellcheck="false" placeholder="Paste feed ID from firmware.mrsleeps.uk" />
-                        <p class="field-hint">Copy the feed ID from your wallpaper feed dashboard. No full URL needed.</p>
+                        <label class="field-label" for="dailyFeedId">Feed key</label>
+                        <input id="dailyFeedId" name="dailyFeedId" type="text" maxlength="64" autocomplete="off" spellcheck="false" />
+                        <p class="field-hint">Paste the key from your feed server. In Firmware Hub, use Copy feed ID.</p>
+                      </div>
+                      <div class="field hidden" id="dailyFeedBaseField">
+                        <label class="field-label" for="dailyFeedBase">Feed server base URL</label>
+                        <input id="dailyFeedBase" name="dailyFeedBase" type="url" maxlength="192" autocomplete="off" spellcheck="false" />
+                        <p class="field-hint">Use your server's HTTPS feed directory. Clear this field to restore the default.</p>
                       </div>
                       <div class="field">
                         <label class="field-label" for="dailyOrient">Download for</label>

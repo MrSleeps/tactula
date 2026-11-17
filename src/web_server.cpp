@@ -223,6 +223,7 @@ static void handleApiConfig() {
   display["wallDaily"] = dispSettings.wallSource != 0;
   display["wallSource"] = dispSettings.wallSource;
   display["dailyMirror"] = dispSettings.dailyMirror;
+  display["dailyFeedBase"] = dailyFeedBase;
   display["dailyFeedId"] = dailyFeedId;
   display["sdCard"] = dispSettings.sdCard;
   display["dailyMax"] = dispSettings.dailyMax;
@@ -330,6 +331,7 @@ static void handleConfigExport() {
   display["wallDaily"] = dispSettings.wallSource != 0;
   display["wallSource"] = dispSettings.wallSource;
   display["dailyMirror"] = dispSettings.dailyMirror;
+  display["dailyFeedBase"] = dailyFeedBase;
   display["sdCard"] = dispSettings.sdCard;
   display["dailyMax"] = dispSettings.dailyMax;
   display["dailyHour"] = dispSettings.dailyHour;
@@ -498,7 +500,8 @@ static void handleConfigImport() {
   }
 
   DisplaySettings nextDisplay = dispSettings;
-  String nextDailyFeedId = dailyFeedId;
+  String nextDailyFeedBase = DEFAULT_DAILY_FEED_BASE;
+  String nextDailyFeedId;
   NetworkSettings nextNetwork = netSettings;
   BacklightSettings nextBacklight = backlightSettings;
   LedSettings nextLed = ledSettings;
@@ -566,29 +569,30 @@ static void handleConfigImport() {
   if (!display["wallEvery"].isNull()) READ_INT(display, "wallEvery", 0, 60, nextDisplay.wallEvery, uint8_t);
   if (!display["wallOrder"].isNull()) READ_INT(display, "wallOrder", 0, 1, nextDisplay.wallOrder, uint8_t);
   if (!display["wallSource"].isNull()) {
-    READ_INT(display, "wallSource", 0, 2, nextDisplay.wallSource, uint8_t);
+    READ_INT(display, "wallSource", 0, WALL_SOURCE_FEED, nextDisplay.wallSource, uint8_t);
   } else if (!display["wallDaily"].isNull()) {
     READ_BOOL(display, "wallDaily", nextDisplay.wallDaily);
     nextDisplay.wallSource = nextDisplay.wallDaily ? 1 : 0;
   }
-  nextDisplay.wallDaily = nextDisplay.wallSource != 0;
   if (!display["dailyMirror"].isNull()) READ_INT(display, "dailyMirror", 0, 2, nextDisplay.dailyMirror, uint8_t);
+  normalizeWallpaperSource(nextDisplay);
+  if (!display["dailyFeedBase"].isNull()) {
+    const char* value = display["dailyFeedBase"].as<const char*>();
+    nextDailyFeedBase = value;
+    if (!value || !normalizeDailyFeedBase(nextDailyFeedBase)) {
+      sendJsonMessage(400, false, "invalid backup dailyFeedBase");
+      return;
+    }
+  }
+  // Export omits the key. Keep the device's key only for the same server.
+  if (nextDailyFeedBase == dailyFeedBase) nextDailyFeedId = dailyFeedId;
   if (!display["dailyFeedId"].isNull()) {
-    const String value = display["dailyFeedId"].as<String>();
-    if (value.length() > 64 || (value.length() && value.length() < 16)) {
+    const char* value = display["dailyFeedId"].as<const char*>();
+    nextDailyFeedId = value;
+    if (!value || (!nextDailyFeedId.isEmpty() && !validDailyFeedId(nextDailyFeedId))) {
       sendJsonMessage(400, false, "invalid backup dailyFeedId");
       return;
     }
-    for (size_t i = 0; i < value.length(); ++i)
-      if (!isalnum((unsigned char)value[i]) && value[i] != '-') {
-        sendJsonMessage(400, false, "invalid backup dailyFeedId characters");
-        return;
-      }
-    nextDailyFeedId = value;
-  }
-  if (nextDisplay.dailyMirror == 2 && nextDailyFeedId.isEmpty()) {
-    sendJsonMessage(400, false, "backup curated feed ID missing");
-    return;
   }
   if (!display["sdCard"].isNull()) READ_BOOL(display, "sdCard", nextDisplay.sdCard);
   if (!display["dailyMax"].isNull()) READ_INT(display, "dailyMax", 50, 500, nextDisplay.dailyMax, uint16_t);
@@ -786,6 +790,7 @@ static void handleConfigImport() {
   deck::wallInvalidateJobs();
   dispSettings = nextDisplay;
   dailyFeedId = nextDailyFeedId;
+  dailyFeedBase = nextDailyFeedBase;
   netSettings = nextNetwork;
   backlightSettings = nextBacklight;
   ledSettings = nextLed;
@@ -1155,31 +1160,34 @@ static void handleSaveWallpapers() {
     }
     order = value.toInt();
   }
-  if (server.hasArg("wallSource") && server.arg("wallSource") != "0" &&
-      server.arg("wallSource") != "1" && server.arg("wallSource") != "2") {
-    sendJsonMessage(400, false, "invalid wallSource");
-    return;
-  }
-  const String mirror = server.arg("dailyMirror");
-  String incomingFeedId = server.hasArg("dailyFeedId") ? server.arg("dailyFeedId") : dailyFeedId;
-  incomingFeedId.trim();
-  if (incomingFeedId.length() > 64 || (incomingFeedId.length() && incomingFeedId.length() < 16)) {
-    sendJsonMessage(400, false, "Feed ID must contain 16 to 64 characters");
-    return;
-  }
-  for (size_t i = 0; i < incomingFeedId.length(); i++) {
-    const char c = incomingFeedId[i];
-    if (!isalnum((unsigned char)c) && c != '-') {
-      sendJsonMessage(400, false, "Feed ID must contain only letters, numbers or hyphens");
+  DisplaySettings nextDisplay = dispSettings;
+  if (server.hasArg("wallSource")) {
+    const String source = server.arg("wallSource");
+    if (source != "0" && source != "1" && source != "2" && source != "3") {
+      sendJsonMessage(400, false, "invalid wallSource");
       return;
     }
+    nextDisplay.wallSource = source.toInt();
   }
-  if (mirror == "2" && incomingFeedId.isEmpty()) {
-    sendJsonMessage(400, false, "Enter a curated wallpaper feed ID");
+  if (server.hasArg("dailyMirror")) {
+    const String mirror = server.arg("dailyMirror");
+    if (mirror != "0" && mirror != "1" && mirror != "2") {
+      sendJsonMessage(400, false, "invalid dailyMirror");
+      return;
+    }
+    nextDisplay.dailyMirror = mirror.toInt();
+  }
+  normalizeWallpaperSource(nextDisplay);
+  String incomingFeedBase = server.hasArg("dailyFeedBase") ? server.arg("dailyFeedBase") : dailyFeedBase;
+  if (!normalizeDailyFeedBase(incomingFeedBase)) {
+    sendJsonMessage(400, false, "Enter an HTTPS feed server base URL without credentials, a query or a fragment.");
     return;
   }
-  if (server.hasArg("dailyMirror") && mirror != "0" && mirror != "1" && mirror != "2") {
-    sendJsonMessage(400, false, "invalid dailyMirror");
+  String incomingFeedId = dailyFeedBase == incomingFeedBase ? dailyFeedId : String();
+  if (server.hasArg("dailyFeedId")) incomingFeedId = server.arg("dailyFeedId");
+  incomingFeedId.trim();
+  if ((nextDisplay.wallSource == WALL_SOURCE_FEED || !incomingFeedId.isEmpty()) && !validDailyFeedId(incomingFeedId)) {
+    sendJsonMessage(400, false, "Enter a feed key with 16 to 64 letters, numbers or hyphens.");
     return;
   }
   int dailyMax = dispSettings.dailyMax;
@@ -1194,20 +1202,23 @@ static void handleSaveWallpapers() {
   deck::wallInvalidateJobs();
   dispSettings.wallEvery = every;
   dispSettings.wallOrder = order;
-  const uint8_t oldSource = deck::wallSource();
+  const uint8_t oldSource = dispSettings.wallSource;
   const uint32_t oldPlan = dispSettings.dailyOrient << 8 | dispSettings.dailyCount;
-  const bool mirrorChanged = (server.hasArg("dailyMirror") && dispSettings.dailyMirror != mirror.toInt()) || dailyFeedId != incomingFeedId;
-  if (server.hasArg("dailyMirror")) dispSettings.dailyMirror = mirror.toInt();
+  const bool sourceChanged = nextDisplay.wallSource != oldSource ||
+      nextDisplay.dailyMirror != dispSettings.dailyMirror ||
+      dailyFeedId != incomingFeedId || dailyFeedBase != incomingFeedBase;
+  dispSettings.wallSource = nextDisplay.wallSource;
+  dispSettings.wallDaily = nextDisplay.wallDaily;
+  dispSettings.dailyMirror = nextDisplay.dailyMirror;
   dailyFeedId = incomingFeedId;
-  if (server.hasArg("wallSource")) dispSettings.wallSource = server.arg("wallSource").toInt();
-  dispSettings.wallDaily = dispSettings.wallSource != 0;
+  dailyFeedBase = incomingFeedBase;
   dispSettings.dailyHour = (uint8_t)clampedArg("dailyHour", dispSettings.dailyHour, 0, 23);
   dispSettings.dailyOrient = (uint8_t)clampedArg("dailyOrient", dispSettings.dailyOrient, 0, 2);
   dispSettings.dailyCount = (uint8_t)clampedArg("dailyCount", dispSettings.dailyCount, 1, DAILY_MAX_COUNT);
   saveSettings();
   if (dispSettings.wallSource != oldSource) deck::wallSetSource(dispSettings.wallSource);
   // A new plan fetches again today instead of waiting for the hour.
-  if (mirrorChanged || oldPlan != (uint32_t)(dispSettings.dailyOrient << 8 | dispSettings.dailyCount))
+  if (sourceChanged || oldPlan != (uint32_t)(dispSettings.dailyOrient << 8 | dispSettings.dailyCount))
     deck::dailyReplan();
   sendJsonMessage(200, true, "Wallpaper settings applied.");
 }

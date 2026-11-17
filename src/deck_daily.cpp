@@ -37,7 +37,6 @@ constexpr const char* API_URL =
 constexpr char MIRROR_BASE[] = "https://firmware.mrsleeps.uk/tactula/spotlight/";
 constexpr size_t MAX_MIRROR_FEED = 4096;
 constexpr size_t MAX_CURATED_FEED = 32768;
-constexpr char CURATED_BASE[] = "https://firmware.mrsleeps.uk/api/v1/feeds/";
 constexpr size_t MAX_MIRROR_PICTURES = 48;
 const char* tempPath() { return wallTemp(true); }
 constexpr int MAX_API_CALLS = 12;  // 4 candidates each; some are progressive JPEGs
@@ -93,7 +92,7 @@ struct LogEntry {
 };
 
 struct Status {
-  bool running, mirror;
+  bool running, mirror, curated;
   int want[2], got[2], apiCalls, removed, archiveMax;
   uint32_t startMs, totalMs, minInternal;
   char step[40], error[64];
@@ -111,6 +110,8 @@ uint32_t s_checkMs = 0, s_retryAtMs = 0, s_triesDay = 0;
 int s_tries = 0;
 TaskHandle_t s_task = nullptr;
 bool s_taskCaps = false;  // Only SD-backed download tasks may use PSRAM stacks.
+// The loop snapshots these before launch; the worker only reads them.
+String s_runFeedId, s_runFeedBase;
 
 template <typename F>
 void update(F f) {
@@ -262,14 +263,12 @@ bool fetchMirrorFeed(std::vector<Pick>& picks) {
   return false;
 }
 
-// An unlisted feed URL is a bearer capability: accept only JPEG URLs for
-// the selected feed on our own HTTPS host. Do not allow arbitrary remote URLs.
-bool curatedImageUrl(const char* value, const String& feedId, bool portrait) {
+// Scope all image requests to the selected server and feed key.
+bool curatedImageUrl(const char* value, const String& imagePrefix, bool portrait) {
   if (!value) return false;
-  const String prefix = String(CURATED_BASE) + feedId + "/source-images/";
   const String url(value);
-  if (!url.startsWith(prefix) || !url.endsWith(portrait ? "/p.jpg" : "/l.jpg")) return false;
-  const int start = prefix.length();
+  if (!url.startsWith(imagePrefix) || !url.endsWith(portrait ? "/p.jpg" : "/l.jpg")) return false;
+  const int start = imagePrefix.length();
   const int end = url.length() - 6; // /p.jpg or /l.jpg
   if (end <= start || end - start > 20) return false;
   for (int i = start; i < end; ++i)
@@ -277,25 +276,19 @@ bool curatedImageUrl(const char* value, const String& feedId, bool portrait) {
   return true;
 }
 
-bool fetchCuratedFeed(std::vector<Pick>& picks, const String& feedId) {
-  if (feedId.length() < 16 || feedId.length() > 64) {
-    setError("Curated feed ID missing");
+bool fetchCuratedFeed(std::vector<Pick>& picks, const String& base, const String& feedId) {
+  if (!validDailyFeedId(feedId)) {
+    setError("Enter a valid Tactula feed key in Wallpapers");
     return false;
   }
-  for (size_t i = 0; i < feedId.length(); ++i) {
-    const char c = feedId[i];
-    if (!isalnum((unsigned char)c) && c != '-') {
-      setError("Invalid curated feed ID");
-      return false;
-    }
-  }
+  const String feedUrl = base + "/" + feedId;
+  const String imagePrefix = feedUrl + "/source-images/";
   WiFiClientSecure tls;
   tls.setCACert(FIRMWARE_MIRROR_CA);
   HTTPClient http;
   http.useHTTP10(true);
   http.setTimeout(15000);
-  const String url = String(CURATED_BASE) + feedId + "/manifest.json";
-  const bool begun = http.begin(tls, url);
+  const bool begun = http.begin(tls, feedUrl + "/manifest.json");
   const int code = begun ? http.GET() : -1;
   sampleRam();
   if (code != 200) {
@@ -333,7 +326,7 @@ bool fetchCuratedFeed(std::vector<Pick>& picks, const String& feedId) {
     }
     for (const JsonVariantConst entry : urls) {
       const char* imageUrl = entry.as<const char*>();
-      if (!curatedImageUrl(imageUrl, feedId, portrait)) {
+      if (!curatedImageUrl(imageUrl, imagePrefix, portrait)) {
         setError("Curated feed contains an invalid image URL");
         return false;
       }
@@ -619,14 +612,13 @@ bool fetchMirroredImage(const Pick& pick, const String& name, LogEntry& log, boo
 
 void runTask(void*) {
   int want[2], archiveMax;
-  bool mirror;
-  const uint8_t source = dispSettings.dailyMirror;
-  const String feedId = dailyFeedId;
+  bool mirror, curated;
   portENTER_CRITICAL(&s_mux);
   want[0] = s_status->want[0];
   want[1] = s_status->want[1];
   archiveMax = s_status->archiveMax;
   mirror = s_status->mirror;
+  curated = s_status->curated;
   portEXIT_CRITICAL(&s_mux);
   if (!tlsPsramInstall()) setError("TLS setup failed");
   else {
@@ -643,12 +635,14 @@ void runTask(void*) {
           seen.push_back((uint64_t)(uint32_t)f.id | (uint64_t)p << 32);
     bool stop = false;
     int got[2] = {}, offlineRun = 0;
-    const int feedRequests = source != 0 ? 1 : MAX_API_CALLS;
+    const int feedRequests = mirror ? 1 : MAX_API_CALLS;
     for (int call = 0; call < feedRequests && !stop && (got[0] < want[0] || got[1] < want[1]); call++) {
-      setStep(source == 2 ? "Reading curated feed" : mirror ? "Reading Tactula mirror" : "Asking Spotlight");
+      setStep(curated ? "Reading Tactula feed" : mirror ? "Reading Tactula mirror" : "Asking Spotlight");
       update([](Status& s) { s.apiCalls++; });
       std::vector<Pick> picks;
-      if (!(source == 2 ? fetchCuratedFeed(picks, feedId) : mirror ? fetchMirrorFeed(picks) : fetchApi(picks))) break;
+      const bool fetched = curated ? fetchCuratedFeed(picks, s_runFeedBase, s_runFeedId)
+                                   : mirror ? fetchMirrorFeed(picks) : fetchApi(picks);
+      if (!fetched) break;
       for (const Pick& pick : picks) {
         const bool p = pick.portrait;
         if (got[p] >= want[p]) continue;
@@ -752,15 +746,17 @@ bool wants(int p) { return dispSettings.dailyOrient == 2 || dispSettings.dailyOr
 
 bool dailyStart() {
   if (!s_status) s_status = (Status*)heap_caps_calloc(1, sizeof(Status), MALLOC_CAP_SPIRAM);
-  if (!s_status || s_finished || (!wallOnSd() && !deckFsReady()) || !WiFi.isConnected() ||
+  if (!s_status || s_task || s_finished || (!wallOnSd() && !deckFsReady()) || !WiFi.isConnected() ||
       (wallOnSd() && time(nullptr) < 1700000000)) return false;
   bool busy;
+  const bool curated = dispSettings.wallSource == WALL_SOURCE_FEED;
   portENTER_CRITICAL(&s_mux);
   busy = s_status->running;
   if (!busy) {
     memset(s_status, 0, sizeof(Status));
     s_status->running = true;
-    s_status->mirror = dispSettings.dailyMirror != 0;
+    s_status->curated = curated;
+    s_status->mirror = curated || dispSettings.dailyMirror != 0;
     const int count = std::min<int>(dispSettings.dailyCount, wallOnSd() ? 32 : 16);
     s_status->want[0] = wants(0) ? count : 0;
     s_status->want[1] = wants(1) ? count : 0;
@@ -770,6 +766,8 @@ bool dailyStart() {
   }
   portEXIT_CRITICAL(&s_mux);
   if (busy) return false;
+  s_runFeedId = curated ? dailyFeedId : String();
+  s_runFeedBase = curated ? dailyFeedBase : String();
   // LittleFS temporarily disables the PSRAM cache: use an internal stack
   // for flash storage, but a PSRAM stack when downloading to the SD card.
   s_taskCaps = wallOnSd();
@@ -878,6 +876,8 @@ void dailyPoll() {
     }
     s_task = nullptr;
     s_finished = false;
+    s_runFeedId = "";
+    s_runFeedBase = "";
     portENTER_CRITICAL(&s_mux);
     const bool stored = s_status->got[0] + s_status->got[1] > 0;
     portEXIT_CRITICAL(&s_mux);

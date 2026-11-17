@@ -11,12 +11,70 @@ char wifiPass[65] = "";
 uint8_t brightness = 200;
 DisplaySettings dispSettings;
 String dailyFeedId;
+String dailyFeedBase = DEFAULT_DAILY_FEED_BASE;
 NetworkSettings netSettings;
 BacklightSettings backlightSettings;
 LedSettings ledSettings;
 PresenceSettings presenceSettings;
 HapticSettings hapticSettings;
 AudioSettings audioSettings;
+
+bool validDailyFeedId(const String& value) {
+  if (value.length() < 16 || value.length() > 64) return false;
+  for (size_t i = 0; i < value.length(); ++i) {
+    const char c = value[i];
+    if (!(c >= 'A' && c <= 'Z') && !(c >= 'a' && c <= 'z') &&
+        !(c >= '0' && c <= '9') && c != '-') return false;
+  }
+  return true;
+}
+
+bool normalizeDailyFeedBase(String& value) {
+  value.trim();
+  if (value.isEmpty()) {
+    value = DEFAULT_DAILY_FEED_BASE;
+    return true;
+  }
+  if (value.length() > DAILY_FEED_BASE_MAX || !value.startsWith("https://")) return false;
+  const int slash = value.indexOf('/', 8);
+  const size_t authorityEnd = slash < 0 ? value.length() : slash;
+  const int colon = value.indexOf(':', 8);
+  const size_t hostEnd = colon >= 0 && static_cast<size_t>(colon) < authorityEnd ? colon : authorityEnd;
+  if (hostEnd == 8 || value[8] == '.' || value[hostEnd - 1] == '.') return false;
+  for (size_t i = 8; i < hostEnd; ++i) {
+    const char c = value[i];
+    if (!(c >= 'A' && c <= 'Z') && !(c >= 'a' && c <= 'z') &&
+        !(c >= '0' && c <= '9') && c != '-' && c != '.') return false;
+  }
+  if (hostEnd < authorityEnd) {
+    const size_t digits = authorityEnd - hostEnd - 1;
+    if (!digits || digits > 5) return false;
+    unsigned port = 0;
+    for (size_t i = hostEnd + 1; i < authorityEnd; ++i) {
+      const char c = value[i];
+      if (c < '0' || c > '9') return false;
+      port = port * 10 + (c - '0');
+    }
+    if (!port || port > 65535) return false;
+  }
+  for (size_t i = authorityEnd; i < value.length(); ++i) {
+    const char c = value[i];
+    if (!(c >= 'A' && c <= 'Z') && !(c >= 'a' && c <= 'z') &&
+        !(c >= '0' && c <= '9') && c != '-' && c != '_' && c != '.' && c != '/') return false;
+  }
+  while (value.endsWith("/")) value.remove(value.length() - 1);
+  if (value.indexOf("/./", authorityEnd) >= 0 || value.indexOf("/../", authorityEnd) >= 0 ||
+      value.endsWith("/.") || value.endsWith("/..")) return false;
+  return true;
+}
+
+void normalizeWallpaperSource(DisplaySettings& display) {
+  if (display.dailyMirror == 2) {
+    if (display.wallSource != 0) display.wallSource = WALL_SOURCE_FEED;
+    display.dailyMirror = 0;
+  }
+  display.wallDaily = display.wallSource != 0;
+}
 
 bool validFrameEvery(int minutes) {
   return minutes == 1 || minutes == 2 || minutes == 5 || minutes == 10 || minutes == 15 || minutes == 30;
@@ -184,11 +242,17 @@ void loadSettings() {
   dispSettings.wallEvery = prefs.getUChar("wevery", 5);
   if (!validWallEvery(dispSettings.wallEvery)) dispSettings.wallEvery = 5;
   dispSettings.wallOrder = min<uint8_t>(prefs.getUChar("worder", 0), 1);
-  dispSettings.wallSource = prefs.isKey("wsrc") ? min<uint8_t>(prefs.getUChar("wsrc", 0), 2)
+  dispSettings.wallSource = prefs.isKey("wsrc") ? min<uint8_t>(prefs.getUChar("wsrc", 0), WALL_SOURCE_FEED)
                                                : prefs.getBool("wdaily", false) ? 1 : 0;
-  dispSettings.wallDaily = dispSettings.wallSource != 0;
   dispSettings.dailyMirror = min<uint8_t>(prefs.getUChar("dsource", prefs.getBool("dmirror", false) ? 1 : 0), 2);
+  normalizeWallpaperSource(dispSettings);
   dailyFeedId = prefs.getString("dfeedid", "");
+  dailyFeedBase = prefs.getString("dfeedbase", DEFAULT_DAILY_FEED_BASE);
+  if (!normalizeDailyFeedBase(dailyFeedBase)) {
+    // An invalid stored address must not send a private key to the default host.
+    dailyFeedId = "";
+    dailyFeedBase = DEFAULT_DAILY_FEED_BASE;
+  }
   dispSettings.sdCard = prefs.getBool("sdon", false);
   dispSettings.dailyMax = prefs.getUShort("dmax", 100);
   if (!validDailyMax(dispSettings.dailyMax)) dispSettings.dailyMax = 100;
@@ -298,6 +362,7 @@ void saveSettings() {
   prefs.putBool("dmirror", dispSettings.dailyMirror == 1);
   prefs.putUChar("dsource", dispSettings.dailyMirror);
   prefs.putString("dfeedid", dailyFeedId);
+  prefs.putString("dfeedbase", dailyFeedBase);
   prefs.putBool("sdon", dispSettings.sdCard);
   prefs.putUShort("dmax", dispSettings.dailyMax);
   prefs.putUChar("dhour", dispSettings.dailyHour);

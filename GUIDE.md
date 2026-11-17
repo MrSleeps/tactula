@@ -68,7 +68,7 @@ Open the device IP (or `http://<hostname>.local`) in a browser:
 - **Pages & tiles:** pages (Duplicate copies one as a plain page), tiles, entity and icon pickers (None leaves a tile without an icon; a name of just a space leaves it without a name, `"label": ""`), columns, and a grid editor: drag tiles to move them (dropped onto another tile, that tile jumps to the dragged one's old place if it fits there), resize from the corner (half-cell steps), separately for landscape and portrait.
 - **Display:** rotation, theme (Midnight, Daylight, or Glass: tinted glass tiles over a wallpaper), the Glass look and animations. In **Glass look**, **Wallpaper black overlay** (0–80%, 25% default on new installations) darkens both the sharp wallpaper and blurred glass beneath the tiles, leaving text/icons untouched. Its existing saved dimming setting is preserved during upgrades, so adjust the slider to taste. The overlay is pre-applied only when a wallpaper loads or its setting changes—no per-frame overlay or extra framebuffer.
 - **Icons:** install, update or remove the MDI and Brand Icons packs, and manage custom PNG icons on microSD. See [Tiles & Cards](docs/TILES_AND_CARDS.md).
-- **Wallpapers:** pictures for the Glass theme and the photo frame: your own uploads, daily pictures the deck downloads from Windows Spotlight once a day, or both mixed. See [Wallpapers and microSD](#wallpapers-and-microsd).
+- **Wallpapers:** use your own uploads, daily Windows Spotlight downloads, both together, or a Tactula feed. See [Wallpapers and microSD](#wallpapers-and-microsd).
 - **Screen & light:** day brightness and the night schedule, screen sleep and presence, the status LED and its Home Assistant entity.
 - **Time:** 12/24 h clock and timezone.
 - **Network:** WiFi, hostname / mDNS, static IP.
@@ -117,7 +117,7 @@ On the **Screen & light** page, the Sleep card sets the time without touch and w
 
 ## Wallpapers and microSD
 
-The **Wallpapers** page (used by the Glass theme and the photo frame) picks the pictures: My pictures (uploaded in the portal, cropped in the browser), Daily (Windows Spotlight, downloaded by the deck at a set hour) or Both. Internal storage fits a few dozen pictures, and Daily replaces its set every day.
+On the **Wallpapers** page, choose **My pictures** for your uploads, **Daily pictures** for Windows Spotlight, **Both** for uploads plus Spotlight, or **Tactula feed** for a hosted or self-hosted feed. See [Tactula wallpaper feeds](docs/CURATED_WALLPAPER_FEEDS.md) for setup and the server contract. Internal storage fits a few dozen pictures and replaces the downloaded set after a complete download.
 
 With a microSD card in the slot, turn on **Maintenance > microSD card > Use the microSD card** (the deck restarts). It is off by default. Both galleries then live on the card under `/touchdeck/wall/` (`l`, `p` = own landscape / portrait, `dl`, `dp` = daily), Daily downloads up to 32 new pictures a day and keeps an archive (50 to 500 per orientation) from which the oldest are removed. Pinned pictures and the one on screen are never removed. The card must be FAT formatted; pictures already on internal storage stay there. The Display page shows how the card is connected: "SD 1-bit" is the normal mode, "SPI" is a slower fallback that a card left in from an older firmware uses until the deck is powered off and on.
 

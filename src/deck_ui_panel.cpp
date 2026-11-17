@@ -11,6 +11,9 @@ namespace deckui {
 // rounded corners; the compositor skips those rows.
 constexpr int QP_H = 196;
 constexpr int QP_LIP = 20;
+constexpr int QP_CHIP_INSET = 12;
+constexpr int QP_CHIP_GAP = 4;
+constexpr int QP_CHIP_PAD_X = 10;
 constexpr uint32_t C_SCREEN_ACCENT = 0x927DFF;
 constexpr uint32_t C_LIGHT_ACCENT = 0x48A5FF;
 
@@ -73,21 +76,25 @@ void qpUpdateStatus(bool force) {
   const int rssi = wifi ? (WiFi.RSSI() / 5) * 5 : 0;
   setChip(s_qp.wifi, wifi ? String(LV_SYMBOL_WIFI " ") + rssi + " dBm" : String(LV_SYMBOL_WIFI " offline"), wifi);
   const HaLink hl = haLink();
-  setChip(s_qp.ha, String("HA ") + haLinkName(hl), hl == HA_CONNECTED);
+  const bool haOnline = hl == HA_CONNECTED;
+  setChip(s_qp.ha, haOnline ? String("HA online") : String("HA ") + haLinkName(hl), haOnline);
   setChip(s_qp.ip, wifi ? WiFi.localIP().toString() : String("-"), wifi);
 }
 
-lv_obj_t* qpChip(lv_obj_t* parent) {
+lv_obj_t* qpChip(lv_obj_t* parent, int textWidth) {
   lv_obj_t* c = lv_obj_create(parent);
   lv_obj_remove_style_all(c);
   lv_obj_set_size(c, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
   lv_obj_set_style_bg_color(c, lv_color_hex(C_CHIP), 0);
   lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
   lv_obj_set_style_radius(c, LV_RADIUS_CIRCLE, 0);
-  lv_obj_set_style_pad_hor(c, 10, 0);
-  lv_obj_set_style_pad_ver(c, 5, 0);
+  lv_obj_set_style_pad_hor(c, QP_CHIP_PAD_X, 0);
+  lv_obj_set_style_pad_ver(c, 2, 0);
   lv_obj_remove_flag(c, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_t* l = lv_label_create(c);
+  lv_obj_set_style_max_width(l, textWidth, 0);
+  lv_obj_set_height(l, lv_font_get_line_height(lv_obj_get_style_text_font(l, LV_PART_MAIN)));
+  lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_DOTS);
   lv_label_set_text(l, "");
   return c;
 }
@@ -347,52 +354,68 @@ void buildQuickPanel() {
   const int y0 = QP_LIP;
   lv_obj_t* chips = lv_obj_create(box);
   lv_obj_remove_style_all(chips);
-  lv_obj_set_pos(chips, 12, y0 + 12);
-  lv_obj_set_size(chips, w - 24, LV_SIZE_CONTENT);
+  const int statusWidth = w - 2 * QP_CHIP_INSET;
+  // Cap each chip so at least two fit per row, even in portrait.
+  const int chipTextWidth = (statusWidth - QP_CHIP_GAP) / 2 - 2 * QP_CHIP_PAD_X;
+  lv_obj_set_pos(chips, QP_CHIP_INSET, y0 + 10);
+  lv_obj_set_size(chips, statusWidth, LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(chips, LV_FLEX_FLOW_ROW_WRAP);
-  lv_obj_set_style_pad_column(chips, 6, 0);
-  lv_obj_set_style_pad_row(chips, 6, 0);
+  lv_obj_set_style_pad_column(chips, QP_CHIP_GAP, 0);
+  lv_obj_set_style_pad_row(chips, QP_CHIP_GAP, 0);
   lv_obj_remove_flag(chips, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
-  s_qp.wifi = qpChip(chips);
-  s_qp.ha = qpChip(chips);
-  s_qp.ip = qpChip(chips);
-  // Show the running firmware version directly after the IP status chip.
-  lv_obj_t* versionChip = qpChip(chips);
+  s_qp.wifi = qpChip(chips, chipTextWidth);
+  s_qp.ha = qpChip(chips, chipTextWidth);
+  s_qp.ip = qpChip(chips, chipTextWidth);
+  lv_obj_t* versionChip = qpChip(chips, chipTextWidth);
   lv_obj_t* versionText = lv_obj_get_child(versionChip, 0);
   lv_label_set_text_fmt(versionText, "v%s", FW_VERSION);
   lv_obj_set_style_text_color(versionText, lv_color_hex(C_CLOCK), 0);
 
+  lv_obj_t* controls = lv_obj_create(box);
+  lv_obj_remove_style_all(controls);
+  lv_obj_remove_flag(controls, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+  lv_obj_set_size(controls, w, LV_SIZE_CONTENT);
+  lv_obj_set_y(controls, QP_LIP + 46);
+  lv_obj_add_event_cb(chips, [](lv_event_t* e) {
+    lv_obj_t* status = lv_event_get_target_obj(e);
+    lv_obj_t* rows = static_cast<lv_obj_t*>(lv_event_get_user_data(e));
+    const bool wrapped = lv_obj_get_height(status) > lv_obj_get_height(lv_obj_get_child(status, 0));
+    lv_obj_set_y(rows, QP_LIP + (wrapped ? 60 : 46));
+  }, LV_EVENT_SIZE_CHANGED, controls);
+
+  // The inset above the first slider keeps its full touch area in the container.
+  const int screenY = 12, lightY = 52, buttonY = 82;
   const int labelW = 108, valW = 46;
   const int slX = 16 + labelW, slW = w - slX - valW - 22;
-  s_qp.screenLbl = lv_label_create(box);
-  lv_obj_set_pos(s_qp.screenLbl, 16, y0 + 58);
-  s_qp.screenSlider = qpSlider(box, slX, y0 + 63, slW, C_SCREEN_ACCENT);
-  s_qp.screenVal = lv_label_create(box);
-  lv_obj_set_pos(s_qp.screenVal, w - valW - 10, y0 + 58);
+  s_qp.screenLbl = lv_label_create(controls);
+  lv_obj_set_pos(s_qp.screenLbl, 16, screenY);
+  s_qp.screenSlider = qpSlider(controls, slX, screenY + 5, slW, C_SCREEN_ACCENT);
+  s_qp.screenVal = lv_label_create(controls);
+  lv_obj_set_pos(s_qp.screenVal, w - valW - 10, screenY);
   lv_obj_add_event_cb(s_qp.screenSlider, onScreenSlider, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(s_qp.screenSlider, onScreenSlider, LV_EVENT_RELEASED, nullptr);
 
-  s_qp.lightLbl = lv_label_create(box);
+  s_qp.lightLbl = lv_label_create(controls);
   lv_label_set_text(s_qp.lightLbl, "Light");
-  lv_obj_set_pos(s_qp.lightLbl, 16, y0 + 98);
-  s_qp.lightSlider = qpSlider(box, slX, y0 + 103, slW, C_LIGHT_ACCENT);
+  lv_obj_set_pos(s_qp.lightLbl, 16, lightY);
+  s_qp.lightSlider = qpSlider(controls, slX, lightY + 5, slW, C_LIGHT_ACCENT);
   lv_slider_set_range(s_qp.lightSlider, 0, 255);  // 0 = LED off (or the HA entity off)
-  s_qp.lightVal = lv_label_create(box);
-  lv_obj_set_pos(s_qp.lightVal, w - valW - 10, y0 + 98);
+  s_qp.lightVal = lv_label_create(controls);
+  lv_obj_set_pos(s_qp.lightVal, w - valW - 10, lightY);
   lv_obj_add_event_cb(s_qp.lightSlider, onLightSlider, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(s_qp.lightSlider, onLightSlider, LV_EVENT_RELEASED, nullptr);
 
   // Four buttons; on a portrait screen they carry only their symbols.
   const int bw = (w - 16 * 2 - 3 * 10) / 4;
   const bool wide = w >= 400;
-  lv_obj_t* off = qpButton(box, 16, y0 + 132, bw, wide ? LV_SYMBOL_POWER "  Off" : LV_SYMBOL_POWER, false);
+  lv_obj_t* off = qpButton(controls, 16, buttonY, bw, wide ? LV_SYMBOL_POWER "  Off" : LV_SYMBOL_POWER, false);
   lv_obj_add_event_cb(off, onScreenOff, LV_EVENT_CLICKED, nullptr);
-  s_qp.nightBtn = qpButton(box, 16 + bw + 10, y0 + 132, bw, wide ? LV_SYMBOL_EYE_CLOSE "  Night" : LV_SYMBOL_EYE_CLOSE, true);
+  s_qp.nightBtn = qpButton(controls, 16 + bw + 10, buttonY, bw, wide ? LV_SYMBOL_EYE_CLOSE "  Night" : LV_SYMBOL_EYE_CLOSE, true);
   lv_obj_add_event_cb(s_qp.nightBtn, onNight, LV_EVENT_VALUE_CHANGED, nullptr);
-  s_qp.headerBtn = qpButton(box, 16 + 2 * (bw + 10), y0 + 132, bw, wide ? LV_SYMBOL_UP "  Top bar" : LV_SYMBOL_UP, true);
+  s_qp.headerBtn = qpButton(controls, 16 + 2 * (bw + 10), buttonY, bw, wide ? LV_SYMBOL_UP "  Top bar" : LV_SYMBOL_UP, true);
   if (s_header) lv_obj_add_state(s_qp.headerBtn, LV_STATE_CHECKED);
   lv_obj_add_event_cb(s_qp.headerBtn, onHeaderBtn, LV_EVENT_VALUE_CHANGED, nullptr);
-  lv_obj_t* edit = qpButton(box, 16 + 3 * (bw + 10), y0 + 132, bw, wide ? LV_SYMBOL_EDIT "  Edit" : LV_SYMBOL_EDIT, false);
+  lv_obj_t* edit = qpButton(controls, 16 + 3 * (bw + 10), buttonY, bw, wide ? LV_SYMBOL_EDIT "  Edit" : LV_SYMBOL_EDIT, false);
   lv_obj_add_event_cb(edit, onEditBtn, LV_EVENT_CLICKED, nullptr);
 
   lv_obj_t* grip = lv_obj_create(box);

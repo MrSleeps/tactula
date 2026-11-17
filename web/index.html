@@ -148,7 +148,8 @@
               <button type="button" class="nav-item" data-nav="security">Security</button
               >
               <button type="button" class="nav-item" data-nav="network">Network</button
-              ><button type="button" class="nav-item" data-nav="maintenance">Maintenance</button>
+              ><button type="button" class="nav-item" data-nav="storage">Storage</button>
+              <button type="button" class="nav-item" data-nav="maintenance">Maintenance</button>
               <button type="button" class="nav-item hidden" data-nav="logs" id="navLogs">Logs</button>
             </div>
           </nav>
@@ -535,16 +536,18 @@
                 data-save-label="Save wallpapers"
               >
                 <div class="card">
-                  <h2 class="card-title">Pictures</h2>
-                  <p class="field-hint" style="margin: 0 0 14px">
-                    Add pictures separately for each orientation. This browser crops them to fit and stores
-                    JPEGs on the device. Glass uses the old single picture or a built-in gradient when a
-                    gallery is empty. Show now pins a picture for the next boot. Config backups include the
-                    settings, not the pictures.
+                  <div class="card-head">
+                    <h2 class="card-title"><label for="wallSource">Pictures</label></h2>
+                  </div>
+                  <p class="field-hint" data-tip style="margin: 0 0 14px">
+                    Daily pictures downloads Windows Spotlight. Both mixes Spotlight with your own pictures.
+                    Tactula feed downloads from a feed server. Internal storage replaces each complete set,
+                    and microSD keeps an archive. Uploads are cropped to fit each orientation.
+                    Show now pins a picture for the next boot. Config backups include settings only.
+                    An empty gallery uses the old single picture or a built-in gradient in Glass.
                   </p>
                   <div class="grid-2">
                     <div class="field">
-                      <label class="field-label" for="wallSource">Pictures</label>
                       <div class="select-wrap">
                         <select id="wallSource" name="wallSource">
                           <option value="0">My pictures</option>
@@ -553,11 +556,6 @@
                           <option value="3">Tactula feed</option>
                         </select>
                       </div>
-                      <p class="field-hint" data-tip>
-                        Daily pictures downloads Windows Spotlight. Both mixes Spotlight with your own pictures.
-                        Tactula feed downloads from a feed server. Internal storage replaces each complete set,
-                        and microSD keeps an archive.
-                      </p>
                     </div>
                   </div>
                   <p id="sdWallState" class="field-hint" role="status"></p>
@@ -866,7 +864,7 @@
                         Shows the wallpaper gallery (<a href="#" data-page="wallpapers">Wallpapers</a>) in any theme. At night it uses the
                         night brightness; the screen turns off when that is 0 or the gallery is empty.
                         Pictures on a microSD card: enable it in
-                        <a href="#" data-page="maintenance">Maintenance &gt; microSD card</a>.
+                        <a href="#" data-page="storage">Storage &gt; microSD card</a>.
                       </p>
                     </div>
                     <label class="check-row standalone"
@@ -1514,33 +1512,10 @@
               </div>
             </section>
 
-            <section class="page" data-page="maintenance">
+            <section class="page" data-page="storage">
               <div class="page-header">
-                <h1 class="page-h1">Maintenance</h1>
-                <p class="page-lede">
-                  Back up device settings, install firmware, set up the microSD card, or return the monitor to first-run setup.
-                </p>
-              </div>
-              <div class="card">
-                <h2 class="card-title">Configuration backup</h2>
-                <p class="maintenance-copy">
-                  Export the deck pages and tiles plus the display, LED, time, network and MQTT settings.
-                  WiFi network names, passwords and the Home Assistant token are never included.
-                  Import preserves WiFi and Home Assistant credentials. The MQTT password is kept only
-                  when its broker host and username are unchanged.
-                </p>
-                <div class="maintenance-actions">
-                  <button type="button" class="btn btn-accent" id="backupExport">Export configuration</button
-                  ><button type="button" class="btn" id="backupImport">Import configuration</button
-                  ><input type="file" id="backupFile" accept=".json,application/json" hidden />
-                </div>
-                <div class="note">
-                  <span class="note-k">Info</span
-                  ><span
-                    >Import accepts tactula-compatible backup files, validates every setting, and restarts the
-                    device after a successful restore.</span
-                  >
-                </div>
+                <h1 class="page-h1">Storage</h1>
+                <p class="page-lede">Check internal flash and manage the microSD card.</p>
               </div>
               <div class="card">
                 <h2 class="card-title">Internal flash storage</h2>
@@ -1568,6 +1543,57 @@
                       Initialize internal flash
                     </button>
                   </div>
+                </div>
+              </div>
+              <div class="card" id="sdCardBox">
+                <h2 class="card-title">microSD card</h2>
+                <p class="maintenance-copy">
+                  Holds the wallpaper gallery (also shown by the photo frame), the daily picture archive and
+                  brand icons. Without a card, pictures go to internal storage and brand icons are not
+                  available. The card uses GPIO 10-13. Pictures already stored stay where they are.
+                </p>
+                <label class="check-row standalone"
+                  ><input type="checkbox" id="sdCard" name="sdCard" /><span class="check-box"></span
+                  ><span class="check-text"><strong>Use the microSD card</strong></span></label
+                >
+                <p id="sdState" class="field-hint" role="status" style="white-space: pre-line">Checking microSD card...</p>
+                <div class="maintenance-actions">
+                  <button type="button" class="btn btn-accent" id="sdSave" disabled>Save and restart</button
+                  ><button type="button" class="btn btn-danger hidden" id="sdFormat">Format card</button>
+                </div>
+                <p class="field-hint">
+                  Format card erases the card and creates one FAT partition the deck can read. Use it when
+                  the card answers but its file system is not accepted.
+                </p>
+              </div>
+            </section>
+
+            <section class="page" data-page="maintenance">
+              <div class="page-header">
+                <h1 class="page-h1">Maintenance</h1>
+                <p class="page-lede">
+                  Back up device settings, install firmware, or return the monitor to first-run setup.
+                </p>
+              </div>
+              <div class="card">
+                <h2 class="card-title">Configuration backup</h2>
+                <p class="maintenance-copy">
+                  Export the deck pages and tiles plus the display, LED, time, network and MQTT settings.
+                  WiFi network names, passwords and the Home Assistant token are never included.
+                  Import preserves WiFi and Home Assistant credentials. The MQTT password is kept only
+                  when its broker host and username are unchanged.
+                </p>
+                <div class="maintenance-actions">
+                  <button type="button" class="btn btn-accent" id="backupExport">Export configuration</button
+                  ><button type="button" class="btn" id="backupImport">Import configuration</button
+                  ><input type="file" id="backupFile" accept=".json,application/json" hidden />
+                </div>
+                <div class="note">
+                  <span class="note-k">Info</span
+                  ><span
+                    >Import accepts tactula-compatible backup files, validates every setting, and restarts the
+                    device after a successful restore.</span
+                  >
                 </div>
               </div>
               <div class="card">
@@ -1600,7 +1626,9 @@
                 </div>
               </div>
               <div class="card">
-                <h2 class="card-title">Firmware update</h2>
+                <div class="card-head">
+                  <h2 class="card-title">Firmware update</h2>
+                </div>
                 <div class="ota-drop" id="otaDrop">
                   <div class="upload-mark" aria-hidden="true"></div>
                   <div class="big">Drop a firmware .bin here</div>
@@ -1619,7 +1647,9 @@
                 </div>
               </div>
               <div class="card">
-                <h2 class="card-title">Firmware information</h2>
+                <div class="card-head">
+                  <h2 class="card-title">Firmware information</h2>
+                </div>
                 <dl class="facts">
                   <div>
                     <dt>Product</dt>
@@ -1638,27 +1668,6 @@
                     <dd id="maintIp">--</dd>
                   </div>
                 </dl>
-              </div>
-              <div class="card" id="sdCardBox">
-                <h2 class="card-title">microSD card</h2>
-                <p class="maintenance-copy">
-                  Holds the wallpaper gallery (also shown by the photo frame), the daily picture archive and
-                  brand icons. Without a card, pictures go to internal storage and brand icons are not
-                  available. The card uses GPIO 10-13. Pictures already stored stay where they are.
-                </p>
-                <label class="check-row standalone"
-                  ><input type="checkbox" id="sdCard" name="sdCard" /><span class="check-box"></span
-                  ><span class="check-text"><strong>Use the microSD card</strong></span></label
-                >
-                <p id="sdState" class="field-hint" role="status" style="white-space: pre-line"></p>
-                <div class="maintenance-actions">
-                  <button type="button" class="btn btn-accent" id="sdSave" disabled>Save and restart</button
-                  ><button type="button" class="btn btn-danger hidden" id="sdFormat">Format card</button>
-                </div>
-                <p class="field-hint">
-                  Format card erases the card and creates one FAT partition the deck can read. Use it when
-                  the card answers but its file system is not accepted.
-                </p>
               </div>
               <div class="card danger-card">
                 <h2 class="card-title">Factory reset</h2>

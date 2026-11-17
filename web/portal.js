@@ -269,7 +269,7 @@
       refreshPrinter();
     }
     if (name === "logs" && !debugLogsAvailable) return false;
-    if (name === "maintenance") loadFlashStorage();
+    if (name === "storage") loadStorageStatus();
     if (name === "icons") loadBedroomIcons();
     if (name === "security") loadAuthStatus();
     qa(".page").forEach((p) => p.classList.toggle("active", p.dataset.page === name));
@@ -1277,6 +1277,39 @@
       $("flashStorageRecovery").classList.add("hidden");
     }
   }
+  async function loadStorageStatus() {
+    await loadFlashStorage();
+    try {
+      const data = await wallApi("walls?o=l&gallery=m&limit=1");
+      const sd = data.sd;
+      $("sdFormat").classList.toggle("hidden", !sd.enabled);
+      $("sdState").textContent =
+        (sd.format ? "Format at the last restart: " + sd.format + "\n" : "") +
+        (!sd.enabled
+        ? "Not enabled"
+        : !sd.mounted
+          ? "Card not mounted" +
+            (sd.error ? " (" + sd.error + ")" : "") +
+            " - using internal storage. " +
+            (/not accepted/.test(sd.error || "")
+              ? "Format card below erases it and makes it readable."
+              : "Power the deck off and on to retry.") +
+            (sd.log ? "\n" + sd.log : "")
+          : "Mounted" +
+            (sd.mode ? " (" + sd.mode + ")" : "") +
+            ": " +
+            Math.floor(data.free / 1048576) +
+            " MB free of " +
+            Math.floor(data.total / 1048576) +
+            " MB - My pictures: " +
+            sd.own.join(" landscape / ") +
+            " portrait; Daily: " +
+            sd.daily.join(" landscape / ") +
+            " portrait");
+    } catch (e) {
+      $("sdState").textContent = "Unable to check microSD card: " + e.message;
+    }
+  }
   $("flashInitializeConfirm").addEventListener("input", () => {
     $("flashInitialize").disabled =
       $("flashInitializeConfirm").value.trim() !== "FORMAT INTERNAL FLASH";
@@ -1299,7 +1332,6 @@
       button.disabled = false;
     }
   });
-  // Load on demand when the Maintenance section is opened.
   function updateFactoryReset() {
     const ready = $("factoryConfirm").value.trim() === "RESET";
     $("factoryReset").disabled = !ready;
@@ -1455,6 +1487,59 @@
       qa("button", $("wallLegacy_" + o)).forEach((b) => (b.disabled = wallBusy));
     }
   }
+  const wallThumbQueue = new Set();
+  let wallThumbLoading = false;
+  const wallThumbObserver = new IntersectionObserver((entries) => {
+    for (const { target, isIntersecting } of entries) {
+      if (isIntersecting) wallThumbQueue.add(target);
+      else wallThumbQueue.delete(target);
+    }
+    loadWallThumbnails();
+  }, { rootMargin: "200px" });
+
+  function requestWallThumbnail(img, url) {
+    return new Promise((resolve) => {
+      const finish = (loaded) => {
+        clearTimeout(timeout);
+        img.onload = img.onerror = null;
+        resolve(loaded);
+      };
+      const timeout = setTimeout(() => {
+        finish(false);
+        img.removeAttribute("src");
+      }, 12000);
+      img.onload = () => finish(true);
+      img.onerror = () => finish(false);
+      img.src = url;
+    });
+  }
+
+  async function loadWallThumbnails() {
+    if (wallThumbLoading) return;
+    wallThumbLoading = true;
+    try {
+      // The ESP32 serves one request at a time. Load visible thumbnails in
+      // sequence and give transient failures a fresh request.
+      for (const img of wallThumbQueue) {
+        wallThumbQueue.delete(img);
+        wallThumbObserver.unobserve(img);
+        if (!img.isConnected) continue;
+        const thumbnail = img.parentElement;
+        thumbnail.dataset.state = "loading";
+        const url = img.dataset.wallSrc;
+        let loaded = false;
+        for (let attempt = 0; attempt < 3 && img.isConnected && !loaded; attempt++) {
+          if (attempt) await new Promise((resolve) => setTimeout(resolve, 300 * attempt));
+          if (!img.isConnected) break;
+          loaded = await requestWallThumbnail(img, attempt ? url + "&retry=" + attempt : url);
+        }
+        thumbnail.dataset.state = loaded ? "ready" : "error";
+      }
+    } finally {
+      wallThumbLoading = false;
+    }
+  }
+
   function wallRender(o) {
     const s = walls[o],
       grid = $("wallGrid_" + o);
@@ -1475,6 +1560,10 @@
     if (sig === s.sig) return;
     s.sig = sig;
     if (s.imgsFor !== wallCache) {
+      for (const img of s.imgs?.values() ?? []) {
+        wallThumbObserver.unobserve(img);
+        wallThumbQueue.delete(img);
+      }
       s.imgs = new Map();
       s.imgsFor = wallCache;
     }
@@ -1491,9 +1580,8 @@
       let img = s.imgs.get(f.n);
       if (!img) {
         img = document.createElement("img");
-        img.loading = "lazy";
         img.alt = f.n;
-        img.src =
+        img.dataset.wallSrc =
           "/api/deck/walls/file?o=" +
           o +
           "&gallery=" +
@@ -1502,8 +1590,12 @@
           encodeURIComponent(f.n) +
           "&v=" +
           wallCache;
-        img.style.cssText = "width:100%;height:80px;object-fit:cover;border-radius:4px";
+        const thumbnail = document.createElement("span");
+        thumbnail.className = "wall-thumbnail";
+        thumbnail.dataset.state = "queued";
+        thumbnail.appendChild(img);
         s.imgs.set(f.n, img);
+        wallThumbObserver.observe(img);
       }
       const label = document.createElement("span");
       label.style.cssText = "font-size:11px;min-height:14px;color:var(--accent)";
@@ -1517,7 +1609,7 @@
         "position:absolute;top:9px;right:9px;width:20px;height:20px;border-radius:50%;display:" +
         (sel ? "flex" : "none") +
         ";align-items:center;justify-content:center;font-size:13px;background:var(--accent);color:#fff";
-      button.append(img, label, mark);
+      button.append(img.parentElement, label, mark);
       button.onclick = () => {
         if (wallBusy) return;
         if (s.selected.has(f.n)) s.selected.delete(f.n);
@@ -1568,34 +1660,10 @@
         Object.assign(s, data, { files });
         const sd = data.sd;
         $("sdWallState").innerHTML = !sd.enabled
-          ? 'Pictures are stored internally. To use a microSD card, enable it in <a href="#" data-page="maintenance">Maintenance &gt; microSD card</a>.'
+          ? 'Pictures are stored internally. To use a microSD card, enable it in <a href="#" data-page="storage">Storage &gt; microSD card</a>.'
           : !sd.mounted
-            ? 'microSD card not mounted, using internal storage. See <a href="#" data-page="maintenance">Maintenance &gt; microSD card</a>.'
+            ? 'microSD card not mounted, using internal storage. See <a href="#" data-page="storage">Storage &gt; microSD card</a>.'
             : "Stored on the microSD card.";
-        $("sdFormat").classList.toggle("hidden", !sd.enabled);
-        $("sdState").textContent =
-          (sd.format ? "Format at the last restart: " + sd.format + "\n" : "") +
-          (!sd.enabled
-          ? "Not enabled"
-          : !sd.mounted
-            ? "Card not mounted" +
-              (sd.error ? " (" + sd.error + ")" : "") +
-              " - using internal storage. " +
-              (/not accepted/.test(sd.error || "")
-                ? "Format card below erases it and makes it readable."
-                : "Power the deck off and on to retry.") +
-              (sd.log ? "\n" + sd.log : "")
-            : "Mounted" +
-              (sd.mode ? " (" + sd.mode + ")" : "") +
-              ": " +
-              Math.floor(data.free / 1048576) +
-              " MB free of " +
-              Math.floor(data.total / 1048576) +
-              " MB - My pictures: " +
-              sd.own.join(" landscape / ") +
-              " portrait; Daily: " +
-              sd.daily.join(" landscape / ") +
-              " portrait");
         wallRender(o);
       }
     } catch (e) {

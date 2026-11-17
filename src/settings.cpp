@@ -10,6 +10,7 @@ char wifiSSID[33] = "";
 char wifiPass[65] = "";
 uint8_t brightness = 200;
 DisplaySettings dispSettings;
+String dailyFeedId;
 NetworkSettings netSettings;
 BacklightSettings backlightSettings;
 LedSettings ledSettings;
@@ -186,7 +187,8 @@ void loadSettings() {
   dispSettings.wallSource = prefs.isKey("wsrc") ? min<uint8_t>(prefs.getUChar("wsrc", 0), 2)
                                                : prefs.getBool("wdaily", false) ? 1 : 0;
   dispSettings.wallDaily = dispSettings.wallSource != 0;
-  dispSettings.dailyMirror = prefs.getBool("dmirror", false);
+  dispSettings.dailyMirror = min<uint8_t>(prefs.getUChar("dsource", prefs.getBool("dmirror", false) ? 1 : 0), 2);
+  dailyFeedId = prefs.getString("dfeedid", "");
   dispSettings.sdCard = prefs.getBool("sdon", false);
   dispSettings.dailyMax = prefs.getUShort("dmax", 100);
   if (!validDailyMax(dispSettings.dailyMax)) dispSettings.dailyMax = 100;
@@ -293,7 +295,9 @@ void saveSettings() {
   prefs.putUChar("worder", dispSettings.wallOrder);
   prefs.putBool("wdaily", dispSettings.wallSource != 0);
   prefs.putUChar("wsrc", dispSettings.wallSource);
-  prefs.putBool("dmirror", dispSettings.dailyMirror != 0);
+  prefs.putBool("dmirror", dispSettings.dailyMirror == 1);
+  prefs.putUChar("dsource", dispSettings.dailyMirror);
+  prefs.putString("dfeedid", dailyFeedId);
   prefs.putBool("sdon", dispSettings.sdCard);
   prefs.putUShort("dmax", dispSettings.dailyMax);
   prefs.putUChar("dhour", dispSettings.dailyHour);

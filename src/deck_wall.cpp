@@ -3,6 +3,7 @@
 #include "deck_wall.h"
 #include <src/misc/cache/instance/lv_image_cache.h>
 #include "deck_config.h"
+#include "deck_panel.h"
 #include <LittleFS.h>
 #include <esp_heap_caps.h>
 #include <esp_task_wdt.h>
@@ -19,9 +20,26 @@ namespace deck {
 namespace {
 
 uint16_t* s_sharp = nullptr;  // RGB565, dimmed and dithered
-uint8_t* s_blur = nullptr;    // RGB888 (LVGL order B, G, R), black-overlay dimmed
+// Keep the full-resolution BGR wallpaper in independently allocated bands.
+constexpr int MAX_BLUR_BANDS = (NATIVE_H + WALL_BLUR_BAND_ROWS - 1) / WALL_BLUR_BAND_ROWS;
+struct BlurPixels {
+  uint8_t* bands[MAX_BLUR_BANDS];
+  int stride;
+
+  uint8_t* row(int y) const {
+    return bands[y / WALL_BLUR_BAND_ROWS] + (y % WALL_BLUR_BAND_ROWS) * stride;
+  }
+
+  void release() {
+    for (uint8_t*& band : bands) {
+      free(band);
+      band = nullptr;
+    }
+  }
+};
+BlurPixels s_blur = {};
 int s_w = 0, s_h = 0, s_blurR = -1, s_dim = -1;
-lv_image_dsc_t s_sharpDsc, s_blurDsc;
+lv_image_dsc_t s_sharpDsc, s_blurDsc[MAX_BLUR_BANDS];
 uint32_t s_generation = 0;
 String s_current[2], s_pin[2], s_requested[2], s_loadedName;
 bool s_initialized[2] = {}, s_request[2] = {}, s_automatic[2] = {};
@@ -39,7 +57,7 @@ struct WallJob {
   uint32_t epoch, requestId;
   char name[15], path[64];
   uint16_t* sharp;
-  uint8_t* blurred;
+  BlurPixels blurred;
   bool ok, automatic;
 };
 WallJob s_job = {};
@@ -60,9 +78,8 @@ JobState jobState() {
 
 void discardJob() {
   free(s_job.sharp);
-  free(s_job.blurred);
+  s_job.blurred.release();
   s_job.sharp = nullptr;
-  s_job.blurred = nullptr;
   portENTER_CRITICAL(&s_jobMux);
   s_jobState = JOB_IDLE;
   portEXIT_CRITICAL(&s_jobMux);
@@ -90,10 +107,10 @@ class WallReader {
 
 struct JpegInput {
   WallReader file;
-  uint8_t* bgr;
+  BlurPixels* bgr;
   int w, h;
   uint16_t* rgb565 = nullptr;
-  JpegInput(const char* path, uint8_t* packed, int width, int height)
+  JpegInput(const char* path, BlurPixels* packed, int width, int height)
       : file(path), bgr(packed), w(width), h(height) {}
 };
 
@@ -110,11 +127,10 @@ int jpegOutput(JDEC* jd, void* pixels, JRECT* rect) {
   if (rect->right >= in.w || rect->bottom >= in.h) return 0;
   const uint8_t* src = (const uint8_t*)pixels;
   for (int y = rect->top; y <= rect->bottom; y++) {
-    const int offset = y * in.w + rect->left;
     if (in.bgr) {
       // LVGL's bundled JD_FORMAT 0 already emits B, G, R.
       const size_t bytes = (rect->right - rect->left + 1) * 3;
-      memcpy(in.bgr + 3 * offset, src, bytes);
+      memcpy(in.bgr->row(y) + 3 * rect->left, src, bytes);
       src += bytes;
     } else {
       for (int x = rect->left; x <= rect->right; ++x, src += 3)
@@ -124,7 +140,7 @@ int jpegOutput(JDEC* jd, void* pixels, JRECT* rect) {
   return 1;
 }
 
-bool jpegLoad(const char* path, int w, int h, uint8_t* bgr, uint16_t* rgb565 = nullptr) {
+bool jpegLoad(const char* path, int w, int h, BlurPixels* bgr, uint16_t* rgb565 = nullptr) {
   JpegInput in(path, bgr, w, h);
   in.rgb565 = rgb565;
   if (!in.file) return false;
@@ -187,22 +203,24 @@ uint8_t clamp8(float v) { return v <= 0 ? 0 : v >= 255 ? 255 : (uint8_t)(v + 0.5
 
 // No file yet: a dusk gradient with a warm glow, so Glass works out of the box.
 // Written in LVGL's packed BGR byte order, like a decoded JPEG.
-void gradient(uint8_t* bgr, int w, int h) {
-  for (int y = 0; y < h; y++)
+void gradient(BlurPixels& bgr, int w, int h) {
+  for (int y = 0; y < h; y++) {
+    uint8_t* row = bgr.row(y);
     for (int x = 0; x < w; x++) {
       const float t = (x / (float)w + y / (float)h) / 2;
       const float dx = (x - 0.2f * w) / w, dy = (y - 1.05f * h) / h;
       const float glow = fmaxf(0, 1 - sqrtf(dx * dx + dy * dy) / 0.75f);
       const float g2 = glow * glow;
-      uint8_t* pixel = bgr + 3 * (y * w + x);
+      uint8_t* pixel = row + 3 * x;
       pixel[0] = clamp8(0x5C + (0x66 - 0x5C) * t + 0x10 * g2);
       pixel[1] = clamp8(0x2C + (0x5E - 0x2C) * t + 0x58 * g2);
       pixel[2] = clamp8(0x24 + (0x16 - 0x24) * t + 0xB0 * g2);
     }
+  }
 }
 
 // The file is RGB888 (r, g, b bytes) or, from older portals, RGB565.
-bool loadFile(uint8_t* bgr, int w, int h) {
+bool loadFile(BlurPixels& bgr, int w, int h) {
   if (!deckFsReady()) return false;
   WallReader f(wallPath(w, h), true);
   if (!f) return false;
@@ -214,8 +232,9 @@ bool loadFile(uint8_t* bgr, int w, int h) {
     ok = row != nullptr;
     for (int y = 0; ok && y < h; y++) {
       ok = f.read(row, w * bpp) == (size_t)(w * bpp);
+      uint8_t* dst = bgr.row(y);
       for (int x = 0; ok && x < w; x++) {
-        uint8_t* pixel = bgr + 3 * (y * w + x);
+        uint8_t* pixel = dst + 3 * x;
         if (bpp == 3) {
           pixel[0] = row[x * 3 + 2];
           pixel[1] = row[x * 3 + 1];
@@ -295,68 +314,74 @@ const char* wallPath(int w, int h) { return w > h ? "/wall_l.bin" : "/wall_p.bin
 
 namespace {
 
-// Blur one row or column into scratch before replacing its source bytes.
-void blurPackedLine(uint8_t* pixels, uint8_t* line, int length, int stride,
+// Blur one packed row or gathered column before replacing its source bytes.
+void blurPackedLine(uint8_t* pixels, uint8_t* line, int length,
                     int radius, int window, uint32_t reciprocal) {
   uint32_t sum[3] = {uint32_t(window / 2), uint32_t(window / 2), uint32_t(window / 2)};
   for (int i = -radius; i <= radius; ++i) {
-    const uint8_t* pixel = pixels + std::clamp(i, 0, length - 1) * stride;
+    const uint8_t* pixel = pixels + std::clamp(i, 0, length - 1) * 3;
     for (int c = 0; c < 3; ++c) sum[c] += pixel[c];
   }
   for (int i = 0; i < length; ++i) {
-    const uint8_t* add = pixels + std::min(i + radius + 1, length - 1) * stride;
-    const uint8_t* sub = pixels + std::max(i - radius, 0) * stride;
+    const uint8_t* add = pixels + std::min(i + radius + 1, length - 1) * 3;
+    const uint8_t* sub = pixels + std::max(i - radius, 0) * 3;
     for (int c = 0; c < 3; ++c) {
       line[3 * i + c] = uint8_t((uint64_t(sum[c]) * reciprocal) >> 32);
       sum[c] += add[c] - sub[c];
     }
   }
-  if (stride == 3) {
-    memcpy(pixels, line, 3 * length);
-  } else {
-    for (int i = 0; i < length; ++i) memcpy(pixels + i * stride, line + 3 * i, 3);
-  }
+  memcpy(pixels, line, 3 * length);
 }
 
-void blurPacked(uint8_t* pixels, uint8_t* line, int w, int h, int radius) {
+void blurPacked(BlurPixels& pixels, uint8_t* line, int w, int h, int radius) {
   if (radius <= 0) return;
   const int window = 2 * radius + 1;
   const uint32_t reciprocal = 0xFFFFFFFFu / window + 1;
+  uint8_t* column = line + 3 * std::max(w, h);
   for (int pass = 0; pass < 3; ++pass) {
     for (int y = 0; y < h; ++y)
-      blurPackedLine(pixels + 3 * y * w, line, w, 3, radius, window, reciprocal);
-    for (int x = 0; x < w; ++x)
-      blurPackedLine(pixels + 3 * x, line, h, 3 * w, radius, window, reciprocal);
+      blurPackedLine(pixels.row(y), line, w, radius, window, reciprocal);
+    for (int x = 0; x < w; ++x) {
+      for (int y = 0; y < h; ++y) memcpy(column + 3 * y, pixels.row(y) + 3 * x, 3);
+      blurPackedLine(column, line, h, radius, window, reciprocal);
+      for (int y = 0; y < h; ++y) memcpy(pixels.row(y) + 3 * x, column + 3 * y, 3);
+    }
     if (esp_task_wdt_status(nullptr) == ESP_OK) esp_task_wdt_reset();
   }
 }
 
 bool prepareImage(WallJob& job) {
   const int w = job.w, h = job.h;
+  if (w <= 0 || h <= 0 || h > NATIVE_H) return false;
   const size_t n = (size_t)w * h;
+  constexpr auto caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
   const auto allocationFailed = [](size_t bytes) {
-    constexpr auto caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
     debugSerial.printf("Deck: wallpaper PSRAM allocation failed (requested %u B, free %u B, largest %u B)\n",
                        static_cast<unsigned>(bytes),
                        static_cast<unsigned>(heap_caps_get_free_size(caps)),
                        static_cast<unsigned>(heap_caps_get_largest_free_block(caps)));
     return false;
   };
-  job.sharp = (uint16_t*)heap_caps_malloc(n * 2, MALLOC_CAP_SPIRAM);
+  job.sharp = static_cast<uint16_t*>(heap_caps_malloc(n * 2, caps));
   if (!job.sharp) return allocationFailed(n * 2);
-  job.blurred = (uint8_t*)heap_caps_malloc(n * 3, MALLOC_CAP_SPIRAM);
-  if (!job.blurred) return allocationFailed(n * 3);
+  job.blurred.stride = 3 * w;
+  for (int y = 0; y < h; y += WALL_BLUR_BAND_ROWS) {
+    const size_t bytes = job.blurred.stride * std::min(WALL_BLUR_BAND_ROWS, h - y);
+    uint8_t*& band = job.blurred.bands[y / WALL_BLUR_BAND_ROWS];
+    band = static_cast<uint8_t*>(heap_caps_malloc(bytes, caps));
+    if (!band) return allocationFailed(bytes);
+  }
 
-  // Decode into the final BGR buffer. Blur needs only one row or column.
-  const size_t scratchBytes = 3 * std::max(w, h);
+  // The blur uses one output line and one gathered column.
+  const size_t scratchBytes = 3 * (std::max(w, h) + h);
   std::unique_ptr<uint8_t, decltype(&free)> line(nullptr, free);
   if (job.blur > 0) {
-    line.reset(static_cast<uint8_t*>(heap_caps_malloc(scratchBytes, MALLOC_CAP_SPIRAM)));
+    line.reset(static_cast<uint8_t*>(heap_caps_malloc(scratchBytes, caps)));
     if (!line) return allocationFailed(scratchBytes);
   }
   uint32_t start = millis();
   const bool jpeg = job.name[0];
-  const bool loaded = jpeg ? jpegLoad(job.path, w, h, job.blurred)
+  const bool loaded = jpeg ? jpegLoad(job.path, w, h, &job.blurred)
                            : loadFile(job.blurred, w, h);
   if (jpeg && !loaded) {
     debugSerial.printf("Deck: wallpaper decode failed: %s\n", job.name);
@@ -369,15 +394,19 @@ bool prepareImage(WallJob& job) {
   // Keep this off the render loop: both sharp and frosted tiles use the same
   // dimming, while labels, icons and controls are drawn afterwards untouched.
   const int keep = (100 - job.dim) * 256 / 100;
-  for (int y = 0; y < h; y++)
+  for (int y = 0; y < h; y++) {
+    const uint8_t* row = job.blurred.row(y);
     for (int x = 0; x < w; x++) {
-      const int i = y * w + x;
-      const uint8_t* pixel = job.blurred + 3 * i;
-      job.sharp[i] = wallDither565(pixel[2] * keep >> 8, pixel[1] * keep >> 8,
-                                  pixel[0] * keep >> 8, x, y);
+      const uint8_t* pixel = row + 3 * x;
+      job.sharp[y * w + x] = wallDither565(pixel[2] * keep >> 8, pixel[1] * keep >> 8,
+                                          pixel[0] * keep >> 8, x, y);
     }
+  }
   blurPacked(job.blurred, line.get(), w, h, job.blur);
-  for (size_t i = 0; i < 3 * n; ++i) job.blurred[i] = job.blurred[i] * keep >> 8;
+  for (int y = 0; y < h; ++y) {
+    uint8_t* row = job.blurred.row(y);
+    for (int x = 0; x < job.blurred.stride; ++x) row[x] = row[x] * keep >> 8;
+  }
   debugSerial.printf("Deck: wallpaper %s decode %lu ms, dim+blur %lu ms\n",
                 jpeg ? job.name : loaded ? "legacy" : "gradient",
                 (unsigned long)decodeMs, (unsigned long)(millis() - start));
@@ -426,15 +455,21 @@ bool wallRunWorker(void (*job)(), bool onSd, const char* name) {
 
 namespace {
 
-void installImage(WallJob& job) {
+void releaseImages() {
   lv_image_cache_drop(&s_sharpDsc);
-  lv_image_cache_drop(&s_blurDsc);
+  for (int y = 0; y < s_h; y += WALL_BLUR_BAND_ROWS)
+    lv_image_cache_drop(&s_blurDsc[y / WALL_BLUR_BAND_ROWS]);
   free(s_sharp);
-  free(s_blur);
+  s_sharp = nullptr;
+  s_blur.release();
+}
+
+void installImage(WallJob& job) {
+  releaseImages();
   s_sharp = job.sharp;
   s_blur = job.blurred;
   job.sharp = nullptr;
-  job.blurred = nullptr;
+  job.blurred = {};
   s_w = job.w;
   s_h = job.h;
   s_blurR = job.blur;
@@ -446,7 +481,11 @@ void installImage(WallJob& job) {
   s_changedMs = millis();
   ++s_generation;
   fillDsc(s_sharpDsc, s_sharp, s_w, s_h, LV_COLOR_FORMAT_RGB565, 2);
-  fillDsc(s_blurDsc, s_blur, s_w, s_h, LV_COLOR_FORMAT_RGB888, 3);
+  for (int y = 0; y < s_h; y += WALL_BLUR_BAND_ROWS) {
+    const int band = y / WALL_BLUR_BAND_ROWS;
+    fillDsc(s_blurDsc[band], s_blur.bands[band], s_w,
+            std::min(WALL_BLUR_BAND_ROWS, s_h - y), LV_COLOR_FORMAT_RGB888, 3);
+  }
 }
 
 }  // namespace
@@ -475,7 +514,7 @@ bool wallLoad(int w, int h, int blurR, int dimPct) {
   wallProtect(p, 1, s_source == 1 && job.name[0] ? "d/" + String(job.name) : String(job.name));
   if (!prepareImage(job)) {
     free(job.sharp);
-    free(job.blurred);
+    job.blurred.release();
     return false;
   }
   installImage(job);
@@ -484,13 +523,8 @@ bool wallLoad(int w, int h, int blurR, int dimPct) {
 
 void wallFree() {
   wallInvalidateJobs();
-  lv_image_cache_drop(&s_sharpDsc);
-  lv_image_cache_drop(&s_blurDsc);
+  releaseImages();
   s_generation++;  // also covers reloads that reuse the same allocation addresses
-  free(s_sharp);
-  free(s_blur);
-  s_sharp = nullptr;
-  s_blur = nullptr;
   wallProtect(false, 0, "");
   wallProtect(true, 0, "");
   s_w = s_h = 0;
@@ -498,7 +532,8 @@ void wallFree() {
 }
 
 const lv_image_dsc_t* wallSharp() { return s_sharp ? &s_sharpDsc : nullptr; }
-const lv_image_dsc_t* wallBlur() { return s_blur ? &s_blurDsc : nullptr; }
+const lv_image_dsc_t& wallBlurBand(int y) { return s_blurDsc[y / WALL_BLUR_BAND_ROWS]; }
+const uint8_t* wallBlurRow(int y) { return s_blur.row(y); }
 uint32_t wallGeneration() { return s_generation; }
 
 bool wallValidName(const String& name) {

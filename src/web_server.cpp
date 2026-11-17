@@ -223,6 +223,7 @@ static void handleApiConfig() {
   display["wallDaily"] = dispSettings.wallSource != 0;
   display["wallSource"] = dispSettings.wallSource;
   display["dailyMirror"] = dispSettings.dailyMirror;
+  display["dailyFeedId"] = dailyFeedId;
   display["sdCard"] = dispSettings.sdCard;
   display["dailyMax"] = dispSettings.dailyMax;
   display["dailyHour"] = dispSettings.dailyHour;
@@ -497,6 +498,7 @@ static void handleConfigImport() {
   }
 
   DisplaySettings nextDisplay = dispSettings;
+  String nextDailyFeedId = dailyFeedId;
   NetworkSettings nextNetwork = netSettings;
   BacklightSettings nextBacklight = backlightSettings;
   LedSettings nextLed = ledSettings;
@@ -570,7 +572,24 @@ static void handleConfigImport() {
     nextDisplay.wallSource = nextDisplay.wallDaily ? 1 : 0;
   }
   nextDisplay.wallDaily = nextDisplay.wallSource != 0;
-  if (!display["dailyMirror"].isNull()) READ_INT(display, "dailyMirror", 0, 1, nextDisplay.dailyMirror, uint8_t);
+  if (!display["dailyMirror"].isNull()) READ_INT(display, "dailyMirror", 0, 2, nextDisplay.dailyMirror, uint8_t);
+  if (!display["dailyFeedId"].isNull()) {
+    const String value = display["dailyFeedId"].as<String>();
+    if (value.length() > 64 || (value.length() && value.length() < 16)) {
+      sendJsonMessage(400, false, "invalid backup dailyFeedId");
+      return;
+    }
+    for (size_t i = 0; i < value.length(); ++i)
+      if (!isalnum((unsigned char)value[i]) && value[i] != '-') {
+        sendJsonMessage(400, false, "invalid backup dailyFeedId characters");
+        return;
+      }
+    nextDailyFeedId = value;
+  }
+  if (nextDisplay.dailyMirror == 2 && nextDailyFeedId.isEmpty()) {
+    sendJsonMessage(400, false, "backup curated feed ID missing");
+    return;
+  }
   if (!display["sdCard"].isNull()) READ_BOOL(display, "sdCard", nextDisplay.sdCard);
   if (!display["dailyMax"].isNull()) READ_INT(display, "dailyMax", 50, 500, nextDisplay.dailyMax, uint16_t);
   if (!validDailyMax(nextDisplay.dailyMax)) {
@@ -766,6 +785,7 @@ static void handleConfigImport() {
   }
   deck::wallInvalidateJobs();
   dispSettings = nextDisplay;
+  dailyFeedId = nextDailyFeedId;
   netSettings = nextNetwork;
   backlightSettings = nextBacklight;
   ledSettings = nextLed;
@@ -1141,7 +1161,24 @@ static void handleSaveWallpapers() {
     return;
   }
   const String mirror = server.arg("dailyMirror");
-  if (server.hasArg("dailyMirror") && mirror != "0" && mirror != "1") {
+  String incomingFeedId = server.hasArg("dailyFeedId") ? server.arg("dailyFeedId") : dailyFeedId;
+  incomingFeedId.trim();
+  if (incomingFeedId.length() > 64 || (incomingFeedId.length() && incomingFeedId.length() < 16)) {
+    sendJsonMessage(400, false, "Feed ID must contain 16 to 64 characters");
+    return;
+  }
+  for (size_t i = 0; i < incomingFeedId.length(); i++) {
+    const char c = incomingFeedId[i];
+    if (!isalnum((unsigned char)c) && c != '-') {
+      sendJsonMessage(400, false, "Feed ID must contain only letters, numbers or hyphens");
+      return;
+    }
+  }
+  if (mirror == "2" && incomingFeedId.isEmpty()) {
+    sendJsonMessage(400, false, "Enter a curated wallpaper feed ID");
+    return;
+  }
+  if (server.hasArg("dailyMirror") && mirror != "0" && mirror != "1" && mirror != "2") {
     sendJsonMessage(400, false, "invalid dailyMirror");
     return;
   }
@@ -1159,8 +1196,9 @@ static void handleSaveWallpapers() {
   dispSettings.wallOrder = order;
   const uint8_t oldSource = deck::wallSource();
   const uint32_t oldPlan = dispSettings.dailyOrient << 8 | dispSettings.dailyCount;
-  const bool mirrorChanged = server.hasArg("dailyMirror") && dispSettings.dailyMirror != (mirror == "1");
-  if (server.hasArg("dailyMirror")) dispSettings.dailyMirror = mirror == "1";
+  const bool mirrorChanged = (server.hasArg("dailyMirror") && dispSettings.dailyMirror != mirror.toInt()) || dailyFeedId != incomingFeedId;
+  if (server.hasArg("dailyMirror")) dispSettings.dailyMirror = mirror.toInt();
+  dailyFeedId = incomingFeedId;
   if (server.hasArg("wallSource")) dispSettings.wallSource = server.arg("wallSource").toInt();
   dispSettings.wallDaily = dispSettings.wallSource != 0;
   dispSettings.dailyHour = (uint8_t)clampedArg("dailyHour", dispSettings.dailyHour, 0, 23);

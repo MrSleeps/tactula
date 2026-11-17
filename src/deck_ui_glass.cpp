@@ -12,7 +12,7 @@ static bool frostTiles() {
 }
 
 std::vector<uint32_t> glassKey(Page& p) {
-  if (!wallSharp() || !wallBlur() || !p.root || !p.grid) return {};
+  if (!wallSharp() || !p.root || !p.grid) return {};
   lv_obj_update_layout(p.root);
   std::vector<uint32_t> key = {
       wallGeneration(), (uint32_t)logicalW(), (uint32_t)logicalH(), (uint32_t)panelRotation(),
@@ -52,20 +52,19 @@ int luma(uint32_t c) { return luma(c >> 16 & 0xFF, c >> 8 & 0xFF, c & 0xFF); }
 
 // 10th and 90th percentile luma of an image area (RGB565, or RGB888 as B, G, R),
 // from every other pixel and row.
-void lumaRange(const lv_image_dsc_t* img, lv_area_t a, int& lo, int& hi) {
+static void lumaRange(const lv_image_dsc_t* sharp, bool blurred, lv_area_t a, int& lo, int& hi) {
   lo = hi = 0;
-  const int w = img->header.w, h = img->header.h;
+  const int w = sharp->header.w, h = sharp->header.h;
   a.x1 = max<int32_t>(a.x1, 0);
   a.y1 = max<int32_t>(a.y1, 0);
   a.x2 = min<int32_t>(a.x2, w - 1);
   a.y2 = min<int32_t>(a.y2, h - 1);
   uint16_t hist[256] = {};
   uint32_t n = 0;
-  const bool rgb565 = img->header.cf == LV_COLOR_FORMAT_RGB565;
   for (int y = a.y1; y <= a.y2; y += 2) {
-    const uint8_t* row = img->data + y * img->header.stride;
+    const uint8_t* row = blurred ? wallBlurRow(y) : sharp->data + y * sharp->header.stride;
     for (int x = a.x1; x <= a.x2; x += 2, n++) {
-      if (rgb565) {
+      if (!blurred) {
         const uint16_t q = ((const uint16_t*)row)[x];
         hist[luma(q >> 8 & 0xF8, q >> 3 & 0xFC, q << 3 & 0xF8)]++;
       } else hist[luma(row[x * 3 + 2], row[x * 3 + 1], row[x * 3])]++;
@@ -94,10 +93,11 @@ struct AutoPick {
 AutoPick autoPick(const TileRt* r, const lv_area_t& a) {
   const int base = r ? tileTint(*r->def) : dispSettings.glassTint;
   AutoPick pk = {(lv_opa_t)(base * 255 / 100), C_TEXT, false};
-  if (!dispSettings.glassAutoText || !r || r->def->hasTextColor || !wallBlur()) return pk;
+  const lv_image_dsc_t* sharp = wallSharp();
+  if (!dispSettings.glassAutoText || !r || r->def->hasTextColor || !sharp) return pk;
   int lo, hi;
   // Tactula tint is composited over the sharp wallpaper.
-  lumaRange(frostTiles() ? wallBlur() : wallSharp(), a, lo, hi);
+  lumaRange(sharp, frostTiles(), a, lo, hi);
   const int tint = luma(tileBg(*r->def));
   auto glassed = [&](int v) { return (v * (100 - base) + tint * base) / 100; };
   pk.set = true;
@@ -161,7 +161,7 @@ void autoHeader(Page& p) {
   bool dark = false;
   if (dispSettings.glassAutoText) {
     int lo, hi;
-    lumaRange(sharp, {0, 0, (int32_t)sharp->header.w - 1, HEADER_H - 1}, lo, hi);
+    lumaRange(sharp, false, {0, 0, (int32_t)sharp->header.w - 1, HEADER_H - 1}, lo, hi);
     dark = hi > AUTO_LIGHT_MAX && lo >= AUTO_DARK_MIN;
   }
   lv_obj_set_style_text_color(p.title, lv_color_hex(dark ? AUTO_DARK_TITLE : C_TITLE), 0);
@@ -193,8 +193,7 @@ bool bakeGlass(Page& p, const lv_area_t* only) {
   const bool part = only && p.glass && !p.glassKey.empty();
   p.glassKey.clear();  // a partial bake must never be reused
   const lv_image_dsc_t* sharp = wallSharp();
-  const lv_image_dsc_t* blur = wallBlur();
-  if (!sharp || !blur || !p.root || !p.grid) return false;
+  if (!sharp || !p.root || !p.grid) return false;
   const int w = sharp->header.w, h = sharp->header.h;
   if (!p.glass) p.glass = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
   if (!p.glass) return false;
@@ -206,8 +205,8 @@ bool bakeGlass(Page& p, const lv_area_t* only) {
            (xb - xa + 1) * 2);
   // The glass is drawn in ARGB8888 over nothing, then laid over the picture
   // and dithered to RGB565 once: blending in RGB565 left coloured bands.
-  // In bands: a screen sized ARGB8888 buffer needs 614 KB in one piece.
-  constexpr int BAND = 80;
+  // Align the canvas with the stored blur bands, including on partial bakes.
+  constexpr int BAND = WALL_BLUR_BAND_ROWS;
   lv_draw_buf_t* top = lv_draw_buf_create(w, BAND, LV_COLOR_FORMAT_ARGB8888, 0);
   if (!top) return false;
   std::vector<uint32_t> key = glassKey(p);
@@ -232,13 +231,15 @@ bool bakeGlass(Page& p, const lv_area_t* only) {
     if (tr) applyAutoPick(*tr, pk);
     opa[i] = pk.opa;
   }
-  for (int y0 = ya; y0 <= yb && xa <= xb; y0 += BAND) {
+  for (int y0 = ya / BAND * BAND; y0 <= yb && xa <= xb; y0 += BAND) {
+    const int first = LV_MAX(0, ya - y0);
     const int rows = LV_MIN(BAND, yb + 1 - y0);
-    const lv_area_t band = {xa, 0, xb, rows - 1};
+    const lv_area_t band = {xa, first, xb, rows - 1};
     lv_draw_buf_clear(top, &band);
     lv_layer_t layer;
     lv_canvas_init_layer(cv, &layer);
-    const lv_area_t all = {0, -y0, w - 1, h - 1 - y0};  // the whole picture, seen from the band
+    const lv_image_dsc_t& blur = wallBlurBand(y0);
+    const lv_area_t image = {0, 0, w - 1, (int)blur.header.h - 1};
     for (uint32_t i = 0; i < count; i++) {
       lv_obj_t* t = lv_obj_get_child(p.grid, i);
       lv_area_t tc;
@@ -246,17 +247,17 @@ bool bakeGlass(Page& p, const lv_area_t* only) {
       lv_area_move(&tc, -rc.x1, -rc.y1 - y0);
       TileRt* tr = tileOf(t);
       if (tr && !tileBaked(*tr->def)) continue;
-      if (tc.y2 < 0 || tc.y1 >= rows || tc.x2 < xa || tc.x1 > xb || lv_obj_has_flag(t, LV_OBJ_FLAG_HIDDEN)) continue;
-      const lv_area_t clip = {LV_MAX(tc.x1, xa), LV_MAX(tc.y1, 0), LV_MIN(tc.x2, xb), LV_MIN(tc.y2, rows - 1)};
+      if (tc.y2 < first || tc.y1 >= rows || tc.x2 < xa || tc.x1 > xb || lv_obj_has_flag(t, LV_OBJ_FLAG_HIDDEN)) continue;
+      const lv_area_t clip = {LV_MAX(tc.x1, xa), LV_MAX(tc.y1, first), LV_MIN(tc.x2, xb), LV_MIN(tc.y2, rows - 1)};
       const int r = lv_obj_get_style_radius(t, LV_PART_MAIN);
       if (frostTiles()) {
         lv_draw_image_dsc_t id;
         lv_draw_image_dsc_init(&id);
-        id.src = blur;
+        id.src = &blur;
         id.image_area = tc;  // the radius mask works on this area
         id.clip_radius = r;
         layer._clip_area = clip;
-        lv_draw_image(&layer, &id, &all);
+        lv_draw_image(&layer, &id, &image);
       }
       layer._clip_area = band;
       lv_draw_rect_dsc_t rd;
@@ -273,7 +274,7 @@ bool bakeGlass(Page& p, const lv_area_t* only) {
       lv_draw_rect(&layer, &rd, &tc);
     }
     lv_canvas_finish_layer(cv, &layer);
-    for (int y = 0; y < rows; y++) {
+    for (int y = first; y < rows; y++) {
       const uint8_t* s = top->data + y * top->header.stride + xa * 4;  // B, G, R, A
       uint16_t* d = (uint16_t*)(p.glass->data + (y0 + y) * p.glass->header.stride);
       for (int x = xa; x <= xb; x++, s += 4) {

@@ -567,9 +567,15 @@
                           <select id="dailyMirror" name="dailyMirror">
                             <option value="0">Microsoft direct</option>
                             <option value="1">Tactula mirror</option>
+                            <option value="2">My curated feed</option>
                           </select>
                         </div>
-                        <p class="field-hint">The Tactula mirror supplies pictures already sized for the screen.</p>
+                        <p class="field-hint">Choose My curated feed to download your selected image collections from firmware.mrsleeps.uk.</p>
+                      </div>
+                      <div class="field hidden" id="dailyFeedIdField">
+                        <label class="field-label" for="dailyFeedId">Curated feed ID</label>
+                        <input id="dailyFeedId" name="dailyFeedId" type="text" maxlength="64" autocomplete="off" spellcheck="false" placeholder="Paste feed ID from firmware.mrsleeps.uk" />
+                        <p class="field-hint">Copy the feed ID from your wallpaper feed dashboard. No full URL needed.</p>
                       </div>
                       <div class="field">
                         <label class="field-label" for="dailyOrient">Download for</label>

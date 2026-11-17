@@ -36,6 +36,8 @@ constexpr const char* API_URL =
     "https://fd.api.iris.microsoft.com/v4/api/selection?placement=88000820&bcnt=4&country=US&locale=en-US&fmt=json";
 constexpr char MIRROR_BASE[] = "https://firmware.mrsleeps.uk/tactula/spotlight/";
 constexpr size_t MAX_MIRROR_FEED = 4096;
+constexpr size_t MAX_CURATED_FEED = 32768;
+constexpr char CURATED_BASE[] = "https://firmware.mrsleeps.uk/api/v1/feeds/";
 constexpr size_t MAX_MIRROR_PICTURES = 48;
 const char* tempPath() { return wallTemp(true); }
 constexpr int MAX_API_CALLS = 12;  // 4 candidates each; some are progressive JPEGs
@@ -258,6 +260,88 @@ bool fetchMirrorFeed(std::vector<Pick>& picks) {
   if (!picks.empty()) return true;
   setError("Tactula mirror feed has no usable pictures");
   return false;
+}
+
+// An unlisted feed URL is a bearer capability: accept only JPEG URLs for
+// the selected feed on our own HTTPS host. Do not allow arbitrary remote URLs.
+bool curatedImageUrl(const char* value, const String& feedId, bool portrait) {
+  if (!value) return false;
+  const String prefix = String(CURATED_BASE) + feedId + "/source-images/";
+  const String url(value);
+  if (!url.startsWith(prefix) || !url.endsWith(portrait ? "/p.jpg" : "/l.jpg")) return false;
+  const int start = prefix.length();
+  const int end = url.length() - 6; // /p.jpg or /l.jpg
+  if (end <= start || end - start > 20) return false;
+  for (int i = start; i < end; ++i)
+    if (value[i] < '0' || value[i] > '9') return false;
+  return true;
+}
+
+bool fetchCuratedFeed(std::vector<Pick>& picks, const String& feedId) {
+  if (feedId.length() < 16 || feedId.length() > 64) {
+    setError("Curated feed ID missing");
+    return false;
+  }
+  for (size_t i = 0; i < feedId.length(); ++i) {
+    const char c = feedId[i];
+    if (!isalnum((unsigned char)c) && c != '-') {
+      setError("Invalid curated feed ID");
+      return false;
+    }
+  }
+  WiFiClientSecure tls;
+  tls.setCACert(FIRMWARE_MIRROR_CA);
+  HTTPClient http;
+  http.useHTTP10(true);
+  http.setTimeout(15000);
+  const String url = String(CURATED_BASE) + feedId + "/manifest.json";
+  const bool begun = http.begin(tls, url);
+  const int code = begun ? http.GET() : -1;
+  sampleRam();
+  if (code != 200) {
+    char reason[80];
+    if (code < 0) {
+      char detail[48] = {};
+      const int tlsCode = tls.lastError(detail, sizeof(detail));
+      snprintf(reason, sizeof(reason), "Curated feed HTTPS failed (%d, TLS %d)", code, tlsCode);
+    } else {
+      snprintf(reason, sizeof(reason), "Curated feed HTTP %d", code);
+    }
+    http.end();
+    setError(reason);
+    return false;
+  }
+  const int bytes = http.getSize();
+  if (bytes < 1 || static_cast<size_t>(bytes) > MAX_CURATED_FEED) {
+    http.end();
+    setError("Curated feed size invalid");
+    return false;
+  }
+  JsonDocument doc(psramJson());
+  const DeserializationError error =
+      deserializeJson(doc, http.getStream(), DeserializationOption::NestingLimit(4));
+  http.end();
+  if (error || (doc["schema"] | 0) != 1) {
+    setError("Invalid curated feed JSON");
+    return false;
+  }
+  for (const bool portrait : {false, true}) {
+    const JsonArrayConst urls = doc[portrait ? "p" : "l"].as<JsonArrayConst>();
+    if (urls.size() > MAX_MIRROR_PICTURES) {
+      setError("Curated feed contains too many pictures");
+      return false;
+    }
+    for (const JsonVariantConst entry : urls) {
+      const char* imageUrl = entry.as<const char*>();
+      if (!curatedImageUrl(imageUrl, feedId, portrait)) {
+        setError("Curated feed contains an invalid image URL");
+        return false;
+      }
+      picks.push_back({String(imageUrl), portrait});
+    }
+  }
+  if (picks.empty()) setError("Curated feed contains no pictures");
+  return !picks.empty();
 }
 
 struct Decode {
@@ -536,6 +620,8 @@ bool fetchMirroredImage(const Pick& pick, const String& name, LogEntry& log, boo
 void runTask(void*) {
   int want[2], archiveMax;
   bool mirror;
+  const uint8_t source = dispSettings.dailyMirror;
+  const String feedId = dailyFeedId;
   portENTER_CRITICAL(&s_mux);
   want[0] = s_status->want[0];
   want[1] = s_status->want[1];
@@ -557,12 +643,12 @@ void runTask(void*) {
           seen.push_back((uint64_t)(uint32_t)f.id | (uint64_t)p << 32);
     bool stop = false;
     int got[2] = {}, offlineRun = 0;
-    const int feedRequests = mirror ? 1 : MAX_API_CALLS;
+    const int feedRequests = source != 0 ? 1 : MAX_API_CALLS;
     for (int call = 0; call < feedRequests && !stop && (got[0] < want[0] || got[1] < want[1]); call++) {
-      setStep(mirror ? "Reading Tactula mirror" : "Asking Spotlight");
+      setStep(source == 2 ? "Reading curated feed" : mirror ? "Reading Tactula mirror" : "Asking Spotlight");
       update([](Status& s) { s.apiCalls++; });
       std::vector<Pick> picks;
-      if (!(mirror ? fetchMirrorFeed(picks) : fetchApi(picks))) break;
+      if (!(source == 2 ? fetchCuratedFeed(picks, feedId) : mirror ? fetchMirrorFeed(picks) : fetchApi(picks))) break;
       for (const Pick& pick : picks) {
         const bool p = pick.portrait;
         if (got[p] >= want[p]) continue;

@@ -619,6 +619,8 @@
     setVal("dailyMax", c.display.dailyMax ?? 100);
     setWallSource(c.display.wallSource ?? (c.display.wallDaily ? 1 : 0));
     setVal("dailyMirror", c.display.dailyMirror ?? 0);
+    setVal("dailyFeedId", c.display.dailyFeedId ?? "");
+    updateCuratedFeedField();
     setVal("dailyOrient", c.display.dailyOrient ?? 0);
     setVal("dailyCount", c.display.dailyCount ?? 12);
     setVal("dailyHour", c.display.dailyHour ?? 3);

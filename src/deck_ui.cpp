@@ -582,7 +582,7 @@ void placePage(int page) {
     return;
   }
   // Re-bake only where tiles moved. A missing glass buffer falls back to full bake.
-  if (themeUsesWallpaper(s_theme) && wallBlur()) bakeGlass(p, &changed);
+  if (themeUsesWallpaper(s_theme) && wallSharp()) bakeGlass(p, &changed);
   p.stale = true;
   s_zonesDirty = true;
 }

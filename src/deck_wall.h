@@ -66,11 +66,14 @@ bool wallLoad(int w, int h, int blurR, int dimPct);
 void wallFree();
 // Changes whenever the images are freed or reloaded, including failed loads.
 uint32_t wallGeneration();
-// The picture (RGB565, dimmed for the text on it) and its blurred copy
-// (RGB888, so the glass keeps its precision until wallDither565);
-// nullptr when not loaded.
+// The dimmed RGB565 picture, or nullptr when no wallpaper is loaded.
 const lv_image_dsc_t* wallSharp();
-const lv_image_dsc_t* wallBlur();
+// A sharp wallpaper is installed together with its blurred bands.
+inline bool wallBlur() { return wallSharp() != nullptr; }
+// While a wallpaper is loaded, the RGB888 band containing y and the row at y.
+constexpr int WALL_BLUR_BAND_ROWS = 16;
+const lv_image_dsc_t& wallBlurBand(int y);
+const uint8_t* wallBlurRow(int y);
 // Near-gaussian blur of one 8-bit plane in place (tmp: scratch of the same size).
 void wallBlurPlane(uint8_t* p, uint8_t* tmp, int w, int h, int r);
 // An 8-bit colour as RGB565, ordered-dithered by its screen position. 8x8

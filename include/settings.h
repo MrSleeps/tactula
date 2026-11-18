@@ -49,6 +49,8 @@ struct DisplaySettings {
   uint8_t  theme;             // THEME_* display preset
   uint8_t  tactulaRadius = 22; // tile corner radius in pixels
   uint8_t  tactulaPadding = 9; // preferred inner padding in pixels
+  uint8_t  midnightTint = 90; // Midnight: widget background opacity %, 0..100
+  uint8_t  midnightOn = 92;   // Midnight: active widget fill opacity %, 0..100
   uint8_t  glassTint;         // Glass: tile tint opacity %, 0..100
   uint8_t  glassBlur;         // Glass: blur radius px, 0..24 (0 = clear glass)
   uint8_t  glassDim;          // Glass: wallpaper black overlay %, 0..100 (sharp + blurred)
@@ -111,13 +113,15 @@ constexpr uint8_t THEME_DAYLIGHT = 1;
 constexpr uint8_t THEME_GLASS = 2;  // Midnight colours, glass tiles over a wallpaper
 constexpr uint8_t THEME_TACTULA = 3;
 constexpr uint8_t THEME_MINIMAL_CONSOLE = 4;
-constexpr uint8_t THEME_MAX = THEME_MINIMAL_CONSOLE;
+constexpr uint8_t THEME_MIDNIGHT_STUDIO = 5;  // Figma-inspired default; preserve existing IDs
+constexpr uint8_t THEME_MAX = THEME_MIDNIGHT_STUDIO;
 
 constexpr uint8_t TACTULA_RADIUS_MAX = 32;
 constexpr uint8_t TACTULA_PADDING_MAX = 20;
 
 constexpr bool themeUsesWallpaper(uint8_t theme) {
-  return theme == THEME_GLASS || theme == THEME_TACTULA;
+  // Midnight Studio shares wallpaper loading, but uses its own opaque navy cards.
+  return theme == THEME_GLASS || theme == THEME_TACTULA || theme == THEME_MIDNIGHT_STUDIO;
 }
 
 // Network settings. NVS blob "net", layout shared with StatNode.

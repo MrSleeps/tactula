@@ -91,10 +91,14 @@ struct AutoPick {
 // Light text if it reads, else dark text, else glass darkened until light
 // text reads. Tiles with their own text colour stay light.
 AutoPick autoPick(const TileRt* r, const lv_area_t& a) {
-  const int base = r ? tileTint(*r->def) : dispSettings.glassTint;
+  const int base = r ? tileTint(*r->def) :
+                   s_theme == THEME_MIDNIGHT_STUDIO ? 90 : dispSettings.glassTint;
   AutoPick pk = {(lv_opa_t)(base * 255 / 100), C_TEXT, false};
   const lv_image_dsc_t* sharp = wallSharp();
-  if (!dispSettings.glassAutoText || !r || r->def->hasTextColor || !sharp) return pk;
+  // Midnight surfaces are deliberately dark, so never switch their captions to
+  // black based on the wallpaper behind them.
+  if (s_theme == THEME_MIDNIGHT_STUDIO || !dispSettings.glassAutoText || !r ||
+      r->def->hasTextColor || !sharp) return pk;
   int lo, hi;
   // Tactula tint is composited over the sharp wallpaper.
   lumaRange(sharp, frostTiles(), a, lo, hi);

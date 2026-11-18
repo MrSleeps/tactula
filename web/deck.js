@@ -549,6 +549,7 @@
   // `sub` to select its widget; unlike generic HA actions it has no entity.
   const BAMBU_VIEWS = [
     ["hero", "Print status and progress"],
+    ["summary", "Compact printer summary"],
     ["nozzle_left", "Left nozzle temperature"],
     ["nozzle_right", "Right nozzle temperature"],
     ["bed", "Bed temperature"],
@@ -575,6 +576,17 @@
         lbl("Bambu widget", "Live values come from the configured printer. The layout, label, size and position are saved in deck.json.") +
         '<select data-bambu-view="' + i + '">' +
         BAMBU_VIEWS.map(v => opt(v[0], v[1], v[0] === t.sub)).join("") +
+        '</select></div>' +
+        (t.sub === "ams" ? '<div class="field wide">' +
+          lbl("AMS unit", "Select which AMS unit to show with its humidity, temperature and four individual filament slots.") +
+          '<select data-bambu-ams-unit="' + i + '">' +
+          [1,2,3,4,5,6].map(n => opt(String(n), "AMS " + n, (t.bambuAmsUnit || 1) === n)).join("") +
+          '</select></div>' : "") +
+        '<div class="field wide">' +
+        lbl("Look", "Dashboard looks identical in every theme. Classic restores the legacy Bambu presentation. Printer data and controls are unchanged.") +
+        '<select data-bambu-look="' + i + '">' +
+        opt("dashboard", "Dashboard cards (default; all themes)", !t.bambuLook || t.bambuLook === "auto" || t.bambuLook === "dashboard") +
+        opt("classic", "Classic TouchDeck", t.bambuLook === "classic") +
         '</select></div></div>' : '') + '</div>';
   }
   function clockRow(t, i) {
@@ -601,6 +613,20 @@
       "</div>"
     );
   }
+  // Popup heading is independent of the main tile label. Shared by Weather
+  // sensors and Weather Clock, in every display theme.
+  function weatherPopupTitleFields(t, i) {
+    return '<div class="field wide">' +
+      lbl('Weather popup title', 'Leave empty to use the Home Assistant friendly name. This does not rename the tile.') +
+      '<input type="text" maxlength="64" data-weather-popup-title="' + i + '" value="' +
+      esc(t.weatherPopupTitle || '') + '" placeholder="Use Home Assistant name"></div>' +
+      '<div class="field">' +
+      lbl('Show title in popup', 'Hide the weather heading entirely, while leaving the weather readings and close button visible.') +
+      '<select data-weather-popup-show="' + i + '">' +
+      opt('1', 'Show', t.hideWeatherPopupTitle !== true) +
+      opt('0', 'Hide', t.hideWeatherPopupTitle === true) +
+      '</select></div>';
+  }
   function weatherClockRow(t, i) {
     const weatherSources = Object.keys(entMap || {}).filter(id=>domainOf(id)==='weather').sort();
     const choices = weatherSources.map(id=>'<option value="' + esc(id) + '"></option>').join('');
@@ -616,6 +642,7 @@
       '<div class="field wide">' + lbl('Weather source', 'Select a Home Assistant weather.* entity. Its current condition and temperature appear beside the short date.') +
       '<input type="text" list="dk-weather-clock-' + i + '" data-wclock-entity="' + i + '" value="' + esc(t.entity || '') +
       '" placeholder="weather.forecast_home"><datalist id="dk-weather-clock-' + i + '">' + choices + '</datalist></div>' +
+      weatherPopupTitleFields(t, i) +
       '<div class="field wide">' + lbl('Weather icon style', 'MDI always works. Meteocons Fill and Flat use PNG packs installed on the microSD card.') +
       '<select data-wclock-pack="' + i + '">' + opt('mdi','Built-in MDI',!t.weatherIcons || t.weatherIcons==='mdi') +
       opt('meteocons-fill','Meteocons Fill',t.weatherIcons==='meteocons-fill') +
@@ -722,6 +749,7 @@
         i +
         '">' +
         opt("number", "Number", !t.style || t.style === "number") +
+        opt("card", "Dashboard card (all themes)", t.style === "card") +
         opt("chart", "Chart", t.style === "chart") +
         opt("headline", "Large temperature (clock font)", t.style === "headline") +
         (domainOf(t.entity) === "weather" || t.style === "weather" ?
@@ -734,13 +762,13 @@
           opt("0", "Standalone (no box or border)", t.box === false) +
           opt("1", "Boxed (background and border)", t.box !== false) +
           '</select></div>' : "") +
-        (t.style === "weather" ?
-          '<div class="field">' +
-          lbl("Show entity ID in popup", "Display the Home Assistant entity ID below the Weather title.") +
-          '<select data-weather-entity="' + i + '">' +
-          opt("1", "Show", t.showEntityId !== false) +
-          opt("0", "Hide", t.showEntityId === false) +
-          '</select></div>' : "") +
+        (t.style === "weather" ? weatherPopupTitleFields(t, i) : "") +
+        '<div class="field">' +
+        lbl("Show entity ID in popup", "Display the Home Assistant entity ID beneath the sensor name in its details popup.") +
+        '<select data-sensor-entity="' + i + '">' +
+        opt("1", "Show", t.showEntityId !== false) +
+        opt("0", "Hide", t.showEntityId === false) +
+        '</select></div>' +
         (t.style === "weather" || t.style === "headline" ? "" :
           '<div class="field">' +
           lbl("Show as", "Duration turns a number in s, min, h or d into 1h 49m.") +
@@ -1538,6 +1566,19 @@
     const cp = ck ? 0 : tileCp(t);
     const nm = ck ? (t.type === "weather-clock" ? "Weather Clock" : "Clock") : t.label || (en && en.name) || t.entity || "Tile";
     const chip = iconTile(t) ? gchip(t, col, cp) : null;
+    if (t.type === "sensor" && t.style === "card") {
+      // The grid editor is a structural preview, not a live HA reading.
+      // Reflect the new card's icon/name/value hierarchy across themes.
+      const area = a ? ' style="grid-area:' + garea(a) + '"' : '';
+      return '<div class="dk-gt dk-gt-sensor-card' + (k === sel ? " sel" : "") +
+        '" data-g="' + k + '"' + area +
+        '><div style="display:flex;align-items:center;gap:7px;min-width:0;width:100%">' +
+        chip + '<b style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+        esc(t.noName ? "" : nm) + '</b></div>' +
+        '<strong style="font-size:18px;align-self:flex-start">--</strong>' +
+        (a ? '<span class="dk-rs" data-rs="' + k + '"></span>' : '') +
+        '</div>';
+    }
     if (t.type === "nav") {
       return '<div class="dk-gt dk-gt-nav' + (k === sel ? " sel" : "") +
         '" data-g="' + k + '"' +
@@ -2711,6 +2752,24 @@
         return await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('Could not convert '+slug)),'image/png'));
       } finally { URL.revokeObjectURL(objectUrl); }
     }
+    el.querySelectorAll('[data-bambu-ams-unit]').forEach(x=>{
+      x.onchange=()=>{
+        const tile=p.tiles[+x.dataset.bambuAmsUnit];
+        const n=Number(x.value);
+        if (n >= 1 && n <= 6) tile.bambuAmsUnit=n;
+        setDirty(true);
+        renderPage();
+      };
+    });
+    el.querySelectorAll('[data-bambu-look]').forEach(x=>{
+      x.onchange=()=>{
+        const tile=p.tiles[+x.dataset.bambuLook];
+        if (x.value==="dashboard") delete tile.bambuLook;
+        else tile.bambuLook=x.value;
+        setDirty(true);
+        renderPage();
+      };
+    });
     el.querySelectorAll('[data-wclock-pack]').forEach(x=>{
       x.onchange=()=>{p.tiles[+x.dataset.wclockPack].weatherIcons=x.value;setDirty(true);renderPage();};
     });
@@ -2989,9 +3048,27 @@
         }),
     );
     el.querySelectorAll("[data-ht]").forEach((x) => (x.onclick = () => testHttp(tapOf(x), +x.dataset.ht)));
-    el.querySelectorAll("[data-weather-entity]").forEach((x) => {
+    el.querySelectorAll("[data-weather-popup-title]").forEach((x) => {
+      x.oninput = () => {
+        const tile = p.tiles[+x.dataset.weatherPopupTitle];
+        const title = x.value.slice(0, 64);
+        if (title.trim()) tile.weatherPopupTitle = title;
+        else delete tile.weatherPopupTitle;
+        setDirty(true);
+      };
+    });
+    el.querySelectorAll("[data-weather-popup-show]").forEach((x) => {
       x.onchange = () => {
-        p.tiles[+x.dataset.weatherEntity].showEntityId = x.value === "1";
+        const tile = p.tiles[+x.dataset.weatherPopupShow];
+        if (x.value === "0") tile.hideWeatherPopupTitle = true;
+        else delete tile.hideWeatherPopupTitle;
+        setDirty(true);
+        renderPage();
+      };
+    });
+    el.querySelectorAll("[data-sensor-entity]").forEach((x) => {
+      x.onchange = () => {
+        p.tiles[+x.dataset.sensorEntity].showEntityId = x.value === "1";
         setDirty(true);
         renderPage();
       };

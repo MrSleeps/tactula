@@ -116,6 +116,49 @@ void fitNameText(TileRt& r) {
   fitName(r.name, f, lines);
 }
 
+// Midnight Studio: a compact Figma-style information card. A rounded-square
+// icon and label share the header; the state sits beneath as secondary text.
+// This only applies to normal labelled controls, keeping image and icon-only
+// tiles, special widgets and all legacy themes unchanged.
+void fitStudioButton(TileRt& r, int cw, int ch) {
+  const bool icon = !iconOff(r);
+  const int chipSize = ch >= 58 ? 30 : 22;
+  const bool row = icon && cw >= 70 && ch >= 46;
+  r.nameFont = nullptr;
+  showObj(r.chip, icon);
+  showObj(r.name, true);
+  if (icon) {
+    fitChip(r, chipSize);
+    lv_obj_align(r.chip, row ? LV_ALIGN_TOP_LEFT : LV_ALIGN_LEFT_MID, 0, 0);
+  }
+  const lv_font_t* nf = cw >= 85 ? &deck_font_14 : &deck_font_12;
+  fitName(r.name, nf, 1);
+  lv_obj_set_style_text_align(r.name, LV_TEXT_ALIGN_LEFT, 0);
+  lv_obj_set_style_text_opa(r.name, LV_OPA_COVER, 0);
+  if (row) {
+    const int nx = chipSize + 6;
+    lv_obj_set_size(r.name, std::max(1, cw - nx), lineH(nf));
+    lv_obj_align(r.name, LV_ALIGN_TOP_LEFT, nx, (chipSize - lineH(nf)) / 2);
+  } else if (icon) {
+    // Short tiles cannot fit two rows; use the remaining width.
+    lv_obj_set_size(r.name, std::max(1, cw - chipSize - 5), lineH(nf));
+    lv_obj_align(r.name, LV_ALIGN_LEFT_MID, chipSize + 5, 0);
+  } else {
+    lv_obj_set_width(r.name, cw);
+    lv_obj_align(r.name, LV_ALIGN_TOP_LEFT, 0, 0);
+  }
+  const bool state = ch >= chipSize + lineH(&deck_font_12) + 9;
+  showObj(r.sub, state);
+  if (state) {
+    setFont(r.sub, &deck_font_12);
+    lv_obj_set_style_text_opa(r.sub, LV_OPA_90, 0);
+    lv_obj_set_style_text_align(r.sub, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_pad_left(r.sub, 0, 0);
+    lv_obj_set_size(r.sub, cw, lineH(&deck_font_12));
+    lv_obj_align(r.sub, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+  }
+}
+
 // Action, toggle and slider: icon top left, state top right, name at the
 // bottom; a one-line row on short wide tiles; the icon alone on tiny ones.
 void fitButton(TileRt& r, int cw, int ch) {
@@ -157,6 +200,10 @@ void fitButton(TileRt& r, int cw, int ch) {
     }
     lv_obj_center(r.chip);
     lv_obj_center(r.icon);
+    return;
+  }
+  if (s_theme == THEME_MIDNIGHT_STUDIO) {
+    fitStudioButton(r, cw, ch);
     return;
   }
   struct Opt {
@@ -314,11 +361,82 @@ void fitRows(TileRt& r, int cw, int ch) {
   layoutRows(r);
 }
 
+// Dashboard sensor card: reusable across every theme. This is a layout style,
+// not a theme: colours, wallpaper and existing entity/tap behaviour remain
+// controlled by the selected theme. Short/small cards fall back to fitSensor.
+void fitSensorCard(TileRt& r, int cw, int ch) {
+  const bool icon = !iconOff(r);
+  const bool hasName = !r.def->noName;
+  // Small cells use a simple row rather than letting the label and value
+  // overlap. Preserve the existing fitting logic for that case.
+  if (cw < 75 || ch < 60) {
+    const int iconW = icon && cw >= 95 ? 24 : 0;
+    showObj(r.chip, iconW > 0);
+    if (iconW) {
+      fitChip(r, 22);
+      lv_obj_align(r.chip, LV_ALIGN_LEFT_MID, 0, 0);
+    }
+    r.nameFont = nullptr;
+    const int left = iconW ? 28 : 0;
+    const int valueW = hasName ? std::max(32, (cw - left) / 2) : cw - left;
+    r.valFont = &deck_font_20;
+    r.valW = valueW;
+    r.chipRoom = 0;
+    r.unitFont = nullptr;
+    r.besideName = false;
+    lv_obj_set_style_pad_right(r.sub, 0, 0);
+    lv_obj_set_size(r.sub, valueW, lineH(&deck_font_20));
+    lv_obj_set_style_text_align(r.sub, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_align(r.sub, LV_ALIGN_RIGHT_MID, 0, 0);
+    fitValue(r);
+    fitName(r.name, &deck_font_12, 1);
+    lv_obj_set_width(r.name, std::max(1, cw - left - valueW - 4));
+    lv_obj_align(r.name, LV_ALIGN_LEFT_MID, left, 0);
+    showObj(r.name, hasName);
+    showObj(r.detail, false);
+    return;
+  }
+
+  const int chip = icon ? 30 : 0;
+  if (icon) {
+    fitChip(r, chip);
+    lv_obj_align(r.chip, LV_ALIGN_TOP_LEFT, 0, 0);
+  }
+  showObj(r.chip, icon);
+  r.nameFont = nullptr;
+  const lv_font_t* nameFont = cw >= 145 ? &deck_font_14 : &deck_font_12;
+  fitName(r.name, nameFont, 1);
+  lv_obj_set_style_text_opa(r.name, LV_OPA_90, 0);
+  lv_obj_set_style_text_align(r.name, LV_TEXT_ALIGN_LEFT, 0);
+  lv_obj_set_size(r.name, std::max(1, cw - chip - (icon ? 6 : 0)), lineH(nameFont));
+  lv_obj_align(r.name, LV_ALIGN_TOP_LEFT, icon ? chip + 6 : 0,
+               icon ? (chip - lineH(nameFont)) / 2 : 0);
+  showObj(r.name, hasName);
+
+  const bool detail = r.detail && ch >= 95;
+  const int bottom = detail ? lineH(&deck_font_12) + 3 : 0;
+  r.valFont = cw >= 115 && ch >= 88 ? &deck_font_28 : &deck_font_20;
+  r.valW = cw;
+  r.chipRoom = 0;
+  r.unitFont = nullptr;
+  r.besideName = false;
+  lv_obj_set_style_pad_right(r.sub, 0, 0);
+  lv_obj_set_size(r.sub, cw, lineH(r.valFont));
+  lv_obj_set_style_text_align(r.sub, LV_TEXT_ALIGN_LEFT, 0);
+  lv_obj_align(r.sub, LV_ALIGN_BOTTOM_LEFT, 0, -bottom);
+  fitValue(r);
+  fitDetail(r, &deck_font_12, cw, LV_ALIGN_BOTTOM_LEFT, 0, detail);
+}
+
 // Sensor: the reading big at the top with a small icon top right, the name
 // under it; a row (name left, reading right) on short tiles.
 void fitSensor(TileRt& r, int cw, int ch) {
   if (r.rows) {
     fitRows(r, cw, ch);
+    return;
+  }
+  if (r.def->style == METRIC_CARD) {
+    fitSensorCard(r, cw, ch);
     return;
   }
   struct Opt {
@@ -942,7 +1060,8 @@ void fitWeatherClock(TileRt& r, int cw, int ch) {
 int tilePadding(int width, int height) {
   const int side = std::min(width, height);
   // Leave at least half the tile for content when the tile is very small.
-  if (s_theme == THEME_TACTULA) return std::min<int>(dispSettings.tactulaPadding, side / 4);
+  if (s_theme == THEME_TACTULA || s_theme == THEME_MIDNIGHT_STUDIO)
+    return std::min<int>(dispSettings.tactulaPadding, side / 4);
   return side >= 80 ? 9 : side >= 56 ? 7 : 5;
 }
 

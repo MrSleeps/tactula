@@ -361,6 +361,14 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         t.clockBox = tv["box"].as<bool>();
       if (t.type == TILE_SENSOR && tv["showEntityId"].is<bool>())
         t.showEntityId = tv["showEntityId"].as<bool>();
+      if (t.type == TILE_SENSOR || t.type == TILE_WEATHER_CLOCK) {
+        t.weatherPopupTitle = (const char*)(tv["weatherPopupTitle"] | "");
+        t.weatherPopupTitle.trim();
+        // Bound user-entered strings to avoid oversized popup labels.
+        if (t.weatherPopupTitle.length() > 64)
+          t.weatherPopupTitle = t.weatherPopupTitle.substring(0, 64);
+        t.hideWeatherPopupTitle = tv["hideWeatherPopupTitle"] | false;
+      }
       t.hasColor = parseColor(tv["color"] | (const char*)nullptr, t.color);
       t.hasTextColor = parseColor(tv["textColor"] | (const char*)nullptr, t.textColor);
       t.hasChartColor = parseColor(tv["chartColor"] | (const char*)nullptr, t.chartColor);
@@ -429,7 +437,8 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
           }
         }
         const char* style = tv["style"] | "number";
-        t.style = !strcmp(style, "chart") && t.rows.empty() ? METRIC_CHART :
+        t.style = !strcmp(style, "card") ? METRIC_CARD :
+                  !strcmp(style, "chart") && t.rows.empty() ? METRIC_CHART :
                   !strcmp(style, "headline") && t.rows.empty() ? METRIC_HEADLINE :
                   !strcmp(style, "weather") && t.rows.empty() && t.entity.startsWith("weather.")
                     ? METRIC_WEATHER : METRIC_NUMBER;
@@ -455,6 +464,17 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         }
         p.tiles.push_back(t);
         continue;  // inline thermostat has its own controls, not tile tap actions
+      }
+      if (t.type == TILE_BAMBU) {
+        t.bambuAmsUnit = constrain((int)(tv["bambuAmsUnit"] | 1), 1, 6);
+        const char* look = tv["bambuLook"] | "dashboard";
+        if (!strcmp(look, "auto")) t.bambuLook = 0;
+        else if (!strcmp(look, "classic")) t.bambuLook = 1;
+        else if (!strcmp(look, "dashboard")) t.bambuLook = 2;
+        else {
+          if (err) *err = where + ": invalid Bambu look";
+          return false;
+        }
       }
       if (t.type == TILE_WEATHER_CLOCK) {
         const char* iconPack = tv["weatherIcons"] | "mdi";

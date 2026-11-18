@@ -373,13 +373,29 @@ void markPageStale(int page) {
 }
 
 uint32_t tileAccent(const TileDef& def) {
-  return def.hasColor ? def.color : domainColor(entityDomain(def.entity));
+  if (def.hasColor) return def.color;
+  if (s_theme == THEME_MIDNIGHT_STUDIO) {
+    const String domain = entityDomain(def.entity);
+    if (domain == "light") return 0x4F8CFF;
+    if (domain == "media_player") return 0xA18AFF;
+    if (domain == "climate") return 0xF5AD46;
+    if (domain == "sensor" || domain == "binary_sensor") return 0x38CFA4;
+    if (domain == "switch" || domain == "fan") return 0x76A8FF;
+    return 0x4F8CFF;
+  }
+  return domainColor(entityDomain(def.entity));
 }
 
 // Per-tile look from deck.json, else the theme and display settings.
 uint32_t tileBg(const TileDef& d) { return d.hasBgColor ? d.bgColor : C_TILE; }
-int tileTint(const TileDef& d) { return d.opacity >= 0 ? d.opacity : dispSettings.glassTint; }
-int tileOnOpa(const TileDef& d) { return d.onOpacity >= 0 ? d.onOpacity : dispSettings.glassOn; }
+int tileTint(const TileDef& d) {
+  // Midnight needs defined navy containers over the image, not Glass's
+  // lightweight tint. Explicit per-tile opacity still takes precedence.
+  return d.opacity >= 0 ? d.opacity : s_theme == THEME_MIDNIGHT_STUDIO ? dispSettings.midnightTint : dispSettings.glassTint;
+}
+int tileOnOpa(const TileDef& d) {
+  return d.onOpacity >= 0 ? d.onOpacity : s_theme == THEME_MIDNIGHT_STUDIO ? dispSettings.midnightOn : dispSettings.glassOn;
+}
 
 // Home Assistant normally includes rgb_color, including for some white modes.
 // Convert Kelvin to approximate RGB when a white-only light omits rgb_color.
@@ -409,6 +425,7 @@ uint32_t tileOnFill(const TileDef& d) {
   if (d.hasOnColor) return d.onColor;
   const uint32_t accent = tileAccent(d);
   if (s_theme == THEME_TACTULA && !d.hasColor) return C_OK;
+  if (s_theme == THEME_MIDNIGHT_STUDIO) return lightTint(accent, tileBg(d), 52);
   if (s_theme == THEME_MINIMAL_CONSOLE) return lightTint(accent, tileBg(d), 100);
   return accent;
 }
@@ -436,7 +453,9 @@ void tileIconColor(TileRt& r, const HaEntity* e) {
     uint32_t fill = fixed;
     if (live) {
       const int strength = 110 + (e->brightness < 0 ? 145 : e->brightness * 145 / 255);
-      fill = lightTint(rgb, tileBg(d), followIcon ? min(strength, 150) : strength);
+      fill = s_theme == THEME_MIDNIGHT_STUDIO
+                 ? lightTint(rgb, tileBg(d), min(strength, 65))  // Keep wallpaper cards dark.
+                 : lightTint(rgb, tileBg(d), followIcon ? min(strength, 150) : strength);
     }
     lv_obj_set_style_bg_color(r.obj, lv_color_hex(fill), LV_STATE_CHECKED);
     lv_obj_set_style_bg_color(r.obj, lv_color_mix(lv_color_hex(fill), lv_color_black(), 200),
@@ -484,7 +503,7 @@ void glassStyle(lv_obj_t* t, const TileDef& def) {
   lv_obj_set_style_bg_opa(t, liveTint ? off : LV_OPA_30, LV_STATE_PRESSED);
   lv_obj_set_style_bg_opa(t, on, LV_STATE_CHECKED);
   lv_obj_set_style_bg_opa(t, on, LV_STATE_PRESSED | LV_STATE_CHECKED);
-  lv_obj_set_style_border_width(t, 0, 0);
+  if (s_theme != THEME_MIDNIGHT_STUDIO) lv_obj_set_style_border_width(t, 0, 0);
   // A faint fill alone hardly tells on from off: outline it in the accent.
   if (onPct < 50 && s_theme != THEME_TACTULA) {
     lv_obj_set_style_border_width(t, 2, LV_STATE_CHECKED);
@@ -517,20 +536,21 @@ bool tileBaked(const TileDef& def) {
 void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, int w, int h) {
   const String domain = entityDomain(def.entity);
   const uint32_t accent = tileAccent(def);
-  const bool boxedChild = s_theme == THEME_TACTULA && def.parent.length() && !tileBare(def);
-  const bool glass = themeUsesWallpaper(s_theme) && wallBlur() && (tileBaked(def) || boxedChild);
+  const bool studio = s_theme == THEME_MIDNIGHT_STUDIO;
+  const bool boxedChild = (s_theme == THEME_TACTULA || studio) && def.parent.length() && !tileBare(def);
+  const bool glass = themeUsesWallpaper(s_theme) && (studio || wallBlur()) && (tileBaked(def) || boxedChild);
 
   lv_obj_t* t = lv_obj_create(grid);
   lv_obj_set_grid_cell(t, LV_GRID_ALIGN_STRETCH, col, w, LV_GRID_ALIGN_STRETCH, row, h);
   lv_obj_remove_flag(t, LV_OBJ_FLAG_SCROLLABLE);
   int radius = 16;
-  if (s_theme == THEME_TACTULA) radius = dispSettings.tactulaRadius;
+  if (s_theme == THEME_TACTULA || s_theme == THEME_MIDNIGHT_STUDIO) radius = dispSettings.tactulaRadius;
   else if (s_theme == THEME_MINIMAL_CONSOLE) radius = 6;
   lv_obj_set_style_radius(t, radius, 0);
   // Light themes use a hairline to separate the tile from the page.
   lv_obj_set_style_border_width(t, s_theme == THEME_DAYLIGHT ? 1 : 0, 0);
   lv_obj_set_style_border_color(t, lv_color_hex(C_TILE_LINE), 0);
-  lv_obj_set_style_pad_all(t, 9, 0);
+  lv_obj_set_style_pad_all(t, s_theme == THEME_MIDNIGHT_STUDIO ? dispSettings.tactulaPadding : 9, 0);
   const uint32_t onFill = tileOnFill(def);
   lv_obj_set_style_bg_color(t, lv_color_hex(tileBg(def)), 0);
   lv_obj_set_style_bg_color(t, lv_color_hex(onFill), LV_STATE_CHECKED);
@@ -549,7 +569,7 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_add_event_cb(t, fxPressed, LV_EVENT_RELEASED, nullptr);
   lv_obj_add_event_cb(t, fxPressed, LV_EVENT_PRESS_LOST, nullptr);
   if (glass) glassStyle(t, def);
-  if (s_theme == THEME_TACTULA && !tileBare(def)) {
+  if ((s_theme == THEME_TACTULA || s_theme == THEME_MIDNIGHT_STUDIO) && !tileBare(def)) {
     // An inset outline preserves the content area and group geometry.
     lv_obj_set_style_outline_width(t, 1, 0);
     lv_obj_set_style_outline_pad(t, -1, 0);
@@ -557,6 +577,13 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     lv_obj_set_style_outline_width(t, 2, LV_STATE_CHECKED);
     lv_obj_set_style_outline_pad(t, -2, LV_STATE_CHECKED);
     lv_obj_set_style_outline_color(t, lv_color_hex(C_OK), LV_STATE_CHECKED);
+    if (s_theme == THEME_MIDNIGHT_STUDIO) {
+      // Distinct container outline; no expensive per-frame shadows.
+      lv_obj_set_style_border_width(t, 1, 0);
+      lv_obj_set_style_border_color(t, lv_color_hex(C_TILE_LINE), 0);
+      lv_obj_set_style_border_width(t, 2, LV_STATE_CHECKED);
+      lv_obj_set_style_border_color(t, lv_color_hex(C_OK), LV_STATE_CHECKED);
+    }
   }
   // Clock without a card: don't draw a tile fill, outline or shadow.
   // Glass-theme backgrounds are also omitted from bakeGlass().
@@ -662,9 +689,10 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     return;
   }
 
-  // Echo-style read-only clock: weather and short date above one large time.
+  // Weather clock is primarily read-only, but a short tap should open the
+  // corresponding weather details just like a Weather sensor tile.
   if (def.type == TILE_WEATHER_CLOCK) {
-    lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(t, LV_OBJ_FLAG_CLICKABLE);
     TileRt r = {};
     r.def = &def;
     r.page = page;
@@ -687,6 +715,10 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
     const size_t idx = s_tiles.size();
     s_tiles.push_back(r);
     applyWeatherClock(s_tiles.back());
+    lv_obj_add_event_cb(t, [](lv_event_t* ev) {
+      const int tile = (int)(uintptr_t)lv_event_get_user_data(ev);
+      if (tile >= 0 && tile < (int)s_tiles.size()) openModal(tile);
+    }, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)idx);
     lv_obj_add_event_cb(t, fitEvent, LV_EVENT_SIZE_CHANGED, (void*)(uintptr_t)idx);
     return;
   }
@@ -745,8 +777,13 @@ void makeTile(lv_obj_t* grid, const TileDef& def, int page, int col, int row, in
   lv_obj_t* chip = lv_obj_create(t);
   lv_obj_remove_flag(chip, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
   lv_obj_set_size(chip, 30, 30);
-  lv_obj_set_style_radius(chip, LV_RADIUS_CIRCLE, 0);
-  lv_obj_set_style_border_width(chip, 0, 0);
+  const bool sensorCard = def.type == TILE_SENSOR && def.style == METRIC_CARD;
+  lv_obj_set_style_radius(chip, (s_theme == THEME_MIDNIGHT_STUDIO || sensorCard) ? 9 : LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_border_width(chip, (s_theme == THEME_MIDNIGHT_STUDIO || sensorCard) ? 1 : 0, 0);
+  if (s_theme == THEME_MIDNIGHT_STUDIO || sensorCard) {
+    lv_obj_set_style_border_color(chip, lv_color_hex(lightTint(accent, C_TILE_LINE, 55)), 0);
+    lv_obj_set_style_bg_opa(chip, LV_OPA_COVER, 0);
+  }
   lv_obj_set_style_pad_all(chip, 0, 0);
   styleIconChip(chip, accent);
   if (def.iconPlain || def.type == TILE_NAV || s_theme == THEME_MINIMAL_CONSOLE)

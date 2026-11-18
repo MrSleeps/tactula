@@ -63,6 +63,22 @@ void setPalette(uint8_t theme) {
     C_PANEL = 0x171E2C;
     C_TRACK = 0x393460;
     C_BUTTON = 0x312A59;
+  } else if (s_theme == THEME_MIDNIGHT_STUDIO) {
+    // Domestic Bot / Figma palette, adapted for the LVGL renderer.
+    C_BG = 0x0B1020;
+    C_TILE = 0x151D32;
+    C_TILE_PRESSED = 0x1C2948;
+    C_TILE_LINE = 0x222D48;
+    C_CHIP = 0x1C2A48;
+    C_TEXT = 0xF8FAFC;
+    C_TEXT_ON = 0xF8FAFC;
+    C_TITLE = 0xF8FAFC;
+    C_CLOCK = 0xF8FAFC;  // Match the large clock to the white temperature and title.
+    C_OK = 0x4F8CFF;
+    C_DIM = 0xAAB4C5;
+    C_PANEL = 0x151D32;
+    C_TRACK = 0x222D48;
+    C_BUTTON = 0x1C2948;
   } else if (s_theme == THEME_MINIMAL_CONSOLE) {
     C_BG = 0x141616;
     C_TILE = 0x212424;
@@ -402,16 +418,20 @@ void addTilesPage(const PageDef& def) {
   p = {};
   p.def = &def;
   p.root = makeRoot(w, h);
-  if (s_theme == THEME_TACTULA) {
+  if (s_theme == THEME_TACTULA || s_theme == THEME_MIDNIGHT_STUDIO) {
     p.headerBand = lv_obj_create(p.root);
     lv_obj_remove_style_all(p.headerBand);
     lv_obj_remove_flag(p.headerBand, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(p.headerBand, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(p.headerBand, w, HEADER_H);
     lv_obj_set_style_bg_color(p.headerBand, lv_color_hex(C_PANEL), 0);
-    lv_obj_set_style_bg_opa(p.headerBand, LV_OPA_COVER, 0);
+    // A quiet tinted overlay leaves the wallpaper visible across the header.
+    // Keep Tactula's original solid header and accent rule unchanged.
+    lv_obj_set_style_bg_opa(p.headerBand,
+                           s_theme == THEME_MIDNIGHT_STUDIO ? LV_OPA_50 : LV_OPA_COVER, 0);
     lv_obj_set_style_border_side(p.headerBand, LV_BORDER_SIDE_BOTTOM, 0);
-    lv_obj_set_style_border_width(p.headerBand, 2, 0);
+    lv_obj_set_style_border_width(p.headerBand,
+                                  s_theme == THEME_MIDNIGHT_STUDIO ? 0 : 2, 0);
     lv_obj_set_style_border_color(p.headerBand, lv_color_hex(C_OK), 0);
   }
 
@@ -590,7 +610,13 @@ void placePage(int page) {
 void buildPages() {
   fxQuiet();  // tiles get their first state: no animations
   const int w = logicalW();
-  if (themeUsesWallpaper(s_theme)) wallLoad(w, logicalH(), dispSettings.glassBlur, dispSettings.glassDim);
+  if (themeUsesWallpaper(s_theme)) {
+    // Retain the chosen wallpaper behind Midnight's darker Figma-inspired cards.
+    // Keep Glass/Tactula unchanged; avoid heavy blur when Midnight is selected.
+    const bool studio = s_theme == THEME_MIDNIGHT_STUDIO;
+    wallLoad(w, logicalH(), studio ? 0 : dispSettings.glassBlur,
+             studio ? max<int>(dispSettings.glassDim, 35) : dispSettings.glassDim);
+  }
   else wallFree();
   s_count = 0;
   s_tiles.clear();

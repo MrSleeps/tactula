@@ -22,6 +22,79 @@ constexpr uint32_t PRN_INK = 0xEDF0F8;
 constexpr uint32_t PRN_MUTED = 0xB8C1D2;
 uint32_t s_bambuSeen = UINT32_MAX;
 
+// Bambu Dashboard widgets share geometry, but must adopt each theme's
+// surfaces, text and border colours. Classic remains an explicit opt-out.
+constexpr uint32_t BAMBU_CARD_BLUE = 0x4F8CFF;
+bool dashboardBambu(const TileDef& d) { return d.bambuLook != 1; }
+uint32_t dashboardAccent(const TileDef& d) {
+  return d.hasColor ? d.color : BAMBU_CARD_BLUE;
+}
+void styleBambuCard(TileRt& r) {
+  if (!dashboardBambu(*r.def)) return;
+  lv_obj_t* parent = r.obj;
+  const String& kind = r.def->sub;
+  const uint32_t accent = dashboardAccent(*r.def);
+  const uint32_t foreground = C_TEXT;
+  const uint32_t muted = C_DIM;
+  const uint32_t border = C_TILE_LINE;
+  // Glass has already baked the wallpaper blur/tint and rounded tile edge
+  // into the page background. Never paint an opaque surface over that bake:
+  // the tile's initial glassStyle() must remain in control of its opacity.
+  // Non-wallpaper themes use their own actual card colour (white in
+  // Daylight, dark in Minimal Console). Glass and Midnight already bake the
+  // wallpaper/tint into the page, so painting over it hides the wallpaper.
+  if (s_theme != THEME_GLASS) {
+    lv_obj_set_style_radius(parent, 14, 0);
+    lv_obj_set_style_bg_color(parent, lv_color_hex(C_TILE), 0);
+    lv_obj_set_style_bg_opa(parent, s_theme == THEME_MIDNIGHT_STUDIO
+                                      ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(parent, 1, 0);
+    lv_obj_set_style_border_color(parent, lv_color_hex(border), 0);
+  }
+  lv_obj_set_style_pad_all(parent, 9, 0);
+  lv_obj_set_style_text_color(parent, lv_color_hex(foreground), 0);
+  if (r.viz) {
+    lv_obj_set_style_bg_color(r.viz, lv_color_hex(C_TRACK), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(r.viz, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(r.viz, lv_color_hex(accent), LV_PART_INDICATOR);
+    lv_obj_set_style_radius(r.viz, 4, LV_PART_MAIN);
+    lv_obj_set_style_radius(r.viz, 4, LV_PART_INDICATOR);
+  }
+  if (kind == "hero") {
+    // Status badge, job text, remaining-time and progress are still driven
+    // by the original printer data and all error/status state colours.
+    lv_obj_set_style_radius(r.name, 9, 0);
+    lv_obj_set_style_pad_hor(r.name, 9, 0);
+    lv_obj_set_style_pad_ver(r.name, 4, 0);
+    lv_obj_set_style_bg_color(r.chip, lv_color_hex(accent), 0);
+    lv_obj_set_style_bg_opa(r.chip, LV_OPA_20, 0);
+    lv_obj_set_style_text_color(r.sub, lv_color_hex(foreground), 0);
+    lv_obj_set_style_text_color(r.bambuParts[4], lv_color_hex(muted), 0);
+  } else if (kind == "light") {
+    lv_obj_set_style_radius(r.chip, 10, 0);
+    lv_obj_set_style_border_width(r.chip, 1, 0);
+    lv_obj_set_style_border_color(r.chip, lv_color_hex(border), 0);
+    lv_obj_set_style_text_color(r.icon, lv_color_hex(foreground), 0);
+    lv_obj_set_style_text_color(r.sub, lv_color_hex(muted), 0);
+  } else if (kind == "filament") {
+    // Preserve the real filament colour, including transparent/matte trays.
+    lv_obj_set_style_radius(r.chip, 12, 0);
+    lv_obj_set_style_border_color(r.chip, lv_color_hex(border), 0);
+    lv_obj_set_style_text_color(r.name, lv_color_hex(muted), 0);
+  } else {
+    if (r.name) lv_obj_set_style_text_color(r.name, lv_color_hex(muted), 0);
+    if (r.detail) lv_obj_set_style_text_color(r.detail, lv_color_hex(muted), 0);
+  }
+  if (kind == "slots" && r.rows) {
+    for (int i = 0; i < 8; ++i) {
+      lv_obj_t* cell = lv_obj_get_child(r.rows, i);
+      if (!cell) continue;
+      lv_obj_set_style_radius(cell, 9, 0);
+    }
+  }
+}
+
+
 lv_obj_t* box(lv_obj_t* parent, lv_flex_flow_t direction) {
   lv_obj_t* p = lv_obj_create(parent);
   lv_obj_remove_style_all(p);
@@ -152,7 +225,10 @@ void makeHero(TileRt& r, lv_obj_t* parent) {
   lv_obj_set_style_shadow_opa(r.bambuParts[6], LV_OPA_50, 0);
   lv_obj_t* top = box(parent, LV_FLEX_FLOW_ROW);
   r.bambuParts[0] = top;
-  lv_obj_set_width(top, lv_pct(100));
+  // A flex row without an explicit content height can retain LVGL's default
+  // 50px object height and push the remaining-time row out of the short tile.
+  // Match upstream's sizing without changing the approved visual layout.
+  lv_obj_set_size(top, lv_pct(100), LV_SIZE_CONTENT);
   lv_obj_set_flex_align(top, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   r.name = label(top, &deck_font_12);
   lv_obj_set_style_radius(r.name, 7, 0);
@@ -178,7 +254,7 @@ void makeHero(TileRt& r, lv_obj_t* parent) {
                       (void*)(uintptr_t)(s_tiles.size() - 1));
   lv_obj_t* middle = box(parent, LV_FLEX_FLOW_ROW);
   r.bambuParts[2] = middle;
-  lv_obj_set_width(middle, lv_pct(100));
+  lv_obj_set_size(middle, lv_pct(100), LV_SIZE_CONTENT);
   lv_obj_set_flex_align(middle, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
   lv_obj_set_flex_grow(middle, 1);
   r.bambuParts[3] = label(middle, &deck_font_28); // time remaining
@@ -224,6 +300,28 @@ void makeFilament(TileRt& r, lv_obj_t* parent) {
   r.sub = label(col, &deck_font_20);
   lv_obj_set_width(r.sub, lv_pct(100));
   r.viz = progress(col, 4);
+  if (!dashboardBambu(*r.def)) return;
+  // Upcoming job filament colours, if present in the Bambu mapping.
+  // These small swatches don't alter the existing spool / label area.
+  for (int i = 1; i <= 3; ++i) {
+    lv_obj_t* swatch = lv_obj_create(parent);
+    lv_obj_remove_style_all(swatch);
+    lv_obj_set_size(swatch, 9, 34);
+    lv_obj_set_style_radius(swatch, 4, 0);
+    lv_obj_set_style_bg_opa(swatch, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(swatch, 1, 0);
+    lv_obj_set_style_border_color(swatch, lv_color_hex(C_TILE_LINE), 0);
+    lv_obj_add_flag(swatch, LV_OBJ_FLAG_HIDDEN);
+    r.bambuParts[i] = swatch;
+  }
+}
+
+void makeSummary(TileRt& r, lv_obj_t* parent) {
+  configureTile(parent);
+  r.name = label(parent, &deck_font_12, LV_OPA_70);
+  r.sub = label(parent, &deck_font_20);
+  r.detail = label(parent, &deck_font_12, LV_OPA_70);
+  r.viz = progress(parent, 4);
 }
 
 void makeLayer(TileRt& r, lv_obj_t* parent) {
@@ -262,6 +360,29 @@ void makeLight(TileRt& r, lv_obj_t* parent, size_t index) {
   lv_obj_add_event_cb(parent, lightPress, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)index);
 }
 
+void amsDetailSlot(lv_obj_t* cell, const PrinterTray* tray, bool feeding) {
+  if (!cell) return;
+  const bool present = tray && tray->present;
+  const uint32_t rgb = present ? tray->rgb & 0xFFFFFF : C_TRACK;
+  lv_obj_set_style_bg_color(cell, lv_color_hex(rgb), 0);
+  lv_obj_set_style_bg_opa(cell, present ? LV_OPA_30 : LV_OPA_20, 0);
+  lv_obj_set_style_border_width(cell, feeding ? 2 : 1, 0);
+  lv_obj_set_style_border_color(cell, lv_color_hex(feeding ? BAMBU_CARD_BLUE : C_TILE_LINE), 0);
+  lv_obj_t* material = lv_obj_get_child(cell, 0);
+  lv_obj_t* remaining = lv_obj_get_child(cell, 1);
+  if (!material || !remaining) return;
+  lv_label_set_text(material, present ? (tray->type[0] ? tray->type : "Loaded") : "Empty");
+  char amount[12];
+  if (!present) amount[0] = '\0';
+  else if (tray->remain < 0) snprintf(amount, sizeof(amount), "?");
+  else snprintf(amount, sizeof(amount), "%d%%", tray->remain);
+  lv_label_set_text(remaining, amount);
+  lv_obj_set_style_text_color(material, lv_color_hex(C_TEXT), 0);
+  lv_obj_set_style_text_color(remaining,
+     lv_color_hex(present && tray->remain >= 0 && tray->remain <= 10
+                     ? (s_theme == THEME_DAYLIGHT ? 0xBC303B : PRN_ERROR) : C_DIM), 0);
+}
+
 void slotSet(lv_obj_t* slot, const PrinterTray* tray, bool selected, int slotNumber) {
   if (!slot) return;
   lv_obj_t* txt = lv_obj_get_child(slot, 0);
@@ -287,7 +408,28 @@ void makeAms(TileRt& r, lv_obj_t* parent, bool slots) {
   lv_label_set_text(r.name, r.def->label.c_str());
   r.sub = label(parent, &deck_font_20);
   r.detail = label(parent, &deck_font_12, LV_OPA_70);
-  if (!slots) return;
+  if (!slots) {
+    if (!dashboardBambu(*r.def)) return;
+    // Single AMS unit: compact filament cards with material and remaining %.
+    // Existing summary text remains visible in small tiles.
+    r.rows = box(parent, LV_FLEX_FLOW_ROW);
+    lv_obj_set_width(r.rows, lv_pct(100));
+    lv_obj_set_flex_grow(r.rows, 1);
+    lv_obj_set_style_pad_column(r.rows, 5, 0);
+    for (int i = 0; i < PRN_AMS_SLOTS; ++i) {
+      lv_obj_t* cell = box(r.rows, LV_FLEX_FLOW_COLUMN);
+      lv_obj_set_style_pad_all(cell, 4, 0);
+      lv_obj_set_style_pad_row(cell, 2, 0);
+      lv_obj_set_style_radius(cell, 9, 0);
+      lv_obj_set_style_border_width(cell, 1, 0);
+      lv_obj_set_style_bg_opa(cell, LV_OPA_COVER, 0);
+      lv_obj_t* material = label(cell, &deck_font_12);
+      lv_obj_set_width(material, lv_pct(100));
+      lv_obj_t* remaining = label(cell, &deck_font_12, LV_OPA_70);
+      lv_obj_set_width(remaining, lv_pct(100));
+    }
+    return;
+  }
   lv_obj_set_style_text_font(r.sub, &deck_font_14, 0);
   r.rows = box(parent, LV_FLEX_FLOW_ROW_WRAP);
   lv_obj_set_width(r.rows, lv_pct(100));
@@ -310,6 +452,7 @@ void makeAms(TileRt& r, lv_obj_t* parent, bool slots) {
 void makeBambu(TileRt& r, lv_obj_t* parent, size_t index) {
   const String& kind = r.def->sub;
   if (kind == "hero") makeHero(r, parent);
+  else if (kind == "summary") makeSummary(r, parent);
   else if (kind == "nozzle_left" || kind == "nozzle_right" ||
            kind == "bed" || kind == "chamber" || kind == "temperatures")
     makeTemperature(r, parent);
@@ -317,6 +460,7 @@ void makeBambu(TileRt& r, lv_obj_t* parent, size_t index) {
   else if (kind == "layer") makeLayer(r, parent);
   else if (kind == "light") makeLight(r, parent, index);
   else makeAms(r, parent, kind == "slots");
+  styleBambuCard(r);
   if (kind != "light") lv_obj_remove_flag(parent, LV_OBJ_FLAG_CLICKABLE);
   // New tiles need an initial snapshot even if printer state has not changed.
   // Rebuilding pages otherwise leaves them at their placeholder values.
@@ -356,11 +500,27 @@ void fitBambu(TileRt& r, int cw, int ch) {
       lv_obj_set_width(r.bambuParts[0], lv_pct(100));
       lv_obj_remove_flag(r.viz, LV_OBJ_FLAG_FLOATING);
     }
+  } else if (kind == "summary") {
+    lv_obj_set_style_text_font(r.sub, cw >= 120 && ch >= 65 ? &deck_font_28 : &deck_font_20, 0);
+    toggleVisible(r.detail, ch >= 70);
+    toggleVisible(r.viz, ch >= 45);
+  } else if (kind == "ams" && r.rows) {
+    // In a compact single-row tile keep the original AMS status readable.
+    const bool details = cw >= 150 && ch >= 112;
+    toggleVisible(r.rows, details);
+    for (int i = 0; i < PRN_AMS_SLOTS; ++i) {
+      lv_obj_t* cell = lv_obj_get_child(r.rows, i);
+      if (!cell) continue;
+      lv_obj_set_size(cell, LV_MAX(32, (cw - 15) / 4), LV_MAX(48, ch - 62));
+    }
+    toggleVisible(r.detail, !details);
   } else if (kind == "filament") {
     const int diameter = LV_MIN(44, ch - 7);
     lv_obj_set_size(r.chip, LV_MAX(12, diameter), LV_MAX(12, diameter));
     lv_obj_set_style_text_font(r.sub, ch >= 62 ? &deck_font_20 : &deck_font_14, 0);
     toggleVisible(r.name, ch >= 48);
+    if (cw < 180 || ch < 55)
+      for (int i = 1; i <= 3; ++i) toggleVisible(r.bambuParts[i], false);
   } else if (kind == "layer") {
     lv_obj_set_style_text_font(r.sub, ch >= 58 ? &deck_font_20 : &deck_font_14, 0);
     toggleVisible(r.name, ch >= 33);
@@ -396,10 +556,10 @@ void applyBambu(TileRt& r) {
       !strcmp(state->gcodeState, "FAILED") ? "FAILED" : "READY";
     const bool hasError = online && (state->printError || state->hmsCount);
     const uint32_t statusColor = hasError ? PRN_ERROR :
-      status == "PRINTING" ? PRN_VIOLET :
+      status == "PRINTING" ? (dashboardBambu(*r.def) ? dashboardAccent(*r.def) : PRN_VIOLET) :
       status == "PAUSED" ? PRN_HEAT :
       status == "FAILED" ? PRN_ERROR :
-      status == "DONE" ? PRN_BLUE : PRN_IDLE;
+      status == "DONE" ? (dashboardBambu(*r.def) ? dashboardAccent(*r.def) : PRN_BLUE) : PRN_IDLE;
     setText(r.name, hasError ? "ERROR" : status);
     lv_obj_set_style_bg_color(r.name, lv_color_hex(statusColor), 0);
     setText(r.sub, online ? (state->job[0] ? String(state->job) : "Printer ready") : "Waiting for printer");
@@ -463,14 +623,28 @@ void applyBambu(TileRt& r) {
       now = state->nozzle[0]; target = state->nozzleTarget[0];
     }
     const bool heating = online && isfinite(target) && target > 0 && isfinite(now);
-    const uint32_t colour = heating ? PRN_HEAT : PRN_INK;
+    const uint32_t colour = heating ? PRN_HEAT :
+      dashboardBambu(*r.def) ? C_TEXT : PRN_INK;
     setText(r.name, caption);
     setText(r.sub, online ? tempText(now) : "--");
     setText(r.detail, heating ? String("/") + String(target, 0) : "");
     lv_obj_set_style_text_color(r.sub, lv_color_hex(colour), 0);
     setProgress(r.viz, online && isfinite(now) ?
       (int)(100 * now / (heating ? target : maximum)) : 0,
-      heating ? PRN_HEAT : PRN_BLUE);
+      heating ? PRN_HEAT : dashboardBambu(*r.def) ? dashboardAccent(*r.def) : PRN_BLUE);
+  } else if (kind == "summary") {
+    const bool printing = online && (!strcmp(state->gcodeState, "RUNNING") ||
+                                     !strcmp(state->gcodeState, "PAUSE"));
+    const bool done = online && !strcmp(state->gcodeState, "FINISH");
+    const String status = !online ? "Connecting" : printing ?
+        (!strcmp(state->gcodeState, "PAUSE") ? "Paused" : "Printing") :
+        done ? "Done" : !strcmp(state->gcodeState, "FAILED") ? "Failed" : "Ready";
+    setText(r.name, status);
+    setText(r.sub, printing ? String(state->progress) + "%" : done ? "100%" : status);
+    setText(r.detail, printing ? duration(state->remainingMin) + " remaining" :
+            done ? "Finished" : "");
+    setProgress(r.viz, printing ? state->progress : done ? 100 : 0,
+                dashboardBambu(*r.def) ? dashboardAccent(*r.def) : PRN_BLUE);
   } else if (kind == "filament") {
     const PrinterTray* tray = online ? activeTray(*state) : nullptr;
     if (tray) {
@@ -490,28 +664,90 @@ void applyBambu(TileRt& r) {
       setText(r.sub, online ? "Not feeding" : "--");
       toggleVisible(r.viz, false);
     }
+    // Job mapping is ordered by the slicer. Show subsequent distinct loaded
+    // colours only when the current job/AMS slot can be matched to that map.
+    for (int i = 1; i <= 3; ++i) toggleVisible(r.bambuParts[i], false);
+    if (dashboardBambu(*r.def) && online && tray && state->mapCount &&
+        lv_obj_get_content_width(r.obj) >= 180 && lv_obj_get_content_height(r.obj) >= 55) {
+      int current = -1;
+      for (int k = 0; k < (int)state->mapCount && k < PRN_MAP_MAX; ++k) {
+        const uint16_t entry = state->map[k];
+        const uint8_t rawUnit = (uint8_t)(entry >> 8), slot = (uint8_t)entry;
+        if (state->activeUnit >= state->amsCount || slot != state->activeSlot) continue;
+        if (rawUnit == state->ams[state->activeUnit].id) { current = k; break; }
+      }
+      int swatches = 0;
+      for (int k = current + 1; current >= 0 && k < (int)state->mapCount &&
+                                      k < PRN_MAP_MAX && swatches < 3; ++k) {
+        const uint8_t unitId = (uint8_t)(state->map[k] >> 8);
+        const uint8_t slot = (uint8_t)state->map[k];
+        if (slot >= PRN_AMS_SLOTS) continue;
+        const PrinterTray* future = nullptr;
+        for (unsigned u = 0; u < state->amsCount && !future; ++u)
+          if (state->ams[u].present && state->ams[u].id == unitId &&
+              slot < state->ams[u].slots && state->ams[u].tray[slot].present)
+            future = &state->ams[u].tray[slot];
+        if (!future) continue;
+        if (future->rgb == tray->rgb) continue;
+        lv_obj_t* chip = r.bambuParts[++swatches];
+        if (!chip) break;
+        lv_obj_set_style_bg_color(chip, lv_color_hex(future->rgb & 0xFFFFFF), 0);
+        lv_obj_set_style_bg_opa(chip, future->alpha < 128 ? LV_OPA_50 : LV_OPA_COVER, 0);
+        toggleVisible(chip, true);
+      }
+    }
   } else if (kind == "layer") {
     setText(r.sub, online && state->totalLayers ? String(state->layer) : "--");
     setText(r.detail, online && state->totalLayers ?
       String("of ") + String(state->totalLayers) : "");
   } else if (kind == "light") {
     const bool lit = online && state->light == 1;
-    const uint32_t colour = lit ? PRN_HEAT : PRN_VIOLET;
+    const uint32_t colour = lit ? PRN_HEAT :
+      dashboardBambu(*r.def) ? dashboardAccent(*r.def) : PRN_VIOLET;
     lv_obj_set_style_bg_color(r.chip, lv_color_hex(colour), 0);
     setText(r.sub, !online ? "Offline" : state->light < 0 ? "Unavailable" :
       lit ? "On" : "Off");
   } else if (kind == "ams" || kind == "slots") {
-    setText(r.sub, online ? String(state->amsCount) + " AMS unit(s)" : "Connecting");
-    String info;
-    if (online && state->amsCount) {
-      const PrinterAmsUnit& unit = state->ams[0];
+    const int chosen = constrain((int)r.def->bambuAmsUnit - 1, 0, PRN_AMS_UNITS - 1);
+    const PrinterAmsUnit* selected = online && chosen < state->amsCount &&
+                                    state->ams[chosen].present ? &state->ams[chosen] : nullptr;
+    if (kind == "ams" && dashboardBambu(*r.def)) {
+      setText(r.name, r.def->label.length() ? r.def->label :
+              "AMS " + String(r.def->bambuAmsUnit));
+      String info;
+      if (selected) {
+        if (selected->humidity <= 100) info = String(selected->humidity) + "% RH";
+        if (isfinite(selected->temp)) {
+          if (info.length()) info += " · ";
+          info += String(selected->temp, 0) + "°";
+        }
+      }
+      setText(r.sub, info.length() ? info : online ? "No AMS data" : "Connecting");
       unsigned loaded = 0;
-      for (unsigned i = 0; i < unit.slots && i < PRN_AMS_SLOTS; ++i)
-        if (unit.tray[i].present) ++loaded;
-      info = String(loaded) + " slots loaded";
-      if (unit.humidity <= 100) info += " · " + String(unit.humidity) + "% RH";
+      if (selected)
+        for (unsigned i = 0; i < selected->slots && i < PRN_AMS_SLOTS; ++i)
+          if (selected->tray[i].present) ++loaded;
+      setText(r.detail, selected ? String(loaded) + " slots loaded" : "");
+      if (r.rows)
+        for (int i = 0; i < PRN_AMS_SLOTS; ++i) {
+          lv_obj_t* cell = lv_obj_get_child(r.rows, i);
+          toggleVisible(cell, selected && i < selected->slots);
+          if (selected && i < selected->slots)
+            amsDetailSlot(cell, &selected->tray[i],
+              state->activeUnit == chosen && state->activeSlot == i);
+        }
+    } else {
+      setText(r.sub, online ? String(state->amsCount) + " AMS unit(s)" : "Connecting");
+      String info;
+      if (selected) {
+        unsigned loaded = 0;
+        for (unsigned i = 0; i < selected->slots && i < PRN_AMS_SLOTS; ++i)
+          if (selected->tray[i].present) ++loaded;
+        info = String(loaded) + " slots loaded";
+        if (selected->humidity <= 100) info += " · " + String(selected->humidity) + "% RH";
+      }
+      setText(r.detail, info);
     }
-    setText(r.detail, info);
     if (kind == "slots" && r.rows) {
       unsigned count = 0;
       for (unsigned u = 0; online && u < state->amsCount && count < 8; ++u) {

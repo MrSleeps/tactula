@@ -3,13 +3,13 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <meta name="theme-color" content="#0c1019" />
+    <meta name="theme-color" content="#0b1020" />
     <title>tactula</title>
     <script>
       (function () {
         try {
           var m = localStorage.getItem("sn_mode") || "dark";
-          var a = localStorage.getItem("sn_accent") || "purple";
+          var a = localStorage.getItem("sn_accent") || "blue";
           document.documentElement.dataset.mode = m;
           document.documentElement.dataset.accent = a === "green" ? "purple" : a === "amber" ? "blue" : a;
         } catch (e) {}
@@ -361,6 +361,7 @@
                           <option value="2">Glass (wallpaper)</option>
                           <option value="3">Tactula</option>
                           <option value="4">Minimal Console (dark)</option>
+                          <option value="5">Tactula Midnight (default)</option>
                         </select>
                       </div>
                     </div>
@@ -429,12 +430,10 @@
                     </div>
                   </div>
                 </div>
-                <div class="card hidden" id="glassLook">
-                  <h2 class="card-title" id="glassLookTitle">Glass look</h2>
-                  <p class="field-hint" style="margin: 0 0 14px">
-                    Choose the background picture in <a href="#" data-page="wallpapers">Wallpapers</a>.
-                  </p>
-                  <div class="grid-2 hidden" id="tactulaLook">
+                <div class="card hidden" id="tactulaLook">
+                  <h2 class="card-title">Tile appearance</h2>
+                  <p class="field-hint">Midnight uses deep navy cards over your wallpaper, soft blue active borders and rounded icon badges. Adjust the tile opacity separately from Glass/Tactula. Individual tiles can still override these defaults.</p>
+                  <div class="grid-2">
                     <div class="field">
                       <label class="field-label" for="tactulaRadius">Tile corner radius</label>
                       <div class="range-row">
@@ -450,7 +449,29 @@
                       </div>
                       <p class="field-hint" data-tip>Small tiles use less padding to leave room for their contents. Groups use their own padding.</p>
                     </div>
+                    <div class="field hidden" id="midnightTintField">
+                      <label class="field-label" for="midnightTint">Widget background opacity</label>
+                      <div class="range-row">
+                        <input type="range" id="midnightTint" name="midnightTint" min="0" max="100" step="1" />
+                        <span class="range-val" id="midnightTintVal">--</span>
+                      </div>
+                      <p class="field-hint" data-tip>0% shows the wallpaper through the widgets; 100% gives an opaque navy background. Default: 90%.</p>
+                    </div>
+                    <div class="field hidden" id="midnightOnField">
+                      <label class="field-label" for="midnightOn">Active widget opacity</label>
+                      <div class="range-row">
+                        <input type="range" id="midnightOn" name="midnightOn" min="0" max="100" step="1" />
+                        <span class="range-val" id="midnightOnVal">--</span>
+                      </div>
+                      <p class="field-hint" data-tip>Opacity of the coloured fill on active widgets. Default: 92%. Per-widget settings override this.</p>
+                    </div>
                   </div>
+                </div>
+                <div class="card hidden" id="glassLook">
+                  <h2 class="card-title" id="glassLookTitle">Glass look</h2>
+                  <p class="field-hint" style="margin: 0 0 14px">
+                    Choose the background picture in <a href="#" data-page="wallpapers">Wallpapers</a>.
+                  </p>
                   <div class="grid-2">
                     <div class="field">
                       <label class="field-label" for="glassTint">Tile opacity</label>

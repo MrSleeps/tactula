@@ -215,6 +215,8 @@ static void handleApiConfig() {
   display["theme"] = dispSettings.theme;
   display["tactulaRadius"] = dispSettings.tactulaRadius;
   display["tactulaPadding"] = dispSettings.tactulaPadding;
+  display["midnightTint"] = dispSettings.midnightTint;
+  display["midnightOn"] = dispSettings.midnightOn;
   display["glassTint"] = dispSettings.glassTint;
   display["glassBlur"] = dispSettings.glassBlur;
   display["glassDim"] = dispSettings.glassDim;
@@ -323,6 +325,8 @@ static void handleConfigExport() {
   display["theme"] = dispSettings.theme;
   display["tactulaRadius"] = dispSettings.tactulaRadius;
   display["tactulaPadding"] = dispSettings.tactulaPadding;
+  display["midnightTint"] = dispSettings.midnightTint;
+  display["midnightOn"] = dispSettings.midnightOn;
   display["glassTint"] = dispSettings.glassTint;
   display["glassBlur"] = dispSettings.glassBlur;
   display["glassDim"] = dispSettings.glassDim;
@@ -538,6 +542,8 @@ static void handleConfigImport() {
   defaultDisplaySettings(displayDefaults);
   nextDisplay.tactulaRadius = displayDefaults.tactulaRadius;
   nextDisplay.tactulaPadding = displayDefaults.tactulaPadding;
+  nextDisplay.midnightTint = displayDefaults.midnightTint;
+  nextDisplay.midnightOn = displayDefaults.midnightOn;
   nextDisplay.glassTint = displayDefaults.glassTint;
   nextDisplay.glassBlur = displayDefaults.glassBlur;
   nextDisplay.glassDim = displayDefaults.glassDim;
@@ -563,6 +569,8 @@ static void handleConfigImport() {
     READ_INT(display, "tactulaRadius", 0, TACTULA_RADIUS_MAX, nextDisplay.tactulaRadius, uint8_t);
   if (!display["tactulaPadding"].isNull())
     READ_INT(display, "tactulaPadding", 0, TACTULA_PADDING_MAX, nextDisplay.tactulaPadding, uint8_t);
+  if (!display["midnightTint"].isNull()) READ_INT(display, "midnightTint", 0, 100, nextDisplay.midnightTint, uint8_t);
+  if (!display["midnightOn"].isNull()) READ_INT(display, "midnightOn", 0, 100, nextDisplay.midnightOn, uint8_t);
   if (!display["glassTint"].isNull()) READ_INT(display, "glassTint", 0, 100, nextDisplay.glassTint, uint8_t);
   if (!display["glassBlur"].isNull()) READ_INT(display, "glassBlur", 0, 24, nextDisplay.glassBlur, uint8_t);
   if (!display["glassDim"].isNull()) READ_INT(display, "glassDim", 0, 100, nextDisplay.glassDim, uint8_t);
@@ -1229,8 +1237,12 @@ static void handleSaveDisplay() {
   const uint8_t oldTheme = dispSettings.theme;
   const uint8_t oldRadius = dispSettings.tactulaRadius;
   const uint8_t oldPadding = dispSettings.tactulaPadding;
+  const uint8_t oldMidnightTint = dispSettings.midnightTint;
+  const uint8_t oldMidnightOn = dispSettings.midnightOn;
   dispSettings.tactulaRadius = (uint8_t)clampedArg("tactulaRadius", oldRadius, 0, TACTULA_RADIUS_MAX);
   dispSettings.tactulaPadding = (uint8_t)clampedArg("tactulaPadding", oldPadding, 0, TACTULA_PADDING_MAX);
+  dispSettings.midnightTint = (uint8_t)clampedArg("midnightTint", oldMidnightTint, 0, 100);
+  dispSettings.midnightOn = (uint8_t)clampedArg("midnightOn", oldMidnightOn, 0, 100);
   dispSettings.theme = (uint8_t)clampedArg("theme", dispSettings.theme, 0, THEME_MAX);
   const uint32_t oldGlass = dispSettings.glassOn << 24 | dispSettings.glassTint << 16 |
                             dispSettings.glassBlur << 8 | dispSettings.glassDim;
@@ -1257,7 +1269,10 @@ static void handleSaveDisplay() {
   saveSettings();
   if (dispSettings.rotation != oldRotation || dispSettings.theme != oldTheme) applyDisplaySettings();
   else if (glassChanged || (dispSettings.theme == THEME_TACTULA &&
-           (dispSettings.tactulaRadius != oldRadius || dispSettings.tactulaPadding != oldPadding)))
+           (dispSettings.tactulaRadius != oldRadius || dispSettings.tactulaPadding != oldPadding)) ||
+           (dispSettings.theme == THEME_MIDNIGHT_STUDIO &&
+           (dispSettings.midnightTint != oldMidnightTint || dispSettings.midnightOn != oldMidnightOn ||
+            dispSettings.tactulaRadius != oldRadius || dispSettings.tactulaPadding != oldPadding)))
     deckReloadWallpaper(false);
   sendJsonMessage(200, true, "Display settings applied.");
 }

@@ -21,6 +21,13 @@ lv_obj_t* s_modalRange = nullptr;
 lv_obj_t* s_modalWeatherInfo = nullptr;
 lv_obj_t* s_modalWeatherRight = nullptr;
 lv_obj_t* s_modalWeatherCondition = nullptr;
+// Midnight's weather observations are individual compact metric cards. The
+// legacy two-column label pointers remain in use for all other themes.
+constexpr int WEATHER_CARD_COUNT = 6;
+lv_obj_t* s_weatherCardBoxes[WEATHER_CARD_COUNT] = {};
+lv_obj_t* s_weatherCardNames[WEATHER_CARD_COUNT] = {};
+lv_obj_t* s_weatherCardValues[WEATHER_CARD_COUNT] = {};
+bool s_weatherCardLayout = false;
 lv_chart_series_t* s_modalSeries = nullptr;
 int32_t* s_modalPoints = nullptr;
 uint32_t s_modalHistoryVersion = 0;
@@ -165,6 +172,9 @@ bool s_climate = false;
 lv_obj_t* s_climMinus = nullptr;
 lv_obj_t* s_climPlus = nullptr;
 lv_obj_t* s_climInfo = nullptr;
+lv_obj_t* s_climGauge = nullptr;
+bool s_climGaugeSync = false;     // Ignore our own refresh-driven arc updates.
+bool s_climGaugeDragging = false; // Do not send HA commands mid-drag.
 std::vector<lv_obj_t*> s_climModeBtns;
 std::vector<String> s_climModes;
 float s_climWant = NAN, s_climWantHigh = NAN;  // high: heat_cool range only
@@ -268,6 +278,52 @@ void onClimateStep(lv_event_t* ev) {
   refreshModal();
 }
 
+// LVGL tracks the pointer around the arc. Convert its position into a real
+// Home Assistant setpoint, snapped to the climate entity's step and limits.
+// Updates remain local while dragging; the existing debounced HA service
+// path sends one command after the finger is lifted.
+void onClimateGauge(lv_event_t* ev) {
+  if (!modalTileOk() || !s_climate || !s_climGauge || s_climGaugeSync) return;
+  const lv_event_code_t code = lv_event_get_code(ev);
+  if (code == LV_EVENT_PRESSED) {
+    s_climGaugeDragging = true;
+    return;
+  }
+  if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+    if (s_climGaugeDragging && isfinite(s_climWant) && !s_climSent)
+      climateArm(CLIMATE_SEND_MS);
+    s_climGaugeDragging = false;
+    return;
+  }
+  if (code != LV_EVENT_VALUE_CHANGED) return;
+
+  HaEntity e;
+  if (!haGetEntity(modalEntity(), e) || !climateHasSetpoint(e)) return;
+  const float lo = isfinite(e.tempMin) ? e.tempMin : 5.0f;
+  const float hi = isfinite(e.tempMax) ? e.tempMax : 35.0f;
+  if (hi <= lo) return;
+  const float desired = climateClamp(e, lo + (hi - lo) * lv_arc_get_value(s_climGauge) / 100.0f);
+  if (climateRange(e)) {
+    // Heat/cool entities expose two setpoints; move the range together
+    // without changing its width or exceeding either entity limit.
+    const float baseLow = isfinite(s_climWant) ? s_climWant : e.targetLow;
+    const float baseHigh = isfinite(s_climWantHigh) ? s_climWantHigh : e.targetHigh;
+    if (!isfinite(baseLow) || !isfinite(baseHigh)) return;
+    const float delta = desired - baseLow;
+    if ((isfinite(e.tempMin) && baseLow + delta < e.tempMin) ||
+        (isfinite(e.tempMax) && baseHigh + delta > e.tempMax)) return;
+    s_climWant = climateClamp(e, baseLow + delta);
+    s_climWantHigh = climateClamp(e, baseHigh + delta);
+  } else {
+    s_climWant = desired;
+    s_climWantHigh = NAN;
+  }
+  s_climSent = false;
+  // A tap on the arc also counts; if no drag is in progress debounce normally.
+  if (!s_climGaugeDragging) climateArm(CLIMATE_SEND_MS);
+  refreshModal();
+}
+
 void onClimateMode(lv_event_t* ev) {
   if (!modalTileOk() || !s_climate) return;
   const size_t i = (size_t)(intptr_t)lv_event_get_user_data(ev);
@@ -289,7 +345,9 @@ void climateClose() {
     climateSend(modalEntity());
   climateWantClear();
   s_climate = false;
-  s_climMinus = s_climPlus = s_climInfo = nullptr;
+  s_climMinus = s_climPlus = s_climInfo = s_climGauge = nullptr;
+  s_climGaugeSync = false;
+  s_climGaugeDragging = false;
   s_climModeBtns.clear();
   s_climModes.clear();
   s_climModeWant = "";
@@ -332,6 +390,21 @@ void climateRefresh(const HaEntity* e) {
     info += climateWord(e->hvacAction);
   }
   lv_label_set_text(s_climInfo, info.c_str());
+  if (s_climGauge) {
+    const float target = isfinite(s_climWant) ? s_climWant :
+                         known ? (climateRange(*e) ? e->targetLow : e->target) : NAN;
+    const float lo = known && isfinite(e->tempMin) ? e->tempMin : 5.0f;
+    const float hi = known && isfinite(e->tempMax) ? e->tempMax : 35.0f;
+    const int pct = setpoint && isfinite(target) && hi > lo
+        ? constrain((int)lroundf((target - lo) * 100.0f / (hi - lo)), 0, 100) : 0;
+    if (setpoint) lv_obj_remove_state(s_climGauge, LV_STATE_DISABLED);
+    else lv_obj_add_state(s_climGauge, LV_STATE_DISABLED);
+    if (!s_climGaugeDragging) {
+      s_climGaugeSync = true;
+      lv_arc_set_value(s_climGauge, pct);
+      s_climGaugeSync = false;
+    }
+  }
   const String& mode = s_climModeWant.length() ? s_climModeWant : known ? e->state : String();
   for (size_t i = 0; i < s_climModeBtns.size(); i++) {
     if (s_climModes[i] == mode) lv_obj_add_state(s_climModeBtns[i], LV_STATE_CHECKED);
@@ -339,9 +412,114 @@ void climateRefresh(const HaEntity* e) {
   }
 }
 
+// Figma 1:360 circular climate control, adapted to the 320/480 LVGL display.
+// The arc is draggable and shares the existing HA setpoint/mode handlers,
+// keeping configured step sizes, clamp limits, debounce and pending state.
+int climateBuildStudio(lv_obj_t* c, int cw, int y, uint32_t accent, const HaEntity* e) {
+  // Full-screen viewport, keeping adequate space for HVAC controls.
+  const bool portrait = cw < lv_obj_get_height(c);
+  const int D = std::min(cw - 48, portrait ? 236 : 220);
+  const bool hasModes = e && e->hvacModes.indexOf(',') >= 0;
+  const int modesH = hasModes ? 52 : 0;
+  const int yDial = std::max<int>(12, (lv_obj_get_height(c) - D - modesH) / 2 - (portrait ? 4 : 2));
+  const int left = (cw - D) / 2;
+  s_climGauge = lv_arc_create(c);
+  lv_obj_set_pos(s_climGauge, left, yDial);
+  lv_obj_set_size(s_climGauge, D, D);
+  lv_arc_set_range(s_climGauge, 0, 100);
+  lv_arc_set_bg_angles(s_climGauge, 135, 45);
+  lv_obj_set_style_arc_width(s_climGauge, 8, LV_PART_MAIN);
+  lv_obj_set_style_arc_width(s_climGauge, 8, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_color(s_climGauge, lv_color_hex(0x34415B), LV_PART_MAIN);
+  lv_obj_set_style_arc_color(s_climGauge, lv_color_hex(C_OK), LV_PART_INDICATOR);
+  // LVGL draws this knob at the live end of the blue arc. Keeping it
+  // visually distinct also makes the drag target discoverable.
+  lv_obj_set_style_bg_color(s_climGauge, lv_color_hex(0xFFFFFF), LV_PART_KNOB);
+  lv_obj_set_style_bg_opa(s_climGauge, LV_OPA_COVER, LV_PART_KNOB);
+  lv_obj_set_style_radius(s_climGauge, LV_RADIUS_CIRCLE, LV_PART_KNOB);
+  lv_obj_set_style_pad_all(s_climGauge, 4, LV_PART_KNOB);
+  lv_obj_set_style_border_width(s_climGauge, 2, LV_PART_KNOB);
+  lv_obj_set_style_border_color(s_climGauge, lv_color_hex(C_OK), LV_PART_KNOB);
+  lv_obj_set_ext_click_area(s_climGauge, 9);
+  lv_obj_remove_flag(s_climGauge, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(s_climGauge, onClimateGauge, LV_EVENT_PRESSED, nullptr);
+  lv_obj_add_event_cb(s_climGauge, onClimateGauge, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_add_event_cb(s_climGauge, onClimateGauge, LV_EVENT_RELEASED, nullptr);
+  lv_obj_add_event_cb(s_climGauge, onClimateGauge, LV_EVENT_PRESS_LOST, nullptr);
+
+  lv_obj_set_style_text_align(s_modalState, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_pos(s_modalState, left + 8, yDial + D * 29 / 100);
+  lv_obj_set_size(s_modalState, D - 16, lv_font_get_line_height(&deck_font_28));
+
+  s_climInfo = lv_label_create(c);
+  lv_obj_set_style_text_font(s_climInfo, &deck_font_12, 0);
+  lv_obj_set_style_text_color(s_climInfo, lv_color_hex(C_DIM), 0);
+  lv_obj_set_style_text_align(s_climInfo, LV_TEXT_ALIGN_CENTER, 0);
+  lv_label_set_long_mode(s_climInfo, LV_LABEL_LONG_MODE_DOTS);
+  lv_obj_set_pos(s_climInfo, left + 7, yDial + D * 49 / 100);
+  lv_obj_set_size(s_climInfo, D - 14, lv_font_get_line_height(&deck_font_12));
+
+  auto step = [&](int x, const char* symbol, int dir) {
+    lv_obj_t* b = qpButton(c, x, yDial + D * 70 / 100, 40, symbol, false);
+    lv_obj_set_size(b, 40, 40);
+    lv_obj_set_style_radius(b, 11, 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(0x242E43), 0);
+    lv_obj_set_style_border_width(b, 1, 0);
+    lv_obj_set_style_border_color(b, lv_color_hex(0x3A4A65), 0);
+    lv_obj_set_style_text_color(b, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_opa(b, LV_OPA_40, LV_STATE_DISABLED);
+    lv_obj_set_ext_click_area(b, 6);
+    lv_obj_add_event_cb(b, onClimateStep, LV_EVENT_CLICKED, (void*)(intptr_t)dir);
+    return b;
+  };
+  s_climMinus = step(left + D / 2 - 47, LV_SYMBOL_MINUS, -1);
+  s_climPlus = step(left + D / 2 + 7, LV_SYMBOL_PLUS, 1);
+
+  s_climModes.clear();
+  s_climModeBtns.clear();
+  if (e) {
+    int from = 0;
+    while (from < (int)e->hvacModes.length() && s_climModes.size() < 8) {
+      int comma = e->hvacModes.indexOf(',', from);
+      if (comma < 0) comma = e->hvacModes.length();
+      if (comma > from) s_climModes.push_back(e->hvacModes.substring(from, comma));
+      from = comma + 1;
+    }
+  }
+  if (s_climModes.size() > 1) {
+    lv_obj_t* row = lv_obj_create(c);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_pos(row, 16, yDial + D + 10);
+    lv_obj_set_size(row, cw - 32, 40);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, s_climModes.size() <= 3 ? LV_FLEX_ALIGN_CENTER : LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(row, 7, 0);
+    lv_obj_set_scroll_dir(row, LV_DIR_HOR);
+    lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
+    for (size_t i = 0; i < s_climModes.size(); i++) {
+      lv_obj_t* b = qpButton(row, 0, 0, 10, climateWord(s_climModes[i]).c_str(), false);
+      lv_obj_set_width(b, LV_SIZE_CONTENT);
+      lv_obj_set_height(b, 40);
+      lv_obj_set_style_pad_hor(b, 10, 0);
+      lv_obj_set_style_min_width(b, 52, 0);
+      lv_obj_set_style_radius(b, 10, 0);
+      lv_obj_set_style_bg_color(b, lv_color_hex(0x242E43), 0);
+      lv_obj_set_style_bg_color(b, lv_color_hex(accent), LV_STATE_CHECKED);
+      lv_obj_set_style_border_width(b, 1, 0);
+      lv_obj_set_style_border_color(b, lv_color_hex(0x34435D), 0);
+      lv_obj_add_event_cb(b, onClimateMode, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+      s_climModeBtns.push_back(b);
+    }
+  } else s_climModes.clear();
+  return D + (hasModes ? 52 : 0);
+}
+
 // Builds the climate part of the card from y; returns the height it took.
 int climateBuild(lv_obj_t* c, int cw, int y, uint32_t accent, const HaEntity* e) {
   s_climate = true;
+  if (s_theme == THEME_MIDNIGHT_STUDIO)
+    return climateBuildStudio(c, cw, y, accent, e);
   constexpr int BTN = 52;
   auto stepButton = [&](int x, const char* sym, int dir) {
     lv_obj_t* b = qpButton(c, x, y, BTN, sym, false);
@@ -439,6 +617,44 @@ String weatherInfoColumn(const HaEntity& e, bool right, bool compact) {
   return lines;
 }
 
+// Repack available Home Assistant weather attributes into up to six cards.
+// Missing attributes are omitted, so no large empty panels are displayed.
+void refreshWeatherCards(const HaEntity* e) {
+  struct Entry { const char* name; float value; String unit; };
+  if (!s_weatherCardLayout) return;
+  if (!e || !e->known || e->state == "unavailable" || e->state == "unknown") {
+    for (int i = 0; i < WEATHER_CARD_COUNT; ++i)
+      if (s_weatherCardBoxes[i]) lv_obj_add_flag(s_weatherCardBoxes[i], LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  const Entry entries[] = {
+    {"Feels like", e->weatherFeels, e->weatherTempUnit},
+    {"Humidity", e->weatherHumidity, "%"},
+    {"Wind", e->weatherWind, e->weatherWindUnit.length() ? String(" ") + e->weatherWindUnit : String()},
+    {"Rain", e->weatherRainChance, "%"},
+    {"Dew point", e->weatherDew, e->weatherTempUnit},
+    {"Pressure", e->weatherPressure, e->weatherPressureUnit.length() ? String(" ") + e->weatherPressureUnit : String()},
+    {"UV index", e->weatherUV, ""},
+    {"Gusts", e->weatherGust, e->weatherWindUnit.length() ? String(" ") + e->weatherWindUnit : String()},
+    {"Visibility", e->weatherVisibility, e->weatherVisibilityUnit.length() ? String(" ") + e->weatherVisibilityUnit : String()},
+    {"Direction", e->weatherBearing, "\xC2\xB0"}
+  };
+  int shown = 0;
+  for (const Entry& entry : entries) {
+    if (!isfinite(entry.value)) continue;
+    if (shown >= WEATHER_CARD_COUNT) break;
+    char num[24];
+    formatReading(entry.value, num, sizeof(num));
+    const String value = String(num) + entry.unit;
+    lv_label_set_text(s_weatherCardNames[shown], entry.name);
+    lv_label_set_text(s_weatherCardValues[shown], value.c_str());
+    lv_obj_remove_flag(s_weatherCardBoxes[shown], LV_OBJ_FLAG_HIDDEN);
+    ++shown;
+  }
+  for (; shown < WEATHER_CARD_COUNT; ++shown)
+    lv_obj_add_flag(s_weatherCardBoxes[shown], LV_OBJ_FLAG_HIDDEN);
+}
+
 void closeModal() {
   if (s_modalSlider && s_modalTile >= 0 && s_modalTile < (int)s_tiles.size()) {
     if (Wish* w = findWish(s_tiles[s_modalTile].def->entity)) {
@@ -457,6 +673,12 @@ void closeModal() {
   s_modalIcon = nullptr;
   s_modalChart = s_modalRange = nullptr;
   s_modalWeatherInfo = s_modalWeatherRight = s_modalWeatherCondition = nullptr;
+  s_weatherCardLayout = false;
+  for (int i = 0; i < WEATHER_CARD_COUNT; ++i) {
+    s_weatherCardBoxes[i] = nullptr;
+    s_weatherCardNames[i] = nullptr;
+    s_weatherCardValues[i] = nullptr;
+  }
   s_modalSeries = nullptr;
   heap_caps_free(s_modalPoints);
   s_modalPoints = nullptr;
@@ -526,13 +748,17 @@ void refreshModal() {
   if (haKnown) st = wishText(r.def->entity, e, false);
   if (s_climate) {
     climateRefresh(haKnown ? &e : nullptr);
-  } else if (s_modalWeatherInfo) {
-    const bool good = haKnown && e.known;
+  } else if (s_modalWeatherInfo || s_weatherCardLayout) {
+    const bool good = haKnown && e.known && e.state != "unavailable" && e.state != "unknown";
     lv_label_set_text(s_modalState, good ? weatherTempText(e, true).c_str() : "--");
     lv_label_set_text(s_modalWeatherCondition, good ? weatherCondition(e.state).c_str() : "Waiting for weather");
-    const bool compact = lv_obj_get_width(s_modalWeatherInfo) < 150;
-    lv_label_set_text(s_modalWeatherInfo, good ? weatherInfoColumn(e, false, compact).c_str() : "");
-    lv_label_set_text(s_modalWeatherRight, good ? weatherInfoColumn(e, true, compact).c_str() : "");
+    if (s_weatherCardLayout) {
+      refreshWeatherCards(good ? &e : nullptr);
+    } else {
+      const bool compact = lv_obj_get_width(s_modalWeatherInfo) < 150;
+      lv_label_set_text(s_modalWeatherInfo, good ? weatherInfoColumn(e, false, compact).c_str() : "");
+      lv_label_set_text(s_modalWeatherRight, good ? weatherInfoColumn(e, true, compact).c_str() : "");
+    }
   } else if (r.def->type == TILE_SENSOR && r.def->style == METRIC_HEADLINE &&
              entityDomain(r.def->entity) == "climate") {
     lv_label_set_text(s_modalState, haKnown ? climateCurrentText(e, true).c_str() : "--");
@@ -568,7 +794,8 @@ void refreshModal() {
     }
   }
   const bool on = haKnown && wishOn(r.def->entity, e);
-  if (s_modalWeatherInfo && haKnown && !r.def->icon.length()) {
+  if ((s_modalWeatherInfo || s_weatherCardLayout) && haKnown &&
+      (!r.def->icon.length() || r.def->type == TILE_WEATHER_CLOCK)) {
     TileDef visual = *r.def;
     visual.icon = String("mdi:") + weatherIcon(e.state);
     s_modalIconCp = showIcon(s_modalIcon, visual, &e, on, 28, s_modalIconCp);
@@ -597,7 +824,8 @@ void openModal(int tileIdx) {
   HaEntity he;
   float hv;
   const bool haKnown = d.entity.length() && haGetEntity(d.entity, he);
-  const bool weather = d.type == TILE_SENSOR && d.style == METRIC_WEATHER;
+  const bool weather = (d.type == TILE_SENSOR && d.style == METRIC_WEATHER) ||
+                       d.type == TILE_WEATHER_CLOCK;
   const bool graph = d.type == TILE_SENSOR && d.style != METRIC_HEADLINE && !weather &&
                      haKnown && he.known && haNumericState(he.state, hv);
   // A climate-backed headline shows the current room temperature on the tile,
@@ -606,23 +834,28 @@ void openModal(int tileIdx) {
 
   s_modalScrim = makeScrim();
 
-  const int cw = w - 40 < 380 ? w - 40 : 380;
+  const bool studioClimate = climate && s_theme == THEME_MIDNIGHT_STUDIO;
+  const bool studioWeather = weather && s_theme == THEME_MIDNIGHT_STUDIO;
+  const int cw = (studioClimate || studioWeather) ? w : (w - 40 < 380 ? w - 40 : 380);
   int ch = weather ? std::min(h - 24, 306) : graph ? (light ? 304 : 284) : light ? 236 : 196;
   // Climate: +/- row (52), info line, mode chips when it has several modes.
   int nModes = 0;
   if (climate && haKnown)
     for (int i = 0, n = he.hvacModes.length(); i < n; i++) nModes += i == 0 || he.hvacModes[i] == ',';
-  if (climate) ch = 74 + 52 + 8 + lv_font_get_line_height(&deck_font_14) + 10 +
+  if (studioWeather) ch = h;
+  if (climate) ch = studioClimate ? h :
+                    74 + 52 + 8 + lv_font_get_line_height(&deck_font_14) + 10 +
                     (nModes > 1 ? 46 : 0) + 10 + 44 + 16;
   lv_obj_t* c = lv_obj_create(lv_layer_top());
   s_modalCard = c;
   lv_obj_remove_style_all(c);
   lv_obj_set_size(c, cw, ch);
-  lv_obj_center(c);
+  if (studioClimate || studioWeather) lv_obj_set_pos(c, 0, 0);
+  else lv_obj_center(c);
   lv_obj_set_style_bg_color(c, lv_color_hex(C_PANEL), 0);
   lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
-  lv_obj_set_style_radius(c, 22, 0);
-  if (themeUsesWallpaper(s_theme) &&
+  lv_obj_set_style_radius(c, (studioClimate || studioWeather) ? 0 : 22, 0);
+  if (themeUsesWallpaper(s_theme) && !studioClimate && !studioWeather &&
       (s_modalGlass = frostedCopy((w - cw) / 2, (h - ch) / 2, cw, ch, 22)))
     frostStyle(c, s_modalGlass);
   lv_obj_set_style_text_color(c, lv_color_hex(C_TEXT), 0);
@@ -642,20 +875,37 @@ void openModal(int tileIdx) {
   s_modalIconCp = 0;
   lv_label_set_text(s_modalIcon, "");
   lv_obj_center(s_modalIcon);
+  if (studioClimate) lv_obj_add_flag(chip, LV_OBJ_FLAG_HIDDEN);
+  if (studioWeather) {
+    lv_obj_set_pos(chip, 16, 14);
+    lv_obj_set_size(chip, 42, 42);
+    lv_obj_set_style_radius(chip, 12, 0);
+  }
 
   // Name and entity id: one line each, cut with dots (ids get long).
   lv_obj_t* name = lv_label_create(c);
   String title = tileLabel(d);
   if (!d.label.length() && haKnown && he.name.length())
     title = he.name;
+  if (weather && d.weatherPopupTitle.length()) title = d.weatherPopupTitle;
   lv_label_set_text(name, title.c_str());
   lv_obj_set_style_text_font(name, &deck_font_20, 0);
   lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
   lv_obj_set_size(name, cw - 88, lv_font_get_line_height(&deck_font_20));
   lv_obj_set_pos(name, 72, 15);
+  if (studioClimate || (weather && d.hideWeatherPopupTitle))
+    lv_obj_add_flag(name, LV_OBJ_FLAG_HIDDEN);
+  if (studioWeather) {
+    lv_obj_set_pos(name, 68, 20);
+    lv_obj_set_width(name, cw - 136);
+  }
   lv_obj_t* ent = lv_label_create(c);
   lv_label_set_text(ent, d.entity.length() ? d.entity.c_str() : "No entity");
-  if (weather && !d.showEntityId) lv_obj_add_flag(ent, LV_OBJ_FLAG_HIDDEN);
+  // Allow all sensor detail cards to hide the technical entity ID. Midnight
+  // climate intentionally hides its ID regardless of sensor preferences.
+  if ((weather && !d.showEntityId) ||
+      (d.type == TILE_SENSOR && !d.showEntityId) || studioClimate || studioWeather)
+    lv_obj_add_flag(ent, LV_OBJ_FLAG_HIDDEN);
   lv_obj_set_style_text_color(ent, lv_color_hex(C_DIM), 0);
   lv_label_set_long_mode(ent, LV_LABEL_LONG_MODE_DOTS);
   lv_obj_set_size(ent, cw - 88, lv_font_get_line_height(&deck_font_14));
@@ -668,8 +918,63 @@ void openModal(int tileIdx) {
   lv_obj_set_pos(s_modalState, 16, 74);
 
   s_modalSlider = nullptr;
-  if (weather) {
-    // Condition on its own line, observations in two balanced columns.
+  if (weather && studioWeather) {
+    // Dense, touch-friendly weather dashboard: temperature hero plus six
+    // compact observation cards, not two tall empty text panels.
+    const bool landscape = cw > ch;
+    const int infoX = landscape ? 194 : 16;
+    const int infoY = landscape ? 76 : 192;
+    const int gap = 8;
+    const int colW = (cw - infoX - 16 - gap) / 2;
+    const int rowH = landscape ? 65 : 68;
+    s_weatherCardLayout = true;
+
+    lv_obj_set_style_text_font(s_modalState, &lv_font_montserrat_40, 0);
+    lv_obj_set_style_text_align(s_modalState, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_pos(s_modalState, landscape ? 20 : 24, landscape ? 110 : 86);
+    lv_obj_set_size(s_modalState, landscape ? 168 : cw - 48, 52);
+
+    s_modalWeatherCondition = lv_label_create(c);
+    lv_obj_set_pos(s_modalWeatherCondition, landscape ? 23 : 26, landscape ? 172 : 138);
+    lv_obj_set_size(s_modalWeatherCondition, landscape ? 168 : cw - 52, 28);
+    lv_obj_set_style_text_font(s_modalWeatherCondition, &deck_font_20, 0);
+    lv_obj_set_style_text_color(s_modalWeatherCondition, lv_color_hex(C_DIM), 0);
+    lv_label_set_long_mode(s_modalWeatherCondition, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_remove_flag(s_modalWeatherCondition, LV_OBJ_FLAG_CLICKABLE);
+
+    for (int i = 0; i < WEATHER_CARD_COUNT; ++i) {
+      const int col = i % 2;
+      const int row = i / 2;
+      lv_obj_t* panel = lv_obj_create(c);
+      lv_obj_remove_style_all(panel);
+      lv_obj_set_pos(panel, infoX + col * (colW + gap), infoY + row * (rowH + gap));
+      lv_obj_set_size(panel, colW, rowH);
+      lv_obj_set_style_bg_color(panel, lv_color_hex(C_TILE), 0);
+      lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+      lv_obj_set_style_radius(panel, 12, 0);
+      lv_obj_set_style_border_width(panel, 1, 0);
+      lv_obj_set_style_border_color(panel, lv_color_hex(C_TILE_LINE), 0);
+      lv_obj_remove_flag(panel, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+      s_weatherCardBoxes[i] = panel;
+
+      lv_obj_t* label = lv_label_create(panel);
+      lv_obj_set_style_text_font(label, &deck_font_12, 0);
+      lv_obj_set_style_text_color(label, lv_color_hex(C_DIM), 0);
+      lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
+      lv_obj_set_pos(label, 10, 8);
+      lv_obj_set_size(label, colW - 20, 17);
+      s_weatherCardNames[i] = label;
+
+      lv_obj_t* value = lv_label_create(panel);
+      lv_obj_set_style_text_font(value, &deck_font_20, 0);
+      lv_obj_set_style_text_color(value, lv_color_hex(C_TEXT), 0);
+      lv_label_set_long_mode(value, LV_LABEL_LONG_MODE_DOTS);
+      lv_obj_set_pos(value, 10, 29);
+      lv_obj_set_size(value, colW - 20, 28);
+      s_weatherCardValues[i] = value;
+    }
+  } else if (weather) {
+    // Existing weather layout for the other themes.
     // Both fit above Close even on the 320px-high landscape layout.
     s_modalWeatherCondition = lv_label_create(c);
     lv_obj_set_pos(s_modalWeatherCondition, 16, 108);
@@ -691,7 +996,8 @@ void openModal(int tileIdx) {
       else s_modalWeatherRight = label;
     }
   }
-  if (climate) climateBuild(c, cw, 74, accent, haKnown ? &he : nullptr);
+  if (climate) climateBuild(c, cw, studioClimate ? 12 : 74,
+                            accent, haKnown ? &he : nullptr);
   if (light && !climate) {
     lv_obj_t* sl = lv_slider_create(c);
     s_modalSlider = sl;
@@ -748,10 +1054,26 @@ void openModal(int tileIdx) {
   lv_obj_add_event_cb(primary, onModalPrimary, LV_EVENT_CLICKED, nullptr);
   // Nothing to run when the tap only opens this card (sensors, numbers).
   const bool noPrimary = d.type == TILE_SENSOR || d.tap.kind == ACT_MORE_INFO;
-  if (noPrimary) lv_obj_add_flag(primary, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_t* close = qpButton(c, noPrimary ? 16 : 16 + bw + 10, by, noPrimary ? cw - 32 : bw, "Close", false);
-  lv_obj_set_height(close, 44);
-  lv_obj_add_event_cb(close, onModalScrim, LV_EVENT_CLICKED, nullptr);
+  if (noPrimary || studioClimate || studioWeather) lv_obj_add_flag(primary, LV_OBJ_FLAG_HIDDEN);
+  if (studioClimate || studioWeather) {
+    // The dial is the focus; use a compact X rather than a full-width footer.
+    // Keep the close target comfortable for the 3.5-inch touchscreen.
+    // A generous 48x48 hit target, while keeping the visible X compact.
+    lv_obj_t* close = qpButton(c, cw - 56, 8, 48, LV_SYMBOL_CLOSE, false);
+    lv_obj_set_height(close, 48);
+    lv_obj_set_ext_click_area(close, 8);
+    lv_obj_set_style_radius(close, 12, 0);
+    lv_obj_set_style_bg_color(close, lv_color_hex(0x242E43), 0);
+    lv_obj_set_style_border_width(close, 1, 0);
+    lv_obj_set_style_border_color(close, lv_color_hex(0x34435D), 0);
+    lv_obj_set_style_text_color(close, lv_color_hex(C_TEXT), 0);
+    lv_obj_add_event_cb(close, onModalScrim, LV_EVENT_CLICKED, nullptr);
+  } else {
+    lv_obj_t* close = qpButton(c, noPrimary ? 16 : 16 + bw + 10, by,
+                               noPrimary ? cw - 32 : bw, "Close", false);
+    lv_obj_set_height(close, 44);
+    lv_obj_add_event_cb(close, onModalScrim, LV_EVENT_CLICKED, nullptr);
+  }
 
   setModalOpen(true);
   s_modalBuilding = true;

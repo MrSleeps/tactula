@@ -16,7 +16,7 @@
 // day level follows an input_boolean, input_number or light.
 //
 // A sensor tile: { "type": "sensor", "entity": "sensor.temperature",
-//   "style": "number" | "chart", "hours": 24 (1..168),
+//   "style": "number" | "chart" | "card", "hours": 24 (1..168),
 //   "warn": 25, "crit": 30 } (thresholds optional, in the sensor unit).
 // crit < warn means lower is worse; otherwise higher is worse.
 // "format": "duration" shows a number in s / min / h / d as "1h 49m".
@@ -93,7 +93,7 @@ constexpr int MAX_DECK_PAGES = 8;
 constexpr int MAX_PAGE_TILES = 24;
 
 enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_SLIDER, TILE_CLOCK, TILE_CLIMATE, TILE_HA_MEDIA, TILE_NAV, TILE_BAMBU, TILE_GROUP, TILE_WEATHER_CLOCK };
-enum MetricStyle : uint8_t { METRIC_NUMBER = 0, METRIC_CHART, METRIC_BAR, METRIC_HEADLINE, METRIC_WEATHER };
+enum MetricStyle : uint8_t { METRIC_NUMBER = 0, METRIC_CHART, METRIC_BAR, METRIC_HEADLINE, METRIC_WEATHER, METRIC_CARD };
 enum ActionKind : uint8_t {
   ACT_NONE = 0,
   ACT_TOGGLE,        // toggle the tile's entity
@@ -159,7 +159,11 @@ struct TileDef {
   bool clockDate = false;       // Clock: "date": "always" forces date to fit.
   bool clockDateNever = false;  // Clock: "date": "never" hides the date.
   uint8_t weatherIcons = 0; // Weather Clock: MDI=0, Meteocons Fill=1, Flat=2, Skycons animated=3
-  bool showEntityId = true; // Weather popup: show the Home Assistant entity ID under its title.
+  uint8_t bambuLook = 0; // Bambu: dashboard=0 (default in ALL themes), classic=1; legacy 2 supported
+  uint8_t bambuAmsUnit = 1; // Bambu AMS detail widget: unit 1..6
+  bool showEntityId = true; // Sensor detail popup: optionally show the entity ID under the title.
+  String weatherPopupTitle;  // Optional weather details heading; empty = HA friendly name.
+  bool hideWeatherPopupTitle = false; // Hide the weather details heading, not the tile label.
   String onIcon;            // toggle: the icon while on, "" = icon
   String statusEntity;      // optional HA status entity for visual state
   String activeState = "on";

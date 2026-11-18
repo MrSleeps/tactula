@@ -335,6 +335,8 @@
     $("ledNightBrightnessVal").textContent = pct("ledNightBrightness");
     $("tactulaRadiusVal").textContent = $("tactulaRadius").value + " px";
     $("tactulaPaddingVal").textContent = $("tactulaPadding").value + " px";
+    $("midnightTintVal").textContent = $("midnightTint").value + "%";
+    $("midnightOnVal").textContent = $("midnightOn").value + "%";
     $("glassTintVal").textContent = $("glassTint").value + "%";
     $("glassBlurVal").textContent = $("glassBlur").value === "0" ? "Off" : $("glassBlur").value + " px";
     $("glassDimVal").textContent = $("glassDim").value + "%";
@@ -352,6 +354,8 @@
     "ledNightBrightness",
     "tactulaRadius",
     "tactulaPadding",
+    "midnightTint",
+    "midnightOn",
     "glassTint",
     "glassBlur",
     "glassDim",
@@ -364,10 +368,13 @@
   function updateGlassFields() {
     const theme = $("theme").value;
     const tactula = theme === "3";
+    const studio = theme === "5";
     $("glassLook").classList.toggle("hidden", theme !== "2" && !tactula);
-    $("tactulaLook").classList.toggle("hidden", !tactula);
+    $("tactulaLook").classList.toggle("hidden", !tactula && !studio);
+    $("midnightTintField").classList.toggle("hidden", !studio);
+    $("midnightOnField").classList.toggle("hidden", !studio);
     $("glassBlurField").classList.toggle("hidden", tactula);
-    $("glassLookTitle").textContent = tactula ? "Tactula look" : "Glass look";
+    $("glassLookTitle").textContent = tactula ? "Tactula glass look" : "Glass look";
   }
   $("theme").addEventListener("change", updateGlassFields);
   // Animations: the presets as touch, on/off, page, card (as on the deck);
@@ -637,6 +644,8 @@
     dailyStatus();
     setVal("tactulaRadius", c.display.tactulaRadius ?? 22);
     setVal("tactulaPadding", c.display.tactulaPadding ?? 9);
+    setVal("midnightTint", c.display.midnightTint ?? 90);
+    setVal("midnightOn", c.display.midnightOn ?? 92);
     setVal("glassTint", c.display.glassTint);
     setVal("glassBlur", c.display.glassBlur);
     setVal("glassDim", c.display.glassDim);

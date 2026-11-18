@@ -153,9 +153,11 @@ void defaultDisplaySettings(DisplaySettings& ds) {
   ds.tempScaleMax     = GAUGE_TEMP_SCALE_DEFAULT;
   ds.powerScaleW      = GAUGE_POWER_SCALE_DEFAULT;
   ds.warnThresholdPct = 90;
-  ds.theme            = THEME_GLASS;  // Bedroom deck defaults to the Glass theme
-  ds.glassTint        = 40;
-  ds.glassBlur        = 12;
+  ds.theme            = THEME_MIDNIGHT_STUDIO;  // Factory default; existing NVS choices are preserved
+  ds.glassTint        = 40;  // Glass/Tactula opacity; Midnight has its own controls
+  ds.midnightTint     = 90;  // Current Midnight look for existing installations
+  ds.midnightOn       = 92;
+  ds.glassBlur        = 12;  // Only used by wallpaper themes
   ds.glassDim         = 25;
   ds.glassOn          = 80;
   ds.wallEvery        = 5;
@@ -232,9 +234,11 @@ void loadSettings() {
     dispSettings.warnThresholdPct = prefs.getUChar("warnpct", dispSettings.warnThresholdPct);
   }
   dispSettings.theme = prefs.getUChar("theme", dispSettings.theme);
-  if (dispSettings.theme > THEME_MAX) dispSettings.theme = THEME_GLASS;
+  if (dispSettings.theme > THEME_MAX) dispSettings.theme = THEME_MIDNIGHT_STUDIO;
   dispSettings.tactulaRadius = min<uint8_t>(prefs.getUChar("tacradius", dispSettings.tactulaRadius), TACTULA_RADIUS_MAX);
   dispSettings.tactulaPadding = min<uint8_t>(prefs.getUChar("tacpadding", dispSettings.tactulaPadding), TACTULA_PADDING_MAX);
+  dispSettings.midnightTint = min<uint8_t>(prefs.getUChar("midntint", dispSettings.midnightTint), 100);
+  dispSettings.midnightOn = min<uint8_t>(prefs.getUChar("midnon", dispSettings.midnightOn), 100);
   dispSettings.glassTint = min<uint8_t>(prefs.getUChar("gtint", dispSettings.glassTint), 100);
   dispSettings.glassBlur = min<uint8_t>(prefs.getUChar("gblur", dispSettings.glassBlur), 24);
   dispSettings.glassDim = min<uint8_t>(prefs.getUChar("gdim", dispSettings.glassDim), 100);
@@ -351,6 +355,8 @@ void saveSettings() {
   prefs.putUChar("theme", dispSettings.theme);
   prefs.putUChar("tacradius", dispSettings.tactulaRadius);
   prefs.putUChar("tacpadding", dispSettings.tactulaPadding);
+  prefs.putUChar("midntint", dispSettings.midnightTint);
+  prefs.putUChar("midnon", dispSettings.midnightOn);
   prefs.putUChar("gtint", dispSettings.glassTint);
   prefs.putUChar("gblur", dispSettings.glassBlur);
   prefs.putUChar("gdim", dispSettings.glassDim);

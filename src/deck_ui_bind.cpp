@@ -943,6 +943,11 @@ std::vector<String> entityIds() {
       ids.push_back(r.def->statusEntity);
   }
   // One extra HA state subscription only when there is a Weather tile.
+  // A photo frame may use a weather entity that is not on any dashboard.
+  if (presenceSettings.frame && presenceSettings.frameClock && presenceSettings.frameWeatherEntity.length()) {
+    ids.push_back(presenceSettings.frameWeatherEntity);
+    hasWeatherTile = true;
+  }
   // HA provides the sunrise/sunset boundary through this native entity.
   if (hasWeatherTile) ids.push_back("sun.sun");
   for (const auto& s : s_whenStates) ids.push_back(s.first);

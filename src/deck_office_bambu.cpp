@@ -221,7 +221,13 @@ String officeBambuJson() {
   // Always wrap its char arrays in String so ArduinoJson owns their contents.
   JsonDocument doc(psramJson());
   doc["enabled"] = s_enabled;
+  const bool configured = s_enabled && s_serial.length() &&
+                          (s_ha || (s_address.length() && s_code.length()));
+  doc["configured"] = configured;
   doc["source"] = s_ha ? "ha" : "lan";
+  const char* connection = "disconnected";
+  const char* availability = "unknown";
+  if (configured && s_ha) printerHaOverview(ID, connection, availability);
   doc["address"] = s_address;
   doc["display_name"] = s_displayName;
   doc["camera"] = s_camera;
@@ -240,6 +246,13 @@ String officeBambuJson() {
         doc["status"] = st->link == PRN_ONLINE ? "online" :
                         st->link == PRN_CONNECTING ? "connecting" :
                         st->link == PRN_FAILED ? "failed" : "off";
+        if (configured && !s_ha) {
+          connection = st->link == PRN_ONLINE ? "connected" :
+                       st->link == PRN_CONNECTING ? "connecting" :
+                       st->link == PRN_FAILED ? "failed" : "disconnected";
+          availability = st->link == PRN_ONLINE ? "online" :
+                         st->link == PRN_FAILED ? "unreachable" : "unknown";
+        }
         doc["error"] = String(st->err);
         doc["state"] = String(st->gcodeState);
         doc["job"] = String(st->job);
@@ -283,6 +296,8 @@ String officeBambuJson() {
       delete st;
     }
   }
+  doc["connection"] = connection;
+  doc["availability"] = availability;
   if (doc.overflowed()) {
     debugSerial.println("Bambu: status JSON overflow (PSRAM) — response omitted");
     return R"json({"status":"unavailable","error":"Could not allocate status JSON"})json";

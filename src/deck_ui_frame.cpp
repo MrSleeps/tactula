@@ -196,16 +196,26 @@ Src source(const uint16_t* pixels) { return {pixels, (uint16_t)s_width, true, (u
 void selectClock() {
   s_frameClockDef = TileDef{};
   s_hasWeather = false;
-  for (int pass = 0; pass < 4; ++pass) {
+  bool found = false;
+  for (int pass = 0; pass < 4 && !found; ++pass) {
     const bool weather = pass < 2;
     for (const auto& tile : s_tiles) {
       if (!tile.def || tile.off || (pass % 2 == 0 && tile.page != sh.active)) continue;
       if (tile.def->type != (weather ? TILE_WEATHER_CLOCK : TILE_CLOCK)) continue;
       s_frameClockDef = *tile.def;
       s_hasWeather = weather;
-      return;
+      found = true;
+      break;
     }
   }
+  // A fixed source overrides the inherited entity, even without a weather tile.
+  if (presenceSettings.frameWeatherEntity.length()) {
+    s_frameClockDef.entity = presenceSettings.frameWeatherEntity;
+    s_frameClockDef.weatherApparent = false;
+    s_hasWeather = true;
+  }
+  if (presenceSettings.frameWeatherTemperature != 0)
+    s_frameClockDef.weatherApparent = presenceSettings.frameWeatherTemperature == 2;
 }
 
 void animateFrameWeather() {

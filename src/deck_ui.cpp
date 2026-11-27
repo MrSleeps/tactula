@@ -389,11 +389,15 @@ static lv_obj_t* s_firmwareConfirm = nullptr;
 // Track a freshly staged image independently of top-bar badge preferences.
 // Declining the popup must not make it appear once per second.
 static bool s_firmwarePrompted = false;
-static void closeFirmwareConfirm(lv_event_t*) {
+static void dismissFirmwareConfirm() {
   if (s_firmwareConfirm) {
     lv_obj_delete_async(s_firmwareConfirm);
     s_firmwareConfirm = nullptr;
   }
+}
+static void closeFirmwareConfirm(lv_event_t*) {
+  firmwareUpdate::cancelTouchConfirmation();
+  dismissFirmwareConfirm();
 }
 static void approveFirmwareFromTouch(lv_event_t*) {
   const bool approved = firmwareUpdate::installStagedFromTouch();
@@ -403,57 +407,112 @@ static void approveFirmwareFromTouch(lv_event_t*) {
 static void downloadFirmwareFromTouch(lv_event_t*) {
   // Queue a verified OTA download; the firmware is never installed without
   // a second physical confirmation after staging and validation.
-  firmwareUpdate::requestDownload();
+  firmwareUpdate::requestDownload(true);
   closeFirmwareConfirm(nullptr);
 }
 static void openFirmwareConfirmation(lv_event_t*) {
   if (s_firmwareConfirm) return;
   const auto st = firmwareUpdate::snapshot();
+  if (!st.allowTouchUpdates && !(st.staged && st.webConfirmationAuthorized)) return;
   if (!st.available && !st.staged && !st.downloading) return;
-  lv_obj_t* layer = lv_layer_top();
-  s_firmwareConfirm = lv_obj_create(layer);
-  lv_obj_set_size(s_firmwareConfirm, min<int>(logicalW() - 20, 340), LV_SIZE_CONTENT);
+  const int w = logicalW(), h = logicalH();
+  const bool large = std::min(w, h) >= 800;
+  const int cw = std::min(w - (large ? 64 : 20), large ? 640 : 360);
+  const int pad = large ? 28 : 14;
+  const int gap = large ? 16 : 10;
+  const int buttonH = large ? 60 : 40;
+  const int innerW = cw - 2 * pad;
+  const lv_font_t* titleFont = large ? &deck_font_28 : &deck_font_20;
+  const lv_font_t* bodyFont = large ? &deck_font_20 : &deck_font_14;
+  const lv_font_t* buttonFont = large ? &deck_font_20 : &deck_font_14;
+  const char* heading = st.staged ? "Install verified update?" :
+                        st.downloading ? "Firmware downloading" :
+                        "Firmware update available";
+  const char* actionName = st.staged ? "Install and restart" : "Download update";
+  String message(st.version);
+  if (st.staged) message += " is verified and ready. The screen will restart.";
+  else if (st.downloading) message += " is downloading. Return here when ready.";
+  else if (st.error[0]) {
+    message += " is available, but not downloaded. Last error: ";
+    message += st.error;
+  } else message += " is available. Download and verify it before installing.";
+
+  // Explicit fonts and measured wrapping: the P4 theme's inherited font is
+  // much larger than the S3 default. Keep buttons outside the scrollable body.
+  lv_point_t titleSize{}, bodySize{};
+  lv_text_get_size(&titleSize, heading, titleFont, 0, 0, innerW, LV_TEXT_FLAG_NONE);
+  lv_text_get_size(&bodySize, message.c_str(), bodyFont, 0, 2, innerW, LV_TEXT_FLAG_NONE);
+  const int halfW = (innerW - gap) / 2;
+  const bool sideBySide = !st.downloading &&
+      halfW >= std::max(textW("Not now", buttonFont), textW(actionName, buttonFont)) + 20;
+  const int buttonsH = st.downloading || sideBySide ? buttonH : 2 * buttonH + gap;
+  const int maxBodyH = std::max(1, h - (large ? 64 : 20) -
+      (2 * pad + int(titleSize.y) + 2 * gap + buttonsH));
+  const int bodyH = std::min(int(bodySize.y), maxBodyH);
+  const int ch = 2 * pad + int(titleSize.y) + 2 * gap + bodyH + buttonsH;
+
+  s_firmwareConfirm = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_firmwareConfirm);
+  lv_obj_set_size(s_firmwareConfirm, cw, ch);
   lv_obj_center(s_firmwareConfirm);
   lv_obj_set_style_bg_color(s_firmwareConfirm, lv_color_hex(C_PANEL), 0);
+  lv_obj_set_style_bg_opa(s_firmwareConfirm, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(s_firmwareConfirm, large ? 22 : 14, 0);
   lv_obj_set_style_border_color(s_firmwareConfirm, lv_color_hex(C_OK), 0);
-  lv_obj_set_style_border_width(s_firmwareConfirm, 2, 0);
-  lv_obj_set_style_pad_all(s_firmwareConfirm, 15, 0);
-  lv_obj_set_layout(s_firmwareConfirm, LV_LAYOUT_FLEX);
-  lv_obj_set_flex_flow(s_firmwareConfirm, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_row(s_firmwareConfirm, 12, 0);
+  lv_obj_set_style_border_width(s_firmwareConfirm, 1, 0);
+  lv_obj_add_flag(s_firmwareConfirm, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_remove_flag(s_firmwareConfirm, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(s_firmwareConfirm, LV_SCROLLBAR_MODE_OFF);
+
   lv_obj_t* title = lv_label_create(s_firmwareConfirm);
-  lv_label_set_text(title, st.staged ? "Install verified update?" :
-                    st.downloading ? "Firmware downloading" :
-                    "Firmware update available");
+  lv_obj_set_style_text_font(title, titleFont, 0);
   lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
-  lv_obj_t* version = lv_label_create(s_firmwareConfirm);
-  if (st.staged)
-    lv_label_set_text_fmt(version, "%s ready. The screen will restart.", st.version);
-  else if (st.downloading)
-    lv_label_set_text_fmt(version, "Downloading %s. Return here when ready.", st.version);
-  else if (st.error[0])
-    lv_label_set_text_fmt(version, "%s available, but not downloaded. Last error: %s",
-                          st.version, st.error);
-  else
-    lv_label_set_text_fmt(version, "%s available, not yet downloaded to Tactula. Download and verify it first.", st.version);
-  lv_label_set_long_mode(version, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(version, LV_PCT(100));
+  lv_obj_set_width(title, innerW);
+  lv_label_set_long_mode(title, LV_LABEL_LONG_WRAP);
+  lv_obj_set_pos(title, pad, pad);
+  lv_label_set_text(title, heading);
+
+  // Only an unusually long diagnostic can scroll, never the action row.
+  lv_obj_t* body = lv_obj_create(s_firmwareConfirm);
+  lv_obj_remove_style_all(body);
+  lv_obj_set_pos(body, pad, pad + int(titleSize.y) + gap);
+  lv_obj_set_size(body, innerW, bodyH);
+  lv_obj_set_scroll_dir(body, LV_DIR_VER);
+  if (bodySize.y <= bodyH) lv_obj_remove_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+  else lv_obj_add_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(body, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_t* version = lv_label_create(body);
+  lv_obj_set_style_text_font(version, bodyFont, 0);
   lv_obj_set_style_text_color(version, lv_color_hex(C_DIM), 0);
-  lv_obj_t* cancel = lv_button_create(s_firmwareConfirm);
-  lv_obj_set_width(cancel, LV_PCT(100));
-  lv_obj_t* cancelText = lv_label_create(cancel);
-  lv_label_set_text(cancelText, "Not now");
-  lv_obj_center(cancelText);
-  lv_obj_add_event_cb(cancel, closeFirmwareConfirm, LV_EVENT_CLICKED, nullptr);
+  lv_obj_set_style_text_line_space(version, 2, 0);
+  lv_obj_set_width(version, innerW);
+  lv_label_set_long_mode(version, LV_LABEL_LONG_WRAP);
+  lv_label_set_text(version, message.c_str());
+
+  const int by = ch - pad - buttonsH;
+  auto addButton = [&](int x, int y, int bw, const char* name, bool primary, lv_event_cb_t cb) {
+    lv_obj_t* b = lv_button_create(s_firmwareConfirm);
+    lv_obj_remove_style_all(b);
+    lv_obj_set_pos(b, x, y);
+    lv_obj_set_size(b, bw, buttonH);
+    lv_obj_set_style_radius(b, large ? 12 : 9, 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(primary ? C_OK : C_BUTTON), 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_70, LV_STATE_PRESSED);
+    lv_obj_t* label = lv_label_create(b);
+    lv_obj_set_style_text_font(label, buttonFont, 0);
+    lv_obj_set_style_text_color(label, lv_color_hex(primary ? C_BG : C_TEXT), 0);
+    lv_label_set_text(label, name);
+    lv_obj_center(label);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
+  };
+  addButton(pad, by, sideBySide ? halfW : innerW, "Not now", false, closeFirmwareConfirm);
   if (!st.downloading) {
-    lv_obj_t* action = lv_button_create(s_firmwareConfirm);
-    lv_obj_set_width(action, LV_PCT(100));
-    lv_obj_t* actionText = lv_label_create(action);
-    lv_label_set_text(actionText, st.staged ? "Install and restart" : "Download update");
-    lv_obj_center(actionText);
-    lv_obj_add_event_cb(action,
-                        st.staged ? approveFirmwareFromTouch : downloadFirmwareFromTouch,
-                        LV_EVENT_CLICKED, nullptr);
+    addButton(sideBySide ? pad + halfW + gap : pad,
+              sideBySide ? by : by + buttonH + gap,
+              sideBySide ? innerW - halfW - gap : innerW,
+              actionName, true,
+              st.staged ? approveFirmwareFromTouch : downloadFirmwareFromTouch);
   }
 }
 
@@ -469,7 +528,7 @@ void layoutHeader(Page& p) {
   showObj(p.headerBand, s_header);
   if (p.updateBadge) {
     const auto st = firmwareUpdate::snapshot();
-    if (s_header && st.checksEnabled && (st.showBadge || (st.staged && !st.promptOnStage)) && (st.available || st.staged))
+    if (s_header && st.allowTouchUpdates && st.checksEnabled && (st.showBadge || (st.staged && !st.promptOnStage)) && (st.available || st.staged))
       lv_obj_remove_flag(p.updateBadge, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(p.updateBadge, LV_OBJ_FLAG_HIDDEN);
   }
@@ -1225,14 +1284,18 @@ void updateHeaders() {
   const auto updateState = firmwareUpdate::snapshot();
   // Requests from the local web UI only bring the existing LVGL physical
   // confirmation to the foreground; they never install or reboot remotely.
-  if (firmwareUpdate::takeTouchConfirmationRequest())
+  if (!updateState.allowTouchUpdates && !updateState.webConfirmationAuthorized && s_firmwareConfirm)
+    dismissFirmwareConfirm();
+  if (firmwareUpdate::takeTouchConfirmationRequest()) {
+    dismissFirmwareConfirm();
     openFirmwareConfirmation(nullptr);
+  }
   // Staging happens asynchronously in the updater task. Show the physical
   // install confirmation once as soon as the image is verified, even if the
   // optional header update badge (or the whole header) is disabled.
   if (!updateState.staged) {
     s_firmwarePrompted = false;
-  } else if (!s_firmwarePrompted && updateState.promptOnStage) {
+  } else if (updateState.allowTouchUpdates && !s_firmwarePrompted && updateState.promptOnStage) {
     // Only a manual Download OTA request interrupts the touchscreen.
     // Automatic downloads advertise readiness through the header icon.
     s_firmwarePrompted = true;
@@ -1241,7 +1304,7 @@ void updateHeaders() {
   for (int i = 0; i < s_count; ++i) {
     Page& page = s_pages[i];
     if (!page.updateBadge) continue;
-    const bool visible = s_header && updateState.checksEnabled &&
+    const bool visible = s_header && updateState.allowTouchUpdates && updateState.checksEnabled &&
       (updateState.showBadge || (updateState.staged && !updateState.promptOnStage)) &&
       (updateState.available || updateState.staged);
     const bool hidden = lv_obj_has_flag(page.updateBadge, LV_OBJ_FLAG_HIDDEN);

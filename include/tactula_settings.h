@@ -81,6 +81,8 @@ struct PresenceSettings {
   bool frameClock = true;
   bool frameClockLarge = false;
   bool frameWeatherIcon = true;
+  String frameWeatherEntity; // empty = dashboard clock source
+  uint8_t frameWeatherTemperature = 0; // 0 inherit (actual for explicit source), 1 actual, 2 feels-like
   bool frameClockBackground = true;
   bool frameAnim = true;
   bool nightWake = false;        // presence lifts the night schedule to nightWakeLevel

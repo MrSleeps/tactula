@@ -21,12 +21,14 @@ bool mqttSaveSettings(const MqttSettings& settings);
 void mqttConfigJson(JsonObject out, bool includeHasPass);
 void mqttStatusJson(JsonObject out);
 
-enum MqttObject { MQ_SCREEN, MQ_PAGE, MQ_NIGHT, MQ_TOUCH, MQ_MESSAGE, MQ_LED, MQ_RSSI, MQ_IP, MQ_RESTART, MQ_NIGHT_BRIGHTNESS, MQ_COUNT };
+enum MqttObject { MQ_SCREEN, MQ_PAGE, MQ_NIGHT, MQ_TOUCH, MQ_MESSAGE, MQ_LED, MQ_RSSI, MQ_IP, MQ_RESTART, MQ_NIGHT_BRIGHTNESS, MQ_FIRMWARE, MQ_COUNT };
 struct MqttSnapshot {
   String state[MQ_COUNT];
   std::vector<String> pages;
   String hostname, ip;
   bool led = false;
+  bool haInstall = false;
+  String updateVersion;
   uint32_t rssiSeq = 0;
 };
 // UI bridge, called only by mqttTick after the compositor releases LVGL.

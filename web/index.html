@@ -216,6 +216,7 @@
                     <div class="connection-item">
                       <span class="connection-label">Home Assistant</span>
                       <span class="connection-value" id="factHa" role="status">Checking...</span>
+                      <span class="connection-detail" id="factHaDetail"></span>
                     </div>
                     <div class="connection-item">
                       <span class="connection-label">MQTT broker</span>
@@ -223,9 +224,11 @@
                       <span class="connection-detail" id="factMqttDetail"></span>
                     </div>
                     <div class="connection-item hidden" id="factBambuRow">
-                      <span class="connection-label" id="factBambuLabel">Bambu LAN</span>
+                      <span class="connection-label" id="factBambuLabel">Bambu printer</span>
                       <span class="connection-value" id="factBambu" role="status">Checking...</span>
                       <span class="connection-detail" id="factBambuDetail"></span>
+                      <span class="connection-value" id="factBambuAvailability" role="status"></span>
+                      <span class="connection-detail" id="factBambuError"></span>
                     </div>
                   </div>
                 </div>
@@ -943,6 +946,22 @@
                         </select>
                       </div>
                       <p class="field-hint">Changes the time display only; the date and weather retain their original size.</p>
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="frameWeatherEntity">Photo frame weather entity</label>
+                      <input type="text" id="frameWeatherEntity" name="frameWeatherEntity" list="frameWeatherList" placeholder="Use dashboard weather clock" autocomplete="off" />
+                      <datalist id="frameWeatherList"></datalist>
+                      <p class="field-hint">Leave blank to inherit the dashboard weather clock. Choose a weather entity to keep the gallery weather source consistent across pages.</p>
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="frameWeatherTemperature">Photo frame temperature</label>
+                      <div class="select-wrap">
+                        <select id="frameWeatherTemperature" name="frameWeatherTemperature">
+                          <option value="0">Automatic (dashboard preference, actual for fixed source)</option>
+                          <option value="1">Actual temperature</option>
+                          <option value="2">Feels-like temperature</option>
+                        </select>
+                      </div>
                     </div>
                     <label class="check-row standalone"
                       ><input type="checkbox" id="frameWeatherIcon" name="frameWeatherIcon" checked /><span class="check-box"></span
@@ -1681,11 +1700,19 @@
                   <label class="field-label"><input type="checkbox" id="fwShowBadge" checked /> Show an update icon in the touchscreen top bar</label>
                 </div>
                 <div class="field">
+                  <label class="field-label"><input type="checkbox" id="fwAllowTouchUpdates" checked /> Allow firmware updates directly from the touchscreen</label>
+                  <p class="field-hint">When disabled, the update icon and automatic installation prompts are hidden. Start installation from this web interface; physical confirmation remains required and expires after two minutes. Enable web interface password protection to restrict access.</p>
+                </div>
+                <div class="field">
+                  <label class="field-label"><input type="checkbox" id="fwAllowHaUpdates" /> Allow firmware installation from Home Assistant (MQTT)</label>
+                  <p class="field-hint">Off by default. Requires MQTT discovery. The Home Assistant Install action downloads, verifies and restarts this device without touchscreen confirmation. Use only a trusted broker with restricted publishing access. Version reporting works even when disabled.</p>
+                </div>
+                <div class="field">
                   <label class="field-label"><input type="checkbox" id="fwAutoDownload" /> Automatically download verified firmware to the inactive OTA partition</label>
                 </div>
                 <div class="field">
                   <label class="field-label"><input type="checkbox" id="fwAllowBeta" /> Allow beta releases (early-access testing)</label>
-                  <p class="field-hint">Off by default. Beta devices use the separately verified beta feed and continue receiving newer stable releases. Beta versions may contain bugs; installation always requires confirmation on the touchscreen.</p>
+                  <p class="field-hint">Off by default. Beta devices use the separately verified beta feed and continue receiving newer stable releases. Beta versions may contain bugs. Installation requires confirmation unless explicitly initiated from opted-in Home Assistant.</p>
                 </div>
                 <div class="fw-update-feedback">
                   <p class="fw-update-summary" id="fwUpdateStatus" role="status">Checking update settings...</p>
@@ -1697,7 +1724,7 @@
                   <a class="btn" href="https://firmware.mrsleeps.uk/tactula/" target="_blank" rel="noopener noreferrer">Firmware downloads</a>
                 </div>
                 <div class="note">
-                  <span class="note-k">Security</span><span>The download is verified over HTTPS against the SHA-256 digest in the website manifest, which is generated from verified official GitHub release assets. The device never activates a downloaded image without on-screen confirmation. Fully unattended installation requires signed releases and additional protections.</span>
+                  <span class="note-k">Security</span><span>The download is verified over HTTPS against the SHA-256 digest in the website manifest, which is generated from verified official GitHub release assets. Background downloads never install automatically. Physical confirmation is required except for an explicitly requested, opted-in MQTT installation. Only enable remote installation on a trusted broker with restricted publishing access.</span>
                 </div>
               </div>
               <div class="card">

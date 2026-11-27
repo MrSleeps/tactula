@@ -109,6 +109,7 @@ struct Printer {
   bool trayActive[PRN_AMS_UNITS][PRN_AMS_SLOTS] = {};
   bool extActive = false;
   bool online = false;
+  int8_t onlineState = -1;  // explicit HA online sensor: -1 unknown, 0 off, 1 on
   float actTemp = NAN, actTarget = NAN;
   int8_t side = -1;  // active_nozzle entity, -1 = absent or unknown
   bool jobMap = false;  // subtask_name's ams_mapping fills s.map, else print_weight does
@@ -162,6 +163,7 @@ void resetState(Printer& p) {
   memset(p.trayActive, 0, sizeof(p.trayActive));
   p.extActive = false;
   p.online = false;
+  p.onlineState = -1;
   p.actTemp = p.actTarget = NAN;
   p.side = -1;
   p.jobMap = false;
@@ -572,6 +574,7 @@ void apply(Printer& p, Bind& b, JsonObjectConst ev, bool full) {
     case F_ONLINE:
       if (!st) break;
       p.online = !strcmp(st, "on");
+      p.onlineState = p.online ? 1 : !strcmp(st, "off") ? 0 : -1;
       s.link = p.online ? PRN_ONLINE : PRN_FAILED;
       strlcpy(s.err, p.online ? "" : "Printer offline", sizeof(s.err));
       break;
@@ -693,6 +696,22 @@ bool printerHaRead(const String& id, PrinterState& out) {
     out.err[0] = 0;
   }
   return true;
+}
+
+void printerHaOverview(const String& id, const char*& connection, const char*& availability) {
+  // Report discovery/transport separately from the printer's online entity.
+  // Acquire the HA link before our mutex, as in printerHaRead().
+  const HaLink link = haLink();
+  Lock g;
+  const Printer* p = find(id);
+  availability = "unknown";
+  if (!p || !p->powered) { connection = "disconnected"; return; }
+  if (link != HA_CONNECTED) { connection = "disconnected"; return; }
+  if (p->disc == D_FAILED) { connection = "failed"; return; }
+  if (p->disc != D_DONE) { connection = "connecting"; return; }
+  connection = "connected";
+  if (p->st)
+    availability = p->onlineState == 1 ? "online" : p->onlineState == 0 ? "offline" : "unknown";
 }
 
 bool printerHaLight(const String& id, bool on) {

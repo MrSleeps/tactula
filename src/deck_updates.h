@@ -7,6 +7,10 @@ struct State {
   bool checksEnabled = true;
   bool showBadge = true;
   bool allowBeta = false;
+  bool allowTouchUpdates = true;
+  bool allowHaUpdates = false;
+  bool remoteInstalling = false; // snapshot only
+  bool webConfirmationAuthorized = false; // snapshot only
   bool available = false;
   bool checking = false;
   bool checkPending = false;
@@ -24,15 +28,17 @@ void begin();
 void tick();
 void requestCheck();
 State snapshot();
-void setPreferences(bool checksEnabled, bool showBadge, bool autoDownload, bool allowBeta);
+void setPreferences(bool checksEnabled, bool showBadge, bool autoDownload, bool allowBeta, bool allowTouchUpdates, bool allowHaUpdates);
 // Only fetches trusted HTTPS bytes from the local mirror and verifies against
 // digest/size discovered from GitHub. Never selects a new boot partition.
-void requestDownload();
+void requestDownload(bool fromTouch = false);
 // Web UI can only request a physical-screen confirmation, never activate OTA.
 bool requestTouchConfirmation();
 // Consumed by the LVGL main loop; only returns true for a staged image.
 bool takeTouchConfirmationRequest();
-// A physical confirmation on the LVGL device is required to install a staged
-// image. No remote API may call this method.
+void cancelTouchConfirmation();
+// Physical confirmation path. No remote API may call this method.
 bool installStagedFromTouch();
+// Explicit version-bound request from the opted-in MQTT controller only.
+bool requestInstallFromHa(const char* version);
 }

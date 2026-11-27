@@ -22,6 +22,8 @@ void printerHaPower(const String& id, bool on);
 bool printerHaKnown(const String& id);
 bool printerHaPowered(const String& id);
 bool printerHaRead(const String& id, PrinterState& out);
+// Transport/discovery and explicit printer availability (static string values).
+void printerHaOverview(const String& id, const char*& connection, const char*& availability);
 bool printerHaLight(const String& id, bool on);
 uint32_t printersHaVersion();
 // Loop task: starts the entity lookup of a powered printer once HA is up.

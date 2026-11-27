@@ -1,5 +1,8 @@
 // Home Assistant discovery: network I/O on one worker, UI and NVS on the loop.
 #include "deck_mqtt.h"
+#include "deck_updates.h"
+#include "debug_log.h"
+#include <esp_random.h>
 #include "config.h"
 #include "tactula_settings.h"
 #include "psram_json.h"
@@ -10,9 +13,9 @@
 #include <esp_heap_caps.h>
 
 namespace {
-const char* const OBJECTS[] = {"screen", "page", "night", "touch", "message", "led", "rssi", "ip", "restart", "night_brightness"};
-const char* const COMPONENTS[] = {"light", "select", "switch", "binary_sensor", "notify", "light", "sensor", "sensor", "button", "number"};
-const char* const NAMES[] = {"Screen", "Page", "Night", "Touch", "Message", "LED", "RSSI", "IP", "Restart", "Night Brightness"};
+const char* const OBJECTS[] = {"screen", "page", "night", "touch", "message", "led", "rssi", "ip", "restart", "night_brightness", "firmware"};
+const char* const COMPONENTS[] = {"light", "select", "switch", "binary_sensor", "notify", "light", "sensor", "sensor", "button", "number", "update"};
+const char* const NAMES[] = {"Screen", "Page", "Night", "Touch", "Message", "LED", "RSSI", "IP", "Restart", "Night Brightness", "Firmware"};
 struct Command { MqttObject object; String payload; uint32_t generation; };
 MqttSettings s_settings, s_workerSettings;
 MqttSnapshot s_snapshot;
@@ -32,7 +35,7 @@ void status(const char* state, const String& error = "") {
   xSemaphoreGive(s_lock);
 }
 
-bool commandObject(int i) { return i != MQ_TOUCH && i != MQ_RSSI && i != MQ_IP; }
+bool commandObject(int i) { return i != MQ_TOUCH && i != MQ_RSSI && i != MQ_IP && i != MQ_FIRMWARE; }
 String configTopic(const MqttSettings& cfg, int i) {
   return cfg.prefix + "/" + COMPONENTS[i] + "/touchdeck_" + s_id + "/" + OBJECTS[i] + "/config";
 }
@@ -95,7 +98,7 @@ class MqttWriter {
   bool ok = true;
 };
 
-bool discovery(PubSubClient& mqtt, const MqttSettings& cfg, const MqttSnapshot& snap, const String& base) {
+bool discovery(PubSubClient& mqtt, const MqttSettings& cfg, const MqttSnapshot& snap, const String& base, const String& installTopic) {
   for (int i = 0; i < MQ_COUNT; i++) {
     const String topic = configTopic(cfg, i);
     if (i == MQ_LED && !snap.led) {
@@ -148,6 +151,15 @@ bool discovery(PubSubClient& mqtt, const MqttSettings& cfg, const MqttSnapshot& 
       doc["entity_category"] = "diagnostic";
     } else if (i == MQ_IP) {
       doc["entity_category"] = "diagnostic";
+    } else if (i == MQ_FIRMWARE) {
+      doc["device_class"] = "firmware";
+      doc["entity_category"] = "config";
+      doc["title"] = "Tactula firmware";
+      if (snap.haInstall) {
+        doc["command_topic"] = installTopic;
+        doc["payload_install"] = "install:" + snap.updateVersion;
+        doc["retain"] = false;
+      }
     } else if (i == MQ_RESTART) {
       doc["device_class"] = "restart";
       doc["entity_category"] = "config";
@@ -162,7 +174,8 @@ bool discovery(PubSubClient& mqtt, const MqttSettings& cfg, const MqttSnapshot& 
 }
 
 bool sameDiscovery(const MqttSnapshot& a, const MqttSnapshot& b) {
-  return a.pages == b.pages && a.led == b.led && a.hostname == b.hostname && a.ip == b.ip;
+  return a.pages == b.pages && a.led == b.led && a.hostname == b.hostname && a.ip == b.ip &&
+      a.haInstall == b.haInstall && a.updateVersion == b.updateVersion;
 }
 
 void task(void*) {
@@ -183,11 +196,23 @@ void task(void*) {
   const String base = "touchdeck/" + s_id;
   const String clientId = "touchdeck-" + s_id;
   const String availability = base + "/status";
+  String installTopic;
   mqtt.setCallback([&](char* topic, uint8_t* payload, unsigned int length) {
     const String incoming(topic);
     length = input.length;
     if (incoming == cfg.prefix + "/status") {
       if (length == 6 && memcmp(payload, "online", 6) == 0) replay = configs = true;
+      return;
+    }
+    if (incoming == installTopic) {
+      if (!snap.haInstall || length > 64) return;
+      String text;
+      text.concat((const char*)payload, length);
+      if (text != "install:" + snap.updateVersion) return;
+      xSemaphoreTake(s_lock, portMAX_DELAY);
+      if (s_workerSettings.enabled && generation == s_generation && s_commands.size() < 8)
+        s_commands.push_back({MQ_FIRMWARE, snap.updateVersion, generation});
+      xSemaphoreGive(s_lock);
       return;
     }
     for (int i = 0; i < MQ_COUNT; i++) {
@@ -264,6 +289,12 @@ void task(void*) {
       bool ok = bufferReady && mqtt.connect(clientId.c_str(), cfg.user.length() ? cfg.user.c_str() : nullptr,
                                             cfg.user.length() ? cfg.pass.c_str() : nullptr,
                                             availability.c_str(), 0, true, "offline");
+      // Fresh command topic on every broker connection: an old retained
+      // install payload cannot be replayed after reconnect or reboot.
+      char nonce[17];
+      snprintf(nonce, sizeof(nonce), "%08lx%08lx", (unsigned long)esp_random(), (unsigned long)esp_random());
+      installTopic = base + "/firmware/install/" + nonce;
+      if (ok) ok = mqtt.subscribe(installTopic.c_str());
       if (ok) ok = mqtt.subscribe((cfg.prefix + "/status").c_str());
       for (int i = 0; i < MQ_COUNT && ok; i++)
         if (commandObject(i)) ok = mqtt.subscribe((base + "/" + OBJECTS[i] + "/set").c_str());
@@ -283,7 +314,7 @@ void task(void*) {
     input.begin(snap.pages);
     if (!mqtt.loop()) continue;
     if (configs) replay = true;
-    bool ok = !configs || discovery(mqtt, cfg, snap, base);
+    bool ok = !configs || discovery(mqtt, cfg, snap, base, installTopic);
     if (ok) configs = false;
     for (int i = 0; i < MQ_COUNT && ok; i++) {
       if (i == MQ_MESSAGE || i == MQ_RESTART || (i == MQ_LED && !snap.led)) continue;
@@ -443,6 +474,9 @@ void mqttTick() {
     if (cmd.generation != s_generation) continue;
     if (cmd.object == MQ_RESTART) {
       if (cmd.payload == "PRESS" && !s_restartAt) s_restartAt = millis() + 500;
+    } else if (cmd.object == MQ_FIRMWARE) {
+      if (!firmwareUpdate::requestInstallFromHa(cmd.payload.c_str()))
+        debugSerial.println("OTA: ignored unavailable or unauthorised MQTT install request");
     } else mqttUiCommand(cmd.object, cmd.payload);
   }
   static uint32_t last = 0, lastRssi = 0, rssiSeq = 0;
@@ -455,6 +489,28 @@ void mqttTick() {
   snap.hostname = netSettings.hostname;
   snap.ip = WiFi.localIP().toString();
   snap.state[MQ_IP] = snap.ip;
+  // Native Home Assistant update entity, no YAML or custom component needed.
+  const auto fw = firmwareUpdate::snapshot();
+  const bool offer = fw.checksEnabled && fw.available && fw.version[0];
+  snap.updateVersion = offer ? String(fw.version) : String(FW_VERSION);
+  snap.haInstall = fw.allowHaUpdates && offer;
+#if defined(TACTULA_DEV_UPDATE_SIMULATION) && TACTULA_DEV_UPDATE_SIMULATION
+  snap.haInstall = false;
+#endif
+  JsonDocument update(psramJson());
+  update["installed_version"] = FW_VERSION;
+  update["latest_version"] = snap.updateVersion;
+  update["release_url"] = offer ? String("https://github.com/MrSleeps/tactula/releases/tag/") + fw.version :
+      String("https://github.com/MrSleeps/tactula/releases");
+  update["in_progress"] = fw.remoteInstalling;
+  if (fw.remoteInstalling && fw.totalBytes) {
+    const unsigned percent = fw.staged ? 100 : (unsigned)((uint64_t)fw.downloadedBytes * 100 / fw.totalBytes);
+    update["update_percentage"] = std::min(percent, 100U);
+  } else update["update_percentage"] = nullptr;
+  update["release_summary"] = fw.error[0] ? String(fw.error) :
+      offer ? String("Verified compatible Tactula firmware available.") :
+      String("No newer verified compatible firmware currently offered.");
+  if (!update.overflowed()) serializeJson(update, snap.state[MQ_FIRMWARE]);
   if (!lastRssi || now - lastRssi >= 60000) {
     lastRssi = now | 1;
     rssi = WiFi.status() == WL_CONNECTED ? String(WiFi.RSSI()) : String("0");

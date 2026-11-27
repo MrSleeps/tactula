@@ -176,6 +176,8 @@ static void presenceJson(JsonObject out) {
   out["frameClock"] = presenceSettings.frameClock;
   out["frameClockLarge"] = presenceSettings.frameClockLarge;
   out["frameWeatherIcon"] = presenceSettings.frameWeatherIcon;
+  out["frameWeatherEntity"] = presenceSettings.frameWeatherEntity;
+  out["frameWeatherTemperature"] = presenceSettings.frameWeatherTemperature;
   out["frameClockBackground"] = presenceSettings.frameClockBackground;
   out["frameAnim"] = presenceSettings.frameAnim;
   out["nightWake"] = presenceSettings.nightWake;
@@ -731,6 +733,20 @@ static void handleConfigImport() {
     if (!presence["frameClock"].isNull()) READ_BOOL(presence, "frameClock", nextPresence.frameClock);
     if (!presence["frameClockLarge"].isNull()) READ_BOOL(presence, "frameClockLarge", nextPresence.frameClockLarge);
     if (!presence["frameWeatherIcon"].isNull()) READ_BOOL(presence, "frameWeatherIcon", nextPresence.frameWeatherIcon);
+    if (!presence["frameWeatherEntity"].isNull()) {
+      if (!presence["frameWeatherEntity"].is<const char*>()) {
+        sendJsonMessage(400, false, "Invalid photo frame weather entity.");
+        return;
+      }
+      nextPresence.frameWeatherEntity = presence["frameWeatherEntity"].as<const char*>();
+      if (nextPresence.frameWeatherEntity.length() &&
+          (!nextPresence.frameWeatherEntity.startsWith("weather.") || !validEntityId(nextPresence.frameWeatherEntity))) {
+        sendJsonMessage(400, false, "Invalid photo frame weather entity.");
+        return;
+      }
+    }
+    if (!presence["frameWeatherTemperature"].isNull())
+      READ_INT(presence, "frameWeatherTemperature", 0, 2, nextPresence.frameWeatherTemperature, uint8_t);
     if (!presence["frameClockBackground"].isNull()) READ_BOOL(presence, "frameClockBackground", nextPresence.frameClockBackground);
     if (!presence["frameAnim"].isNull()) READ_BOOL(presence, "frameAnim", nextPresence.frameAnim);
     if (!presence["nightWake"].isNull()) READ_BOOL(presence, "nightWake", nextPresence.nightWake);
@@ -844,6 +860,22 @@ static void handleSaveLight() {
   nextPresence.frameClock = server.hasArg("frameClock");
   nextPresence.frameClockLarge = server.hasArg("frameClockSize") ? server.arg("frameClockSize") == "large" : presenceSettings.frameClockLarge;
   nextPresence.frameWeatherIcon = server.hasArg("frameWeatherIcon");
+  nextPresence.frameWeatherEntity = server.hasArg("frameWeatherEntity") ? server.arg("frameWeatherEntity") : presenceSettings.frameWeatherEntity;
+  nextPresence.frameWeatherEntity.trim();
+  if (nextPresence.frameWeatherEntity.length() &&
+      (!nextPresence.frameWeatherEntity.startsWith("weather.") || !validEntityId(nextPresence.frameWeatherEntity))) {
+    sendJsonMessage(400, false, "Photo frame weather must be a weather entity (weather.object).");
+    return;
+  }
+  nextPresence.frameWeatherTemperature = presenceSettings.frameWeatherTemperature;
+  if (server.hasArg("frameWeatherTemperature")) {
+    const String mode = server.arg("frameWeatherTemperature");
+    if (mode != "0" && mode != "1" && mode != "2") {
+      sendJsonMessage(400, false, "Invalid photo frame temperature mode.");
+      return;
+    }
+    nextPresence.frameWeatherTemperature = (uint8_t)mode.toInt();
+  }
   nextPresence.frameClockBackground = server.hasArg("frameClockBackground");
   nextPresence.frameAnim = server.hasArg("frameAnim");
   size_t n = 0;
@@ -1399,6 +1431,7 @@ static void handleApiStatus() {
   doc["ip"]      = WiFi.localIP().toString();
   doc["screen"]  = screenName(getScreenState());
   doc["ha_link"] = deck::haLinkName(deck::haLink());
+  doc["ha_url"] = deck::haUrl();  // configured address only; token remains private
   doc["backlight"] = currentBacklightLevel();
   doc["night_active"] = nightBrightnessActive();
   doc["night_wake"] = nightWakeActive();
@@ -2941,6 +2974,9 @@ static void handleUpdateStatus() {
   doc["checkPending"] = st.checkPending;
   doc["autoDownload"] = st.autoDownload;
   doc["allowBeta"] = st.allowBeta;
+  doc["allowTouchUpdates"] = st.allowTouchUpdates;
+  doc["allowHaUpdates"] = st.allowHaUpdates;
+  doc["remoteInstalling"] = st.remoteInstalling;
   doc["channel"] = st.allowBeta ? "beta" : "stable";
   doc["downloading"] = st.downloading;
   doc["staged"] = st.staged;
@@ -2958,7 +2994,7 @@ static void handleUpdateStatus() {
       esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, nullptr);
   doc["otaSupported"] = otaSupported;
   doc["otaSlotBytes"] = otaSupported ? targetPartition->size : 0;
-  doc["automaticInstallation"] = false; // every verified download needs touch approval
+  doc["automaticInstallation"] = false; // background downloads never auto-install
   server.sendHeader("Cache-Control", "no-store");
   String output;
   serializeJson(doc, output);
@@ -3002,13 +3038,15 @@ static void handleUpdatePreferences() {
   const bool badge = server.arg("showBadge") == "1";
   const bool autoDownload = server.arg("autoDownload") == "1";
   const bool beta = server.arg("allowBeta") == "1";
+  const bool touch = server.hasArg("allowTouchUpdates") ? server.arg("allowTouchUpdates") == "1" : firmwareUpdate::snapshot().allowTouchUpdates;
   // Never change release channel while the OTA download is active.
   if (firmwareUpdate::snapshot().downloading) {
     server.send(409, "application/json",
                 "{\"error\":\"Cannot change update preferences during a download\"}");
     return;
   }
-  firmwareUpdate::setPreferences(enabled, badge, autoDownload, beta);
+  const bool haInstall = server.hasArg("allowHaUpdates") ? server.arg("allowHaUpdates") == "1" : firmwareUpdate::snapshot().allowHaUpdates;
+  firmwareUpdate::setPreferences(enabled, badge, autoDownload, beta, touch, haInstall);
   server.send(200, "application/json", "{\"ok\":true}");
 }
 

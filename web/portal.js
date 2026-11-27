@@ -549,7 +549,7 @@
   $("nightWake").addEventListener("change", updateNightWakeFields);
   /* Entity suggestions from the list cached on the device ("Update from HA" in Pages & tiles). */
   document.addEventListener("focusin", (e) => {
-    if (e.target.matches?.("input[list=presenceList], input[list=ledEntityList]")) loadEntityLists();
+    if (e.target.matches?.("input[list=presenceList], input[list=ledEntityList], input[list=frameWeatherList]")) loadEntityLists();
   });
   let entityListsLoaded = false;
   async function loadEntityLists() {
@@ -564,6 +564,7 @@
           .join(""));
       fill("presenceList", ["binary_sensor", "person", "device_tracker", "input_boolean", "switch"]);
       fill("ledEntityList", ["input_boolean", "input_number", "light"]);
+      fill("frameWeatherList", ["weather"]);
     } catch (e) {
       entityListsLoaded = false;
     }
@@ -855,6 +856,8 @@
     setCheck("frameClock", p.frameClock !== false);
     setVal("frameClockSize", p.frameClockLarge ? "large" : "small");
     setCheck("frameWeatherIcon", p.frameWeatherIcon !== false);
+    setVal("frameWeatherEntity", p.frameWeatherEntity || "");
+    setVal("frameWeatherTemperature", String(p.frameWeatherTemperature || 0));
     setCheck("frameClockBackground", p.frameClockBackground !== false);
     setCheck("frameAnim", p.frameAnim !== false);
     setVal("sleepDim", p.dim || 10);
@@ -967,7 +970,14 @@
   // than with the 2-second general status poll: Bambu status includes AMS
   // details and is substantially heavier than the normal /api/status reply.
   let overviewBambuPolling = false;
-  let overviewBambuLan = false;
+  let overviewBambuConfigured = false;
+  let overviewBambuSource = "";
+  function overviewBambuUnavailable() {
+    if (!overviewBambuConfigured) return;
+    connectionState("factBambu", "Status unavailable", "error");
+    connectionState("factBambuAvailability", "Printer: Unknown", "neutral");
+    $("factBambuError").textContent = "Unable to retrieve connection status";
+  }
   async function refreshOverviewBambuConnection() {
     if (!printerAvailable || overviewBambuPolling ||
         document.hidden ||
@@ -975,25 +985,37 @@
     overviewBambuPolling = true;
     try {
       const p = await getJson("/api/office/bambu?t=" + Date.now());
-      overviewBambuLan = p.enabled === true && p.source === "lan";
-      $("factBambuRow").classList.toggle("hidden", !overviewBambuLan);
-      if (!overviewBambuLan) return; // HA-backed printer isn't a LAN connection
-      const name = p.display_name || "Bambu printer";
-      $("factBambuLabel").textContent = name + " (LAN)";
-      const state = p.status || "unknown";
-      const label = state === "online" ? "Connected" :
-        state === "connecting" ? "Connecting" :
-        state === "failed" ? "Connection failed" :
-        state === "off" ? "Offline" : "Unavailable";
+      // An error/overflow response is not proof that configuration was removed.
+      if (typeof p.configured !== "boolean") {
+        overviewBambuUnavailable();
+        return;
+      }
+      overviewBambuConfigured = p.configured;
+      $("factBambuRow").classList.toggle("hidden", !overviewBambuConfigured);
+      if (!overviewBambuConfigured) return;
+      overviewBambuSource = p.source;
+      $("factBambuLabel").textContent = p.display_name || "Bambu printer";
+      const connection = p.connection || "unknown";
+      const label = connection === "connected" ? "Connected" :
+        connection === "connecting" ? "Connecting" :
+        connection === "failed" ? "Connection failed" :
+        connection === "disconnected" ? "Disconnected" : "Unavailable";
       connectionState("factBambu", label,
-        state === "online" ? "connected" :
-        state === "connecting" ? "pending" : "error",
-        "factBambuDetail", p.error || "");
+        connection === "connected" ? "connected" :
+        connection === "connecting" ? "pending" : "error",
+        "factBambuDetail", p.source === "ha" ? "Via Home Assistant" :
+          p.source === "lan" ? "Via LAN" : "Unknown connection method");
+      const availability = p.availability || "unknown";
+      const printerLabel = availability === "online" ? "Online" :
+        availability === "offline" ? "Offline" :
+        availability === "unreachable" ? "Offline / unreachable" : "Unknown";
+      connectionState("factBambuAvailability", "Printer: " + printerLabel,
+        availability === "online" ? "connected" :
+        availability === "offline" ? "neutral" :
+        availability === "unreachable" ? "error" : "neutral");
+      $("factBambuError").textContent = connection === "failed" ? (p.error || "") : "";
     } catch (error) {
-      // Do not claim the printer is disconnected merely because the web
-      // request failed; only show an error if it was a known LAN printer.
-      if (overviewBambuLan) connectionState("factBambu", "Status unavailable",
-        "error", "factBambuDetail", "Unable to retrieve printer status");
+      overviewBambuUnavailable();
     } finally {
       overviewBambuPolling = false;
     }
@@ -1030,7 +1052,13 @@
       connectionState("factHa", ha.charAt(0).toUpperCase() + ha.slice(1),
         ha === "connected" ? "connected" :
         ["connecting", "authenticating", "waiting for WiFi"].includes(ha) ? "pending" :
-        ha === "not set up" ? "neutral" : "error");
+        ha === "not set up" ? "neutral" : "error",
+        "factHaDetail", s.ha_url || "");
+      if (overviewBambuConfigured && overviewBambuSource === "ha" && ha !== "connected") {
+        connectionState("factBambu", "Disconnected", "error");
+        connectionState("factBambuAvailability", "Printer: Unknown", "neutral");
+        $("factBambuError").textContent = "";
+      }
       const mqtt = s.mqtt || {};
       const mqttState = mqtt.state || "off";
       connectionState("factMqtt", mqttState === "off" ? "Disabled" :
@@ -1087,10 +1115,9 @@
     } catch (e) {
       $("srLed").classList.add("offline");
       $("srTitle").textContent = "device unavailable";
-      connectionState("factHa", "Unavailable", "error");
+      connectionState("factHa", "Unavailable", "error", "factHaDetail", "");
       connectionState("factMqtt", "Unavailable", "error", "factMqttDetail", "");
-      if (overviewBambuLan) connectionState("factBambu", "Unavailable", "error",
-        "factBambuDetail", "");
+      overviewBambuUnavailable();
     } finally {
       statusBusy = false;
     }
@@ -1133,6 +1160,8 @@
       $("fwShowBadge").checked = !!data.showBadge;
       $("fwAutoDownload").checked = !!data.autoDownload;
       $("fwAllowBeta").checked = !!data.allowBeta;
+      $("fwAllowTouchUpdates").checked = data.allowTouchUpdates !== false;
+      $("fwAllowHaUpdates").checked = data.allowHaUpdates === true;
       const fwAction = $("fwDownloadNow");
       fwAction.dataset.action = data.staged ? "confirm" : "download";
       fwAction.textContent = data.staged ? "Install firmware" : "Download verified OTA";
@@ -1140,7 +1169,9 @@
       $("fwDownloadStatus").textContent = data.downloading
         ? "Downloading to Tactula and verifying: " + fmtBytes(data.downloadedBytes) + " / " + fmtBytes(data.totalBytes)
         : data.staged
-          ? "Verified firmware stored in Tactula's inactive OTA partition. Select Install firmware to confirm on the touchscreen."
+          ? (data.allowTouchUpdates === false
+            ? "Verified firmware ready. Select Install firmware here to authorise physical confirmation for two minutes."
+            : "Verified firmware stored in Tactula's inactive OTA partition. Select Install firmware to confirm on the touchscreen.")
           : data.error
             ? "Firmware update error: " + data.error
             : data.available
@@ -1169,7 +1200,9 @@
       checksEnabled: $("fwChecksEnabled").checked ? "1" : "0",
       showBadge: $("fwShowBadge").checked ? "1" : "0",
       autoDownload: $("fwAutoDownload").checked ? "1" : "0",
-      allowBeta: $("fwAllowBeta").checked ? "1" : "0"
+      allowBeta: $("fwAllowBeta").checked ? "1" : "0",
+      allowTouchUpdates: $("fwAllowTouchUpdates").checked ? "1" : "0",
+      allowHaUpdates: $("fwAllowHaUpdates").checked ? "1" : "0"
     });
     try {
       await getJson("/api/firmware/updates/preferences", {
@@ -1178,12 +1211,15 @@
       await refreshFirmwareUpdateStatus();
     } catch (error) {
       showToast("Failed to save firmware update preferences", true);
+      await refreshFirmwareUpdateStatus();
     }
   }
   $("fwChecksEnabled").addEventListener("change", saveFirmwareUpdatePreferences);
   $("fwShowBadge").addEventListener("change", saveFirmwareUpdatePreferences);
   $("fwAutoDownload").addEventListener("change", saveFirmwareUpdatePreferences);
   $("fwAllowBeta").addEventListener("change", saveFirmwareUpdatePreferences);
+  $("fwAllowTouchUpdates").addEventListener("change", saveFirmwareUpdatePreferences);
+  $("fwAllowHaUpdates").addEventListener("change", saveFirmwareUpdatePreferences);
   $("fwDownloadNow").addEventListener("click", async () => {
     const button = $("fwDownloadNow");
     const install = button.dataset.action === "confirm";

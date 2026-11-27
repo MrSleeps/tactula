@@ -303,6 +303,10 @@ void loadSettings() {
   presenceSettings.frameClock = prefs.getBool("pfclock", true);
   presenceSettings.frameClockLarge = prefs.getBool("pfclocklarge", false);
   presenceSettings.frameWeatherIcon = prefs.getBool("pfweathericon", true);
+  presenceSettings.frameWeatherEntity = prefs.getString("pfweatherent", "");
+  if (!presenceSettings.frameWeatherEntity.startsWith("weather.") || presenceSettings.frameWeatherEntity.length() > 80)
+    presenceSettings.frameWeatherEntity = "";
+  presenceSettings.frameWeatherTemperature = min<uint8_t>(prefs.getUChar("pfweathertemp", 0), 2);
   presenceSettings.frameClockBackground = prefs.getBool("pfclockbg", true);
   presenceSettings.frameAnim = prefs.getBool("pfanim", true);
   presenceSettings.nightWake = prefs.getBool("pnwake", false);
@@ -394,6 +398,8 @@ void saveSettings() {
   prefs.putBool("pfclock", presenceSettings.frameClock);
   prefs.putBool("pfclocklarge", presenceSettings.frameClockLarge);
   prefs.putBool("pfweathericon", presenceSettings.frameWeatherIcon);
+  prefs.putString("pfweatherent", presenceSettings.frameWeatherEntity);
+  prefs.putUChar("pfweathertemp", presenceSettings.frameWeatherTemperature);
   prefs.putBool("pfclockbg", presenceSettings.frameClockBackground);
   prefs.putBool("pfanim", presenceSettings.frameAnim);
   prefs.putBool("pnwake", presenceSettings.nightWake);

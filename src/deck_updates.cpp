@@ -1,8 +1,7 @@
 #include "optional_preferences.h"
-// Firmware update discovery (no unattended flashing). The HTTPS manifest is
-// authenticated with a trusted root; board/variant, size, version and digest
-// are checked before an update can be advertised. Installing firmware needs a
-// separate signed-update / authenticated-control implementation.
+// Verified firmware discovery and OTA. Physical approval is the default.
+// Explicit MQTT installation is opt-in for a trusted local broker; HTTPS,
+// board/edition, size, SHA-256 and ESP image verification remain mandatory.
 #include "debug_log.h"
 #include "deck_updates.h"
 #include "firmware_mirror_ca.h"
@@ -52,7 +51,14 @@ bool downloadRequested = false;
 bool manualDownloadRequested = false;
 bool downloadRunning = false;
 bool installRequested = false;
+bool remoteInstallRequested = false;
 bool touchConfirmationRequested = false;
+uint32_t webConfirmationUntil = 0;
+constexpr uint32_t WEB_CONFIRM_MS = 120000;
+// Caller holds mux; subtraction handles millis rollover.
+bool webConfirmationValid() {
+  return webConfirmationUntil && int32_t(webConfirmationUntil - millis()) > 0;
+}
 char approvedDigest[65] = {};
 char approvedPath[224] = {};
 uint32_t approvedSize = 0;
@@ -67,6 +73,7 @@ void setError(const char* msg, bool preserveVerified = false) {
   if (!preserveVerified) {
     status.available = false;
     status.version[0] = 0;
+    remoteInstallRequested = false;
   }
   status.checking = false;
   status.lastCheckMs = millis();
@@ -331,6 +338,7 @@ void checkForUpdate(CheckTiming& timing) {
   if (strcmp(status.version, version) != 0) {
     status.staged = false;
     touchConfirmationRequested = false;
+    webConfirmationUntil = 0;
     status.promptOnStage = false;
     stagedPartition = nullptr;
   }
@@ -391,6 +399,8 @@ void begin() {
     status.showBadge = prefs.getBool("badge", true);
     status.autoDownload = prefs.getBool("autodl", false);
     status.allowBeta = prefs.getBool("beta", false);
+    status.allowTouchUpdates = prefs.getBool("touch", true);
+    status.allowHaUpdates = prefs.getBool("haInstall", false);
     prefs.end();
   }
 #if defined(TACTULA_DEV_UPDATE_SIMULATION) && TACTULA_DEV_UPDATE_SIMULATION
@@ -405,23 +415,40 @@ State snapshot() {
   portENTER_CRITICAL(&mux);
   State result = status;
   result.checkPending = requested;
+  result.webConfirmationAuthorized = webConfirmationValid();
+  result.remoteInstalling = remoteInstallRequested;
   portEXIT_CRITICAL(&mux);
   return result;
 }
-void setPreferences(bool checksEnabled, bool showBadge, bool autoDownload, bool allowBeta) {
+void setPreferences(bool checksEnabled, bool showBadge, bool autoDownload, bool allowBeta, bool allowTouchUpdates, bool allowHaUpdates) {
   Preferences prefs;
   prefs.begin("tactula_upd", false);
   prefs.putBool("checks", checksEnabled);
   prefs.putBool("badge", showBadge);
   prefs.putBool("autodl", autoDownload);
   prefs.putBool("beta", allowBeta);
+  prefs.putBool("touch", allowTouchUpdates);
+  prefs.putBool("haInstall", allowHaUpdates);
   prefs.end();
   portENTER_CRITICAL(&mux);
   const bool channelChanged = status.allowBeta != allowBeta;
   status.checksEnabled = checksEnabled;
   status.showBadge = showBadge;
   status.autoDownload = autoDownload;
+  const bool touchChanged = status.allowTouchUpdates != allowTouchUpdates;
   status.allowBeta = allowBeta;
+  status.allowTouchUpdates = allowTouchUpdates;
+  status.allowHaUpdates = allowHaUpdates;
+  if (!allowHaUpdates || !checksEnabled || channelChanged) remoteInstallRequested = false;
+  if (touchChanged) {
+    webConfirmationUntil = 0;
+    touchConfirmationRequested = false;
+    if (!allowTouchUpdates) {
+      status.promptOnStage = false;
+      manualDownloadRequested = false;
+      installRequested = false;
+    }
+  }
   if (channelChanged) {
     // Do not offer or install firmware staged from the previous channel.
     status.available = false;
@@ -431,6 +458,7 @@ void setPreferences(bool checksEnabled, bool showBadge, bool autoDownload, bool 
     status.error[0] = 0;
     stagedPartition = nullptr;
     touchConfirmationRequested = false;
+    webConfirmationUntil = 0;
     installRequested = false;
     downloadRequested = false;
     manualDownloadRequested = false;
@@ -453,37 +481,49 @@ void requestCheck() {
   portEXIT_CRITICAL(&mux);
 }
 
-void requestDownload() {
+void requestDownload(bool fromTouch) {
 #if defined(TACTULA_DEV_UPDATE_SIMULATION) && TACTULA_DEV_UPDATE_SIMULATION
   return;
 #endif
   portENTER_CRITICAL(&mux);
-  if (status.available && !status.staged && !status.downloading) {
-    manualDownloadRequested = true;
+  if ((!fromTouch || status.allowTouchUpdates) &&
+      status.available && !status.staged && !status.downloading) {
+    manualDownloadRequested = status.allowTouchUpdates;
     downloadRequested = true;
   }
   portEXIT_CRITICAL(&mux);
 }
 
-// Only called from a local LVGL touch event. The web API intentionally exposes
-// no install endpoint; the verified image is not activated from the network.
+// Explicit web request grants a short-lived physical confirmation window.
+// The web API still cannot activate a boot partition.
 bool requestTouchConfirmation() {
   portENTER_CRITICAL(&mux);
   const bool ready = status.staged && !status.downloading &&
                      stagedPartition != nullptr;
-  if (ready) touchConfirmationRequested = true;
+  if (ready) {
+    touchConfirmationRequested = true;
+    webConfirmationUntil = millis() + WEB_CONFIRM_MS;
+    if (!webConfirmationUntil) webConfirmationUntil = 1;
+  }
   portEXIT_CRITICAL(&mux);
   return ready;
 }
 
 bool takeTouchConfirmationRequest() {
   portENTER_CRITICAL(&mux);
-  const bool ready = touchConfirmationRequested &&
+  const bool ready = touchConfirmationRequested && webConfirmationValid() &&
                      status.staged && !status.downloading &&
                      stagedPartition != nullptr;
   touchConfirmationRequested = false;
   portEXIT_CRITICAL(&mux);
   return ready;
+}
+
+void cancelTouchConfirmation() {
+  portENTER_CRITICAL(&mux);
+  touchConfirmationRequested = false;
+  webConfirmationUntil = 0;
+  portEXIT_CRITICAL(&mux);
 }
 
 // Only the physical LVGL confirmation may invoke the installation request.
@@ -492,8 +532,36 @@ bool installStagedFromTouch() {
   return false;
 #endif
   portENTER_CRITICAL(&mux);
-  const bool ok = status.staged && !status.downloading && stagedPartition != nullptr;
-  if (ok) installRequested = true;
+  const bool ok = (status.allowTouchUpdates || webConfirmationValid()) &&
+                  status.staged && !status.downloading && stagedPartition != nullptr;
+  if (ok) {
+    installRequested = true;
+    touchConfirmationRequested = false;
+    webConfirmationUntil = 0;
+  }
+  portEXIT_CRITICAL(&mux);
+  return ok;
+}
+
+bool requestInstallFromHa(const char* version) {
+#if defined(TACTULA_DEV_UPDATE_SIMULATION) && TACTULA_DEV_UPDATE_SIMULATION
+  return false;
+#endif
+  if (!version || webOtaBusy()) return false;
+  portENTER_CRITICAL(&mux);
+  const bool ok = status.allowHaUpdates && status.checksEnabled &&
+      status.available && !running && !installRequested &&
+      !remoteInstallRequested && approvedSize && approvedDigest[0] &&
+      strcmp(version, status.version) == 0 &&
+      (!status.staged || stagedPartition != nullptr);
+  if (ok) {
+    remoteInstallRequested = true;
+    touchConfirmationRequested = false;
+    webConfirmationUntil = 0;
+    status.promptOnStage = false;
+    manualDownloadRequested = false;
+    if (!status.staged && !downloadRunning) downloadRequested = true;
+  }
   portEXIT_CRITICAL(&mux);
   return ok;
 }
@@ -511,7 +579,9 @@ void downloadUpdate() {
     portENTER_CRITICAL(&mux);
     status.downloading = false;
     status.staged = false;
+    remoteInstallRequested = false;
     touchConfirmationRequested = false;
+    webConfirmationUntil = 0;
     status.promptOnStage = false;
     stagedPartition = nullptr;
     snprintf(status.error, sizeof(status.error), "%s", reason);
@@ -659,7 +729,7 @@ void downloadUpdate() {
     return;
   }
   // esp_ota_end also validates the ESP application image. It does NOT
-  // change the next boot partition; only local confirmation may do that.
+  // change the next boot partition; only the explicit install path may do that.
   if (esp_ota_end(otaHandle) != ESP_OK) {
     fail("ESP firmware image validation failed");
     return;
@@ -693,7 +763,7 @@ void tick() {
   portENTER_CRITICAL(&mux);
   // Prefer a pending verified download over another network check. It also
   // avoids recreating a TLS connection while the download is waiting to start.
-  if (!running && !downloadRunning && !downloadRequested &&
+  if (!running && !downloadRunning && !downloadRequested && !remoteInstallRequested &&
       (requested || (status.checksEnabled && (int32_t)(millis() - nextAttempt) >= 0))) {
     requested = false;
     running = true;
@@ -705,16 +775,17 @@ void tick() {
       status.available && !status.staged) {
     downloadRequested = false;
     downloadRunning = true;
-    status.promptOnStage = manualDownloadRequested;
+    status.promptOnStage = !remoteInstallRequested && status.allowTouchUpdates && manualDownloadRequested;
     manualDownloadRequested = false;
     status.downloading = true;
     status.downloadedBytes = 0;
     status.error[0] = 0;
     startDownload = true;
   }
-  if (installRequested && status.staged && !status.downloading &&
-      !downloadRunning && stagedPartition) {
+  if ((installRequested || (remoteInstallRequested && status.allowHaUpdates && status.checksEnabled && status.available)) &&
+      status.staged && !status.downloading && !downloadRunning && !running && stagedPartition) {
     installRequested = false;
+    remoteInstallRequested = false;
     activate = true;
     bootTarget = stagedPartition;
   }
@@ -740,6 +811,7 @@ void tick() {
     portENTER_CRITICAL(&mux);
     downloadRunning = false;
     status.downloading = false;
+    remoteInstallRequested = false;
     snprintf(status.error, sizeof(status.error), "No memory to download firmware");
     portEXIT_CRITICAL(&mux);
   }

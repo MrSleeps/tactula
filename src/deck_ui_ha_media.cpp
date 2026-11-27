@@ -6,6 +6,53 @@
 
 namespace deckui {
 namespace {
+// Media metadata may contain typographic punctuation not included in the
+// compact bitmap fonts. Keep the original UTF-8 and use a same-size glyph
+// alias only if the native font has no glyph. No extra bitmap or heap cost.
+uint32_t punctuationAlias(uint32_t cp) {
+  switch (cp) {
+    case 0x2018: case 0x2019: case 0x201A: case 0x201B:
+    case 0x2032: case 0x02BC: return 0x27; // apostrophe
+    case 0x201C: case 0x201D: case 0x201E: case 0x201F:
+    case 0x2033: return 0x22; // quotation mark
+    case 0x2010: case 0x2011: case 0x2012: case 0x2013:
+    case 0x2014: case 0x2015: case 0x2212: return 0x2D; // dash/minus
+    case 0x202F: case 0x2009: case 0x2007: return 0x20; // spaces
+    default: return cp;
+  }
+}
+
+bool mediaGlyphDescriptor(const lv_font_t* font, lv_font_glyph_dsc_t* out,
+                          uint32_t cp, uint32_t next) {
+  const auto* native = static_cast<const lv_font_t*>(font->user_data);
+  const bool found = native->get_glyph_dsc(native, out, cp, next);
+  if (found && !out->is_placeholder) return true;
+  const uint32_t alias = punctuationAlias(cp);
+  if (alias == cp) return found;
+  *out = {};
+  return native->get_glyph_dsc(native, out, alias, punctuationAlias(next));
+}
+
+lv_font_t makeMediaTextFont(const lv_font_t& native) {
+  lv_font_t font = native;
+  font.user_data = const_cast<lv_font_t*>(&native);
+  font.get_glyph_dsc = mediaGlyphDescriptor;
+  // Keep native bitmap callbacks and descriptor; LVGL resolves the copy
+  // using the same glyph indices and bitmap data.
+  return font;
+}
+
+const lv_font_t* mediaTextFont(const lv_font_t* font) {
+  static const lv_font_t f14 = makeMediaTextFont(deck_font_14);
+  static const lv_font_t f20 = makeMediaTextFont(deck_font_20);
+  static const lv_font_t f28 = makeMediaTextFont(deck_font_28);
+  static const lv_font_t f40 = makeMediaTextFont(lv_font_montserrat_40);
+  if (font == &deck_font_14) return &f14;
+  if (font == &deck_font_20) return &f20;
+  if (font == &deck_font_28) return &f28;
+  if (font == &lv_font_montserrat_40) return &f40;
+  return font;
+}
 constexpr int HA_MEDIA_BUTTONS = 6;
 constexpr int PLAY_PAUSE = 1;
 constexpr int VOLUME_DOWN = 3;
@@ -110,7 +157,7 @@ void artWorker() {
   uint8_t* jpeg = nullptr; size_t bytes = 0;
   if (haMediaArtwork(artJob.url, jpeg, bytes)) {
     auto* pixels = (uint16_t*)heap_caps_malloc(ART_SIDE * ART_SIDE * 2, MALLOC_CAP_SPIRAM);
-    if (pixels && wallDecodeCamera(jpeg, bytes, ART_SIDE, ART_SIDE, pixels)) artJob.pixels = pixels;
+    if (pixels && wallDecodeArtwork(jpeg, bytes, ART_SIDE, ART_SIDE, pixels)) artJob.pixels = pixels;
     else free(pixels);
     free(jpeg);
   }
@@ -270,7 +317,7 @@ void haMediaPress(lv_event_t* ev) {
   const size_t button = key % HA_MEDIA_BUTTONS;
   if (tile >= s_tiles.size() || button >= HA_MEDIA_BUTTONS) return;
   TileRt& r = s_tiles[tile];
-  if (!r.def || r.def->type != TILE_HA_MEDIA) return;
+  if (!r.def || r.def->type != TILE_HA_MEDIA || !tilePinAccess(r)) return;
   if (haLink() != HA_CONNECTED) {
     deckToastShow("Home Assistant is offline", 1800);
     return;
@@ -325,6 +372,7 @@ void mediaControlGlyph(lv_obj_t* label, const TileRt& r, int control, int px,
 void onMediaVolume(lv_event_t* event) {
   const size_t index = (size_t)(uintptr_t)lv_event_get_user_data(event);
   if (index >= s_tiles.size() || s_tiles[index].def->type != TILE_HA_MEDIA) return;
+  if (!tilePinAccess(s_tiles[index], false)) return;
   const auto& id = s_tiles[index].def->entity;
   const auto code = lv_event_get_code(event);
   if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
@@ -408,7 +456,7 @@ void mediaOpen(lv_event_t* event) {
 
 lv_obj_t* mediaLabel(lv_obj_t* parent, const lv_font_t* font, uint32_t colour) {
   lv_obj_t* label = lv_label_create(parent);
-  lv_obj_set_style_text_font(label, font, 0);
+  lv_obj_set_style_text_font(label, mediaTextFont(font), 0);
   lv_obj_set_style_text_color(label, lv_color_hex(colour), 0);
   lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
   return label;
@@ -440,7 +488,7 @@ lv_obj_t* cinematicMediaButton(lv_obj_t* parent, size_t index, int control, uint
 }
 
 void mediaLayoutLabel(lv_obj_t* label, const lv_font_t* font, int x, int y, int width) {
-  lv_obj_set_style_text_font(label, font, 0);
+  lv_obj_set_style_text_font(label, mediaTextFont(font), 0);
   lv_obj_set_pos(label, x, y);
   lv_obj_set_size(label, width, lineH(font));
 }
@@ -488,12 +536,12 @@ void updateTileProgress(TileRt& r, const HaEntity* e) {
 void makeHaMedia(TileRt& r, lv_obj_t* parent, size_t index) {
   r.name = lv_label_create(parent);
   lv_label_set_long_mode(r.name, LV_LABEL_LONG_MODE_DOTS);
-  lv_obj_set_style_text_font(r.name, &deck_font_20, 0);
+  lv_obj_set_style_text_font(r.name, mediaTextFont(&deck_font_20), 0);
   lv_label_set_text(r.name, r.def->label.length() ? r.def->label.c_str() : "Media player");
 
   r.sub = lv_label_create(parent);
   lv_label_set_long_mode(r.sub, LV_LABEL_LONG_MODE_DOTS);
-  lv_obj_set_style_text_font(r.sub, &deck_font_14, 0);
+  lv_obj_set_style_text_font(r.sub, mediaTextFont(&deck_font_14), 0);
   lv_obj_set_style_text_color(r.sub, lv_color_hex(C_DIM), 0);
   lv_label_set_text(r.sub, "Connecting...");
 
@@ -783,8 +831,8 @@ void fitHaMedia(TileRt& r, int cw, int ch) {
   const bool showDetail = ch >= labelH + detailH + 50;
   showObj(r.name, showTitle);
   showObj(r.sub, showDetail);
-  lv_obj_set_style_text_font(r.name, title, 0);
-  lv_obj_set_style_text_font(r.sub, detail, 0);
+  lv_obj_set_style_text_font(r.name, mediaTextFont(title), 0);
+  lv_obj_set_style_text_font(r.sub, mediaTextFont(detail), 0);
   lv_obj_set_pos(r.name, 0, 0);
   lv_obj_set_size(r.name, cw, labelH);
   lv_obj_set_pos(r.sub, 0, labelH + 2);
@@ -897,6 +945,7 @@ void onMediaExtra(lv_event_t* ev) {
   const size_t index = key / 3, control = key % 3;
   if (index >= s_tiles.size() || haLink() != HA_CONNECTED) return;
   const auto& r = s_tiles[index];
+  if (!tilePinAccess(r)) return;
   HaEntity e;
   if (!haGetEntity(r.def->entity, e) || !mediaAvailable(&e)) return;
   JsonDocument doc;
@@ -917,6 +966,7 @@ void onMediaSeek(lv_event_t* ev) {
   const size_t index = (size_t)(uintptr_t)lv_event_get_user_data(ev);
   if (index >= s_tiles.size()) return;
   const auto& r = s_tiles[index];
+  if (!tilePinAccess(r)) return;
   HaEntity e;
   if (!haGetEntity(r.def->entity, e) || !mediaSupports(&e, MEDIA_SEEK) ||
       !isfinite(e.mediaDuration) || e.mediaDuration <= 0 || haLink() != HA_CONNECTED) return;
@@ -930,6 +980,7 @@ void onMediaSource(lv_event_t* ev) {
   const size_t index = (size_t)(uintptr_t)lv_event_get_user_data(ev);
   if (index >= s_tiles.size()) return;
   const auto& r = s_tiles[index];
+  if (!tilePinAccess(r)) return;
   HaEntity e;
   if (!haGetEntity(r.def->entity, e) || !mediaSupports(&e, MEDIA_SELECT_SOURCE) ||
       haLink() != HA_CONNECTED) return;
@@ -1028,7 +1079,7 @@ void buildHaMediaSheet(lv_obj_t* card, int width, int height, int headerHeight,
     lv_obj_add_event_cb(b, onMediaExtra, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)(tile*3+j));
   }
   m.sources = lv_dropdown_create(card);
-  lv_obj_set_style_text_font(m.sources, &deck_font_14, 0);
+  lv_obj_set_style_text_font(m.sources, mediaTextFont(&deck_font_14), 0);
   lv_obj_add_event_cb(m.sources, onMediaSource, LV_EVENT_VALUE_CHANGED, (void*)(uintptr_t)tile);
   m.sourceLabel = mediaLabel(card, &deck_font_14, C_DIM);
   setText(m.sourceLabel, "Output / source");

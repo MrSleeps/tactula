@@ -40,6 +40,12 @@
 .dk-phead .btn{padding:6px 9px}.dk-phead .dk-row{gap:6px}@media (min-width:561px){.dk-phead{grid-template-columns:minmax(160px,1fr) auto}}
 .dk-cap{font:12px var(--mono);color:var(--dim);margin:10px 0 0}.dk-cap.over{color:var(--err)}
 .dk-tile.sel{border-color:var(--accent)}
+.dk-tile>.dk-pin-row{grid-column:1/-1;display:flex;align-items:center;gap:9px;min-width:0;margin:0;padding:0;border:0}
+.dk-pin-row .check-box{flex:none;width:16px;height:16px;border-radius:4px}
+.dk-pin-row .check-text{min-width:0;display:flex;align-items:baseline;gap:4px 9px;flex-wrap:wrap;font-size:13px}
+.dk-pin-row .check-text strong{white-space:nowrap}
+.dk-pin-row .ct-hint{display:inline;margin:0;line-height:1.4;overflow-wrap:normal}
+
 .dk-more{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px 12px;padding-top:10px;border-top:1px solid var(--line)}
 .dk-more .field{margin:0}.dk-sec,.dk-grp.flat>.field::before{font:600 11px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}.dk-sec{grid-column:1/-1}.dk-grp.flat{display:contents}.dk-grp.flat>.field::before{content:"\\a0";display:block;margin-bottom:8px}.dk-grp.flat>.field:first-child::before{content:var(--t)}.dk-grp.wide{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px 12px;min-width:0}.dk-more input[data-group-key="label"]{display:block;width:100%;min-width:0;background:var(--card);color:var(--ink);border:1px solid var(--line-2);border-radius:var(--r-md);font:13px var(--sans)}
 .dk-more input[data-group-key="label"]:focus{outline:2px solid var(--accent);outline-offset:1px}
@@ -2321,7 +2327,11 @@
         .map((html, i) => {
           html = html.replace('<div class="dk-tile', '<div data-tile-row="' + i + '" class="dk-tile');
           const end = html.lastIndexOf('</div>');
-          return html.slice(0, end) + groupMembership(p.tiles[i], i) + layerMembership(p,p.tiles[i],i) + html.slice(end);
+          const t = p.tiles[i];
+          const pin = t.type === "group" || t.type === "text" || t.type === "clock" ? "" :
+            '<label class="check-row standalone dk-pin-row"><input type="checkbox" data-require-pin="' + i + '"' +
+            (t.requirePin === true ? ' checked' : '') + '><span class="check-box"></span><span class="check-text"><strong>Require PIN</strong><span class="ct-hint">Use the widget PIN from Security.</span></span></label>';
+          return html.slice(0, end) + pin + groupMembership(t, i) + layerMembership(p,t,i) + html.slice(end);
         })
         .join("") +
       "</div>";
@@ -2700,6 +2710,14 @@
         wst(t, String(t.when.state || "")[0] === "!", e.target.value.trim());
       };
       x.onchange = () => renderPage();
+    });
+    el.querySelectorAll("[data-require-pin]").forEach((x) => {
+      x.onchange = () => {
+        const t = p.tiles[+x.dataset.requirePin];
+        if (x.checked) t.requirePin = true;
+        else delete t.requirePin;
+        setDirty(true);
+      };
     });
     el.querySelectorAll("[data-cf]").forEach(
       (x) =>

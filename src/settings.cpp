@@ -309,6 +309,7 @@ void loadSettings() {
   presenceSettings.frameWeatherTemperature = min<uint8_t>(prefs.getUChar("pfweathertemp", 0), 2);
   presenceSettings.frameClockBackground = prefs.getBool("pfclockbg", true);
   presenceSettings.frameAnim = prefs.getBool("pfanim", true);
+  presenceSettings.mediaKeepAwake = prefs.getBool("mediaawake", false);
   presenceSettings.nightWake = prefs.getBool("pnwake", false);
   presenceSettings.nightWakeLevel = prefs.getUChar("pnwlvl", 128);
   hapticSettings.enabled = prefs.getBool("hapon", false);
@@ -402,6 +403,7 @@ void saveSettings() {
   prefs.putUChar("pfweathertemp", presenceSettings.frameWeatherTemperature);
   prefs.putBool("pfclockbg", presenceSettings.frameClockBackground);
   prefs.putBool("pfanim", presenceSettings.frameAnim);
+  prefs.putBool("mediaawake", presenceSettings.mediaKeepAwake);
   prefs.putBool("pnwake", presenceSettings.nightWake);
   prefs.putUChar("pnwlvl", presenceSettings.nightWakeLevel);
   prefs.putBool("hapon", hapticSettings.enabled);

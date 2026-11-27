@@ -34,7 +34,7 @@
 #include "psram_json.h"
 #include "crash_log.h"
 #include <LittleFS.h>
-#include <WebServer.h>
+#include "web_pool.h"
 #include <ArduinoJson.h>
 #include <Update.h>
 #include <esp_task_wdt.h>
@@ -45,7 +45,7 @@
 #include <time.h>
 #include <algorithm>
 
-static WebServer server(80);
+static PooledWebServer server(80);
 
 // Deferred restart (so the HTTP response flushes before reboot).
 static unsigned long restartAt = 0;
@@ -180,6 +180,7 @@ static void presenceJson(JsonObject out) {
   out["frameWeatherTemperature"] = presenceSettings.frameWeatherTemperature;
   out["frameClockBackground"] = presenceSettings.frameClockBackground;
   out["frameAnim"] = presenceSettings.frameAnim;
+  out["mediaKeepAwake"] = presenceSettings.mediaKeepAwake;
   out["nightWake"] = presenceSettings.nightWake;
   out["nightWakeLevel"] = presenceSettings.nightWakeLevel;
   JsonArray ids = out["entities"].to<JsonArray>();
@@ -749,6 +750,7 @@ static void handleConfigImport() {
       READ_INT(presence, "frameWeatherTemperature", 0, 2, nextPresence.frameWeatherTemperature, uint8_t);
     if (!presence["frameClockBackground"].isNull()) READ_BOOL(presence, "frameClockBackground", nextPresence.frameClockBackground);
     if (!presence["frameAnim"].isNull()) READ_BOOL(presence, "frameAnim", nextPresence.frameAnim);
+    if (!presence["mediaKeepAwake"].isNull()) READ_BOOL(presence, "mediaKeepAwake", nextPresence.mediaKeepAwake);
     if (!presence["nightWake"].isNull()) READ_BOOL(presence, "nightWake", nextPresence.nightWake);
     if (!presence["nightWakeLevel"].isNull())
       READ_INT(presence, "nightWakeLevel", 0, 255, nextPresence.nightWakeLevel, uint8_t);
@@ -878,6 +880,7 @@ static void handleSaveLight() {
   }
   nextPresence.frameClockBackground = server.hasArg("frameClockBackground");
   nextPresence.frameAnim = server.hasArg("frameAnim");
+  nextPresence.mediaKeepAwake = server.hasArg("mediaKeepAwake");
   size_t n = 0;
   for (size_t i = 0; i < MAX_PRESENCE_ENTITIES; i++) {
     String id = server.arg("presence" + String(i));
@@ -2975,6 +2978,8 @@ static void handleUpdateStatus() {
   doc["autoDownload"] = st.autoDownload;
   doc["allowBeta"] = st.allowBeta;
   doc["allowTouchUpdates"] = st.allowTouchUpdates;
+  doc["requireTouchPin"] = st.requireTouchPin;
+  doc["firmwarePinConfigured"] = deckAuth::devicePinEnabled();
   doc["allowHaUpdates"] = st.allowHaUpdates;
   doc["remoteInstalling"] = st.remoteInstalling;
   doc["channel"] = st.allowBeta ? "beta" : "stable";
@@ -3046,7 +3051,16 @@ static void handleUpdatePreferences() {
     return;
   }
   const bool haInstall = server.hasArg("allowHaUpdates") ? server.arg("allowHaUpdates") == "1" : firmwareUpdate::snapshot().allowHaUpdates;
-  firmwareUpdate::setPreferences(enabled, badge, autoDownload, beta, touch, haInstall);
+  const bool requirePin = server.hasArg("requireTouchPin") ? server.arg("requireTouchPin") == "1" : firmwareUpdate::snapshot().requireTouchPin;
+  if (server.hasArg("requireTouchPin") && server.arg("requireTouchPin") != "0" && server.arg("requireTouchPin") != "1") {
+    server.send(400, "application/json", "{\"error\":\"Invalid firmware PIN preference\"}");
+    return;
+  }
+  firmwareUpdate::setPreferences(enabled, badge, autoDownload, beta, touch, haInstall, requirePin);
+  if (firmwareUpdate::snapshot().requireTouchPin != requirePin) {
+    server.send(500, "application/json", "{\"error\":\"Could not save firmware PIN preference\"}");
+    return;
+  }
   server.send(200, "application/json", "{\"ok\":true}");
 }
 
@@ -3109,6 +3123,8 @@ static void handleAuthStatus() {
   JsonDocument doc;
   doc["enabled"] = deckAuth::enabled();
   doc["username"] = "admin";
+  doc["devicePinEnabled"] = deckAuth::devicePinEnabled();
+  doc["widgetPinEnabled"] = deckAuth::widgetPinEnabled();
   String output;
   serializeJson(doc, output);
   server.sendHeader("Cache-Control", "no-store");
@@ -3116,6 +3132,48 @@ static void handleAuthStatus() {
 }
 
 static void handleAuthSave() {
+  if (server.arg("action") == "set_widget_pin") {
+    const String pin = server.arg("pin");
+    if (!deckAuth::validDevicePin(pin.c_str()) || pin != server.arg("confirmPin")) {
+      sendJsonMessage(400, false, "PIN must contain 4 to 8 digits and match confirmation.");
+      return;
+    }
+    if (!deckAuth::setWidgetPin(pin.c_str())) {
+      sendJsonMessage(500, false, "Could not save widget PIN.");
+      return;
+    }
+    sendJsonMessage(200, true, "Widget PIN saved.");
+    return;
+  }
+  if (server.arg("action") == "clear_widget_pin") {
+    if (!deckAuth::clearWidgetPin()) {
+      sendJsonMessage(500, false, "Could not remove widget PIN.");
+      return;
+    }
+    sendJsonMessage(200, true, "Widget PIN removed.");
+    return;
+  }
+  if (server.arg("action") == "set_device_pin") {
+    const String pin = server.arg("pin");
+    if (!deckAuth::validDevicePin(pin.c_str()) || pin != server.arg("confirmPin")) {
+      sendJsonMessage(400, false, "PIN must contain 4 to 8 digits and match confirmation.");
+      return;
+    }
+    if (!deckAuth::setDevicePin(pin.c_str())) {
+      sendJsonMessage(500, false, "Could not save device PIN.");
+      return;
+    }
+    sendJsonMessage(200, true, "Device PIN saved.");
+    return;
+  }
+  if (server.arg("action") == "clear_device_pin") {
+    if (!deckAuth::clearDevicePin()) {
+      sendJsonMessage(500, false, "Could not remove device PIN.");
+      return;
+    }
+    sendJsonMessage(200, true, "Device PIN removed.");
+    return;
+  }
   if (server.arg("action") == "disable") {
     if (!deckAuth::disable()) {
       sendJsonMessage(500, false, "Could not disable authentication.");

@@ -206,7 +206,7 @@ const PrinterTray* activeTray(const PrinterState& state) {
 
 void lightPress(lv_event_t* event) {
   const size_t index = (size_t)(uintptr_t)lv_event_get_user_data(event);
-  if (index >= s_tiles.size()) return;
+  if (index >= s_tiles.size() || !tilePinAccess(s_tiles[index])) return;
   PrinterState* s = new PrinterState();
   if (!s) return;
   const bool available = deck::printerRead("p1s", *s) &&
@@ -223,7 +223,7 @@ void lightPress(lv_event_t* event) {
 
 void heroAlertPress(lv_event_t* event) {
   const size_t index = (size_t)(uintptr_t)lv_event_get_user_data(event);
-  if (index >= s_tiles.size()) return;
+  if (index >= s_tiles.size() || !tilePinAccess(s_tiles[index])) return;
   PrinterState* state = new PrinterState();
   if (!state) return;
   if (deck::printerRead("p1s", *state) && (state->hmsCount || state->printError)) {

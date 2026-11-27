@@ -164,7 +164,7 @@
             <section class="page" data-page="security">
               <div class="page-header">
                 <h1 class="page-h1">Security</h1>
-                <p class="page-lede">Optional password protection for the local web portal.</p>
+                <p class="page-lede">Optional protection for the local web portal and touchscreen firmware installation.</p>
               </div>
               <div class="card">
                 <h2 class="card-title">HTTP Basic Authentication</h2>
@@ -183,6 +183,40 @@
                 <p class="field-hint">Your browser displays the standard sign-in prompt.
                   The username is always admin. This uses HTTP, not HTTPS: enable it only on a trusted network,
                   and do not expose this web server directly to the internet.</p>
+              </div>
+              <div class="card">
+                <h2 class="card-title">Firmware update PIN (OTA)</h2>
+                <p class="field-hint" id="devicePinState" role="status">Checking device PIN...</p>
+                <div class="field">
+                  <label class="field-label" for="devicePin">New firmware PIN</label>
+                  <input type="password" id="devicePin" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8" autocomplete="new-password" placeholder="4 to 8 digits" />
+                </div>
+                <div class="field">
+                  <label class="field-label" for="devicePinConfirm">Confirm firmware PIN</label>
+                  <input type="password" id="devicePinConfirm" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8" autocomplete="new-password" />
+                </div>
+                <div class="maintenance-actions">
+                  <button type="button" class="btn primary" id="devicePinSet">Set PIN</button>
+                  <button type="button" class="btn btn-danger hidden" id="devicePinClear">Remove PIN</button>
+                </div>
+                <p class="field-hint">Set the firmware PIN here and choose whether to require it under Maintenance. By default, a configured PIN is required for every physical firmware installation, including web-requested touchscreen confirmations. Explicitly enabled Home Assistant installation and manual web firmware uploads are unchanged. Protect this portal with a password to prevent others changing the PIN. The PIN is never shown or included in backups.</p>
+              </div>
+              <div class="card">
+                <h2 class="card-title">Widget PIN</h2>
+                <p class="field-hint" id="widgetPinState" role="status">Checking widget PIN...</p>
+                <div class="field">
+                  <label class="field-label" for="widgetPin">New widget PIN</label>
+                  <input type="password" id="widgetPin" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8" autocomplete="new-password" placeholder="4 to 8 digits" />
+                </div>
+                <div class="field">
+                  <label class="field-label" for="widgetPinConfirm">Confirm widget PIN</label>
+                  <input type="password" id="widgetPinConfirm" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8" autocomplete="new-password" />
+                </div>
+                <div class="maintenance-actions">
+                  <button type="button" class="btn primary" id="widgetPinSet">Set PIN</button>
+                  <button type="button" class="btn btn-danger hidden" id="widgetPinClear">Remove PIN</button>
+                </div>
+                <p class="field-hint">Used by widgets marked Require PIN and the on-device editor. Each widget unlock lasts 30 seconds; it locks on page change or sleep. Removing the PIN leaves protected widgets locked until a new PIN is set. Separate from firmware installation. Enable web authentication to protect changes.</p>
               </div>
             </section>
 
@@ -976,6 +1010,10 @@
                       ><span class="check-text"><strong>Animate tiles (S3)</strong></span></label
                     >
                   </div>
+                  <label class="check-row standalone" style="margin-bottom:14px">
+                    <input type="checkbox" id="mediaKeepAwake" name="mediaKeepAwake" /><span class="check-box"></span>
+                    <span class="check-text"><strong>Keep screen awake while media popup is open</strong><span class="ct-hint">Pause the idle timer until the media details popup closes. Manual off and night screen settings still apply.</span></span>
+                  </label>
                   <div class="field hidden" id="sleepDimField">
                     <label class="field-label" for="sleepDim">Dim to</label>
                     <div class="range-row">
@@ -1704,6 +1742,10 @@
                   <p class="field-hint">When disabled, the update icon and automatic installation prompts are hidden. Start installation from this web interface; physical confirmation remains required and expires after two minutes. Enable web interface password protection to restrict access.</p>
                 </div>
                 <div class="field">
+                  <label class="field-label"><input type="checkbox" id="fwRequireTouchPin" disabled /> Require firmware PIN for touchscreen installation</label>
+                  <p class="field-hint">Set the separate firmware update PIN under Security. Enabled by default when a PIN is configured. Applies to all physical installation confirmations, including those requested from the web interface. Home Assistant installations are unaffected.</p>
+                </div>
+                <div class="field">
                   <label class="field-label"><input type="checkbox" id="fwAllowHaUpdates" /> Allow firmware installation from Home Assistant (MQTT)</label>
                   <p class="field-hint">Off by default. Requires MQTT discovery. The Home Assistant Install action downloads, verifies and restarts this device without touchscreen confirmation. Use only a trusted broker with restricted publishing access. Version reporting works even when disabled.</p>
                 </div>
@@ -1724,7 +1766,7 @@
                   <a class="btn" href="https://firmware.mrsleeps.uk/tactula/" target="_blank" rel="noopener noreferrer">Firmware downloads</a>
                 </div>
                 <div class="note">
-                  <span class="note-k">Security</span><span>The download is verified over HTTPS against the SHA-256 digest in the website manifest, which is generated from verified official GitHub release assets. Background downloads never install automatically. Physical confirmation is required except for an explicitly requested, opted-in MQTT installation. Only enable remote installation on a trusted broker with restricted publishing access.</span>
+                  <span class="note-k">Security</span><span>The download is verified over HTTPS against the SHA-256 digest in the website manifest, which is generated from verified official GitHub release assets. Background downloads never install automatically. Physical confirmation is required except for an explicitly requested, opted-in MQTT installation. If firmware PIN protection is enabled, physical installation also requires the configured PIN. Only enable remote installation on a trusted broker with restricted publishing access.</span>
                 </div>
               </div>
               <div class="card">

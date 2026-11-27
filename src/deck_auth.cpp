@@ -12,6 +12,8 @@ namespace deckAuth {
 namespace {
 constexpr char NAMESPACE[] = "tactula-auth";
 constexpr char KEY[] = "record";
+constexpr char PIN_KEY[] = "devicePin"; // firmware PIN; retain existing NVS key
+constexpr char WIDGET_PIN_KEY[] = "widgetPin";
 constexpr uint32_t VERSION = 1;
 constexpr uint32_t ITERATIONS = 10000;
 constexpr size_t SALT_SIZE = 16;
@@ -31,6 +33,16 @@ static_assert(sizeof(Record) == 56, "Unexpected auth record layout");
 Record stored = {};
 bool active = false;
 bool valid = false;
+Record pinStored = {};
+bool pinActive = false, pinValid = false;
+uint8_t pinFailures = 0;
+uint32_t pinLockedAt = 0;
+Record widgetStored = {};
+bool widgetActive = false, widgetValid = false;
+uint8_t widgetFailures = 0;
+uint32_t widgetLockedAt = 0, widgetRevision = 0;
+constexpr uint32_t PIN_LOCK_MS = 30000;
+constexpr uint8_t PIN_MAX_ATTEMPTS = 5;
 
 // PBKDF2 is intentionally expensive and must NOT run for every status poll.
 // Keep a tiny RAM-only cache of successful Basic Auth credentials. Store
@@ -76,6 +88,15 @@ void begin() {
   active = false;
   valid = false;
   stored = {};
+  pinStored = {};
+  pinActive = pinValid = false;
+  pinFailures = 0;
+  pinLockedAt = 0;
+  widgetStored = {};
+  widgetActive = widgetValid = false;
+  widgetFailures = 0;
+  widgetLockedAt = 0;
+  ++widgetRevision;
   Preferences prefs;
   if (!openOptionalPreferences(prefs, NAMESPACE)) return;
   active = prefs.isKey(KEY);
@@ -84,6 +105,14 @@ void begin() {
       stored.version == VERSION && stored.iterations == ITERATIONS) {
     valid = true;
   }
+  pinActive = prefs.isKey(PIN_KEY);
+  pinValid = pinActive && prefs.getBytesLength(PIN_KEY) == sizeof(Record) &&
+      prefs.getBytes(PIN_KEY, &pinStored, sizeof(Record)) == sizeof(Record) &&
+      pinStored.version == VERSION && pinStored.iterations == ITERATIONS;
+  widgetActive = prefs.isKey(WIDGET_PIN_KEY);
+  widgetValid = widgetActive && prefs.getBytesLength(WIDGET_PIN_KEY) == sizeof(Record) &&
+      prefs.getBytes(WIDGET_PIN_KEY, &widgetStored, sizeof(Record)) == sizeof(Record) &&
+      widgetStored.version == VERSION && widgetStored.iterations == ITERATIONS;
   prefs.end();
   // An unknown/corrupt record fails closed rather than disabling protection.
 }
@@ -163,5 +192,134 @@ bool disable() {
     active = false;
   }
   return ok;
+}
+bool devicePinEnabled() { return pinActive; }
+
+bool validDevicePin(const char* pin) {
+  if (!pin) return false;
+  const size_t n = strlen(pin);
+  if (n < 4 || n > 8) return false;
+  for (size_t i = 0; i < n; ++i) if (pin[i] < '0' || pin[i] > '9') return false;
+  return true;
+}
+
+bool setDevicePin(const char* pin) {
+  if (!validDevicePin(pin)) return false;
+  Record next = {};
+  next.version = VERSION;
+  next.iterations = ITERATIONS;
+  esp_fill_random(next.salt, sizeof(next.salt));
+  if (!derive(reinterpret_cast<const uint8_t*>(pin), strlen(pin), next, next.hash)) return false;
+  Preferences prefs;
+  if (!prefs.begin(NAMESPACE, false)) return false;
+  const bool ok = prefs.putBytes(PIN_KEY, &next, sizeof(next)) == sizeof(next);
+  prefs.end();
+  if (ok) {
+    pinStored = next;
+    pinActive = pinValid = true;
+    pinFailures = 0;
+    pinLockedAt = 0;
+  }
+  return ok;
+}
+
+bool clearDevicePin() {
+  Preferences prefs;
+  if (!prefs.begin(NAMESPACE, false)) return false;
+  const bool ok = !prefs.isKey(PIN_KEY) || prefs.remove(PIN_KEY);
+  prefs.end();
+  if (ok) {
+    pinStored = {};
+    pinActive = pinValid = false;
+    pinFailures = 0;
+    pinLockedAt = 0;
+  }
+  return ok;
+}
+
+PinResult verifyDevicePin(const char* pin) {
+  if (!pinActive) return PinResult::Accepted;
+  if (pinFailures >= PIN_MAX_ATTEMPTS) {
+    if (millis() - pinLockedAt < PIN_LOCK_MS) return PinResult::Locked;
+    pinFailures = 0;
+  }
+  // Missing PIN is never an authorisation; opening a dialog isn't a guess.
+  if (!validDevicePin(pin)) return PinResult::Incorrect;
+  uint8_t derived[HASH_SIZE] = {};
+  const bool ok = pinValid &&
+      derive(reinterpret_cast<const uint8_t*>(pin), strlen(pin), pinStored, derived) &&
+      sameFingerprint(derived, pinStored.hash);
+  memset(derived, 0, sizeof(derived));
+  if (ok) {
+    pinFailures = 0;
+    return PinResult::Accepted;
+  }
+  if (++pinFailures >= PIN_MAX_ATTEMPTS) {
+    pinLockedAt = millis();
+    return PinResult::Locked;
+  }
+  return PinResult::Incorrect;
+}
+bool widgetPinEnabled() { return widgetActive; }
+uint32_t widgetPinRevision() { return widgetRevision; }
+
+bool setWidgetPin(const char* pin) {
+  if (!validDevicePin(pin)) return false;
+  Record next = {};
+  next.version = VERSION;
+  next.iterations = ITERATIONS;
+  esp_fill_random(next.salt, sizeof(next.salt));
+  if (!derive(reinterpret_cast<const uint8_t*>(pin), strlen(pin), next, next.hash)) return false;
+  Preferences prefs;
+  if (!prefs.begin(NAMESPACE, false)) return false;
+  const bool ok = prefs.putBytes(WIDGET_PIN_KEY, &next, sizeof(next)) == sizeof(next);
+  prefs.end();
+  if (ok) {
+    widgetStored = next;
+    widgetActive = widgetValid = true;
+    widgetFailures = 0;
+    widgetLockedAt = 0;
+    ++widgetRevision;
+  }
+  return ok;
+}
+
+bool clearWidgetPin() {
+  Preferences prefs;
+  if (!prefs.begin(NAMESPACE, false)) return false;
+  const bool ok = !prefs.isKey(WIDGET_PIN_KEY) || prefs.remove(WIDGET_PIN_KEY);
+  prefs.end();
+  if (ok) {
+    widgetStored = {};
+    widgetActive = widgetValid = false;
+    widgetFailures = 0;
+    widgetLockedAt = 0;
+    ++widgetRevision;
+  }
+  return ok;
+}
+
+PinResult verifyWidgetPin(const char* pin) {
+  if (!widgetActive) return PinResult::Incorrect;
+  if (widgetFailures >= PIN_MAX_ATTEMPTS) {
+    if (millis() - widgetLockedAt < PIN_LOCK_MS) return PinResult::Locked;
+    widgetFailures = 0;
+  }
+  // Missing PIN is never an authorisation; opening a dialog isn't a guess.
+  if (!validDevicePin(pin)) return PinResult::Incorrect;
+  uint8_t derived[HASH_SIZE] = {};
+  const bool ok = widgetValid &&
+      derive(reinterpret_cast<const uint8_t*>(pin), strlen(pin), widgetStored, derived) &&
+      sameFingerprint(derived, widgetStored.hash);
+  memset(derived, 0, sizeof(derived));
+  if (ok) {
+    widgetFailures = 0;
+    return PinResult::Accepted;
+  }
+  if (++widgetFailures >= PIN_MAX_ATTEMPTS) {
+    widgetLockedAt = millis();
+    return PinResult::Locked;
+  }
+  return PinResult::Incorrect;
 }
 }  // namespace deckAuth

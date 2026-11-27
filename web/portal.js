@@ -287,6 +287,12 @@
         : "Password protection is disabled (default).";
       $("authSet").textContent = info.enabled ? "Change password" : "Enable authentication";
       $("authDisable").classList.toggle("hidden", !info.enabled);
+      $("devicePinState").textContent = info.devicePinEnabled ? "Device PIN is set." : "Device PIN is not set (default).";
+      $("devicePinSet").textContent = info.devicePinEnabled ? "Change PIN" : "Set PIN";
+      $("devicePinClear").classList.toggle("hidden", !info.devicePinEnabled);
+      $("widgetPinState").textContent = info.widgetPinEnabled ? "Widget PIN is set." : "Widget PIN is not set.";
+      $("widgetPinSet").textContent = info.widgetPinEnabled ? "Change PIN" : "Set PIN";
+      $("widgetPinClear").classList.toggle("hidden", !info.widgetPinEnabled);
     } catch (e) {
       showToast("Could not load security settings: " + e.message, true);
     }
@@ -330,6 +336,68 @@
       showToast(e.message, true);
     } finally {
       $("authDisable").disabled = false;
+    }
+  });
+
+  $("devicePinSet").addEventListener("click", async () => {
+    const pin = $("devicePin").value, confirmPin = $("devicePinConfirm").value;
+    if (!/^[0-9]{4,8}$/.test(pin) || pin !== confirmPin) {
+      showToast("Enter a matching 4 to 8 digit PIN.", true);
+      return;
+    }
+    $("devicePinSet").disabled = true;
+    try {
+      await getJson("/api/auth", {method:"POST",body:new URLSearchParams({action:"set_device_pin",pin,confirmPin})});
+      await loadAuthStatus();
+      showToast("Device PIN saved.");
+    } catch (e) { showToast(e.message, true); }
+    finally {
+      $("devicePin").value = $("devicePinConfirm").value = "";
+      $("devicePinSet").disabled = false;
+    }
+  });
+  $("devicePinClear").addEventListener("click", async () => {
+    if (!confirm("Remove the device PIN? Touchscreen firmware installation will no longer require it.")) return;
+    $("devicePinClear").disabled = true;
+    try {
+      await getJson("/api/auth", {method:"POST",body:new URLSearchParams({action:"clear_device_pin"})});
+      await loadAuthStatus();
+      showToast("Device PIN removed.");
+    } catch (e) { showToast(e.message, true); }
+    finally {
+      $("devicePin").value = $("devicePinConfirm").value = "";
+      $("devicePinClear").disabled = false;
+    }
+  });
+
+  $("widgetPinSet").addEventListener("click", async () => {
+    const pin = $("widgetPin").value, confirmPin = $("widgetPinConfirm").value;
+    if (!/^[0-9]{4,8}$/.test(pin) || pin !== confirmPin) {
+      showToast("Enter a matching 4 to 8 digit PIN.", true);
+      return;
+    }
+    $("widgetPinSet").disabled = true;
+    try {
+      await getJson("/api/auth", {method:"POST",body:new URLSearchParams({action:"set_widget_pin",pin,confirmPin})});
+      await loadAuthStatus();
+      showToast("Widget PIN saved.");
+    } catch (e) { showToast(e.message, true); }
+    finally {
+      $("widgetPin").value = $("widgetPinConfirm").value = "";
+      $("widgetPinSet").disabled = false;
+    }
+  });
+  $("widgetPinClear").addEventListener("click", async () => {
+    if (!confirm("Remove the widget PIN? Protected widgets and the editor will remain locked until a new PIN is configured.")) return;
+    $("widgetPinClear").disabled = true;
+    try {
+      await getJson("/api/auth", {method:"POST",body:new URLSearchParams({action:"clear_widget_pin"})});
+      await loadAuthStatus();
+      showToast("Widget PIN removed.");
+    } catch (e) { showToast(e.message, true); }
+    finally {
+      $("widgetPin").value = $("widgetPinConfirm").value = "";
+      $("widgetPinClear").disabled = false;
     }
   });
 
@@ -860,6 +928,7 @@
     setVal("frameWeatherTemperature", String(p.frameWeatherTemperature || 0));
     setCheck("frameClockBackground", p.frameClockBackground !== false);
     setCheck("frameAnim", p.frameAnim !== false);
+    setCheck("mediaKeepAwake", p.mediaKeepAwake === true);
     setVal("sleepDim", p.dim || 10);
     for (let i = 0; i < 4; i++) setVal("presence" + i, (p.entities || [])[i] || "");
     setCheck("nightWake", p.nightWake);
@@ -1161,6 +1230,8 @@
       $("fwAutoDownload").checked = !!data.autoDownload;
       $("fwAllowBeta").checked = !!data.allowBeta;
       $("fwAllowTouchUpdates").checked = data.allowTouchUpdates !== false;
+      $("fwRequireTouchPin").disabled = data.firmwarePinConfigured !== true;
+      $("fwRequireTouchPin").checked = data.firmwarePinConfigured === true && data.requireTouchPin !== false;
       $("fwAllowHaUpdates").checked = data.allowHaUpdates === true;
       const fwAction = $("fwDownloadNow");
       fwAction.dataset.action = data.staged ? "confirm" : "download";
@@ -1204,6 +1275,10 @@
       allowTouchUpdates: $("fwAllowTouchUpdates").checked ? "1" : "0",
       allowHaUpdates: $("fwAllowHaUpdates").checked ? "1" : "0"
     });
+    // Preserve the saved policy when no PIN exists; the disabled control is
+    // showing effective protection, not an instruction to turn it off.
+    if (!$("fwRequireTouchPin").disabled)
+      body.set("requireTouchPin", $("fwRequireTouchPin").checked ? "1" : "0");
     try {
       await getJson("/api/firmware/updates/preferences", {
         method: "POST", body
@@ -1219,6 +1294,7 @@
   $("fwAutoDownload").addEventListener("change", saveFirmwareUpdatePreferences);
   $("fwAllowBeta").addEventListener("change", saveFirmwareUpdatePreferences);
   $("fwAllowTouchUpdates").addEventListener("change", saveFirmwareUpdatePreferences);
+  $("fwRequireTouchPin").addEventListener("change", saveFirmwareUpdatePreferences);
   $("fwAllowHaUpdates").addEventListener("change", saveFirmwareUpdatePreferences);
   $("fwDownloadNow").addEventListener("click", async () => {
     const button = $("fwDownloadNow");

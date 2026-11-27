@@ -197,6 +197,7 @@ struct TileDef {
   TilePos pos[2];
   TileAction tap, hold;
   ConfirmMode confirm = CONFIRM_NONE;
+  bool requirePin = false; // independent of confirm mode
   MetricStyle style = METRIC_NUMBER;
   uint8_t hours = 24;  // TILE_SENSOR: history period, 1..168 hours
   bool hasWarn = false, hasCrit = false;

@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <lvgl.h>
 #include "deck_sd.h"
+#include "deck_blue_noise.h"
 
 namespace deck {
 
@@ -38,12 +39,16 @@ String wallGalleryPath(bool portrait, const String& name = "");
 WallFiles wallFiles(bool portrait);
 WallFiles wallListDir(const char* path);
 String wallCurrent(bool portrait);
+// Name of the image actually installed in the live RGB565 buffer, not a queued selection.
+String wallDisplayedName();
 String wallPinned(bool portrait);
 bool wallPin(bool portrait, const String& name);
 void wallClearPin(bool portrait);
 bool wallValidateJpeg(const char* path, bool portrait);
 // Worker from wallRunWorker only. Undimmed RGB565, no full-size scratch.
 bool wallDecodeCamera(const uint8_t* data, size_t bytes, int w, int h, uint16_t* pixels);
+// Album covers only: smooth small JPEGs, with bounded scratch and nearest fallback.
+bool wallDecodeArtwork(const uint8_t* data, size_t bytes, int w, int h, uint16_t* pixels);
 bool wallLoadPicture(const char* path, int w, int h, uint16_t* pixels);
 // Runs a picture job off the loop task. SD jobs share one long-lived worker with
 // a PSRAM stack; LittleFS jobs get a short-lived task with an internal stack.
@@ -78,16 +83,13 @@ const lv_image_dsc_t& wallBlurBand(int y);
 const uint8_t* wallBlurRow(int y);
 // Near-gaussian blur of one 8-bit plane in place (tmp: scratch of the same size).
 void wallBlurPlane(uint8_t* p, uint8_t* tmp, int w, int h, int r);
-// An 8-bit colour as RGB565, ordered-dithered by its screen position. 8x8
-// ordered dither: a smooth 8-bit gradient becomes a fine pattern of
-// neighbouring RGB565 levels instead of coloured steps. Inline: per pixel loops.
+// Blue-noise dithering avoids the repeating Bayer row pattern.
+// Oppose green to red/blue to reduce visible luminance variation.
 inline uint16_t wallDither565(int r, int g, int b, int x, int y) {
-  static const uint8_t kBayer[8][8] = {
-      {0, 32, 8, 40, 2, 34, 10, 42},  {48, 16, 56, 24, 50, 18, 58, 26}, {12, 44, 4, 36, 14, 46, 6, 38},
-      {60, 28, 52, 20, 62, 30, 54, 22}, {3, 35, 11, 43, 1, 33, 9, 41},  {51, 19, 59, 27, 49, 17, 57, 25},
-      {15, 47, 7, 39, 13, 45, 5, 37},  {63, 31, 55, 23, 61, 29, 53, 21}};
-  const int t = (kBayer[y & 7][x & 7] * 2 + 1) * 255;  // threshold, in 1/32640 of a level
-  int r5 = (r * 31 * 128 + t) / 32640, g6 = (g * 63 * 128 + t) / 32640, b5 = (b * 31 * 128 + t) / 32640;
+  const int t = (BLUE_NOISE[y & 63][x & 63] * 2 + 1) * 255;
+  int r5 = (r * 31 * 128 + t) / 32640,
+      g6 = (g * 63 * 128 + 32640 - t) / 32640,
+      b5 = (b * 31 * 128 + t) / 32640;
   if (r5 > 31) r5 = 31;
   if (g6 > 63) g6 = 63;
   if (b5 > 31) b5 = 31;

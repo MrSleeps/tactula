@@ -64,6 +64,7 @@ struct TileRt {
   int page;
   lv_obj_t* obj;
   lv_obj_t* groupBody = nullptr;
+  lv_obj_t* pinShield = nullptr;
   lv_obj_t* name;
   lv_obj_t* sub;
   lv_obj_t* icon;
@@ -328,6 +329,8 @@ void runAction(TileRt& r, const TileAction& a);
 bool needsConfirm(const TileRt& r, const TileAction& a);
 const char* actionVerb(const TileRt& r, const TileAction& a);
 void requestAction(TileRt& r, bool hold);
+bool tilePinAccess(const TileRt& r, bool prompt = true);
+bool editorPinAccess(int page);
 void tileEvent(lv_event_t* e);
 void sliderEvent(lv_event_t* e);
 
@@ -355,6 +358,8 @@ extern lv_obj_t* s_modalCard;
 extern int s_modalTile;
 extern int8_t s_confirmHold;
 bool modalShown();
+bool mediaCardOpen();
+void cardUnderFree();
 void setModalOpen(bool open);
 void deckToastShow(const char* text, uint32_t holdMs);
 void dailyBarSync();
@@ -474,6 +479,7 @@ void fxBeforeTileOn(TileRt& r, bool on);  // before the CHECKED state changes
 void fxTileOn(TileRt& r, bool wasOn);
 void fxCardOpen(lv_obj_t* card, int tileIdx);
 void fxCardClose(lv_obj_t* card, int tileIdx);
+void fxCardPicFree();
 
 // deck_ui_glass.cpp
 std::vector<uint32_t> glassKey(Page& p);

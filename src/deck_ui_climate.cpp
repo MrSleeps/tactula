@@ -99,7 +99,7 @@ void onInlineClimate(lv_event_t* ev) {
   const size_t index = key / 8, part = key % 8;
   if (index >= s_tiles.size()) return;
   TileRt& r = s_tiles[index];
-  if (!r.def || r.def->type != TILE_CLIMATE) return;
+  if (!r.def || r.def->type != TILE_CLIMATE || !tilePinAccess(r)) return;
   HaEntity e;
   if (!haGetEntity(r.def->entity, e) || !climateAvailable(&e)) {
     deckToastShow("Home Assistant is offline", 1800);
@@ -134,7 +134,7 @@ void onInlineDial(lv_event_t* event) {
   const size_t index = (size_t)(uintptr_t)lv_event_get_user_data(event);
   if (index >= s_tiles.size()) return;
   TileRt& r = s_tiles[index];
-  if (!r.climDial || r.climDialSync) return;
+  if (!r.climDial || r.climDialSync || !tilePinAccess(r, false)) return;
   const auto code = lv_event_get_code(event);
   if (code == LV_EVENT_PRESSED) {
     r.climDialDragging = true;

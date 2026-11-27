@@ -8,6 +8,7 @@ struct State {
   bool showBadge = true;
   bool allowBeta = false;
   bool allowTouchUpdates = true;
+  bool requireTouchPin = true; // effective only when an OTA PIN is configured
   bool allowHaUpdates = false;
   bool remoteInstalling = false; // snapshot only
   bool webConfirmationAuthorized = false; // snapshot only
@@ -28,7 +29,8 @@ void begin();
 void tick();
 void requestCheck();
 State snapshot();
-void setPreferences(bool checksEnabled, bool showBadge, bool autoDownload, bool allowBeta, bool allowTouchUpdates, bool allowHaUpdates);
+void setPreferences(bool checksEnabled, bool showBadge, bool autoDownload, bool allowBeta, bool allowTouchUpdates, bool allowHaUpdates, bool requireTouchPin);
+bool touchPinRequired();
 // Only fetches trusted HTTPS bytes from the local mirror and verifies against
 // digest/size discovered from GitHub. Never selects a new boot partition.
 void requestDownload(bool fromTouch = false);
@@ -38,7 +40,8 @@ bool requestTouchConfirmation();
 bool takeTouchConfirmationRequest();
 void cancelTouchConfirmation();
 // Physical confirmation path. No remote API may call this method.
-bool installStagedFromTouch();
+enum class TouchInstallResult { Accepted, NotReady, IncorrectPin, PinLocked };
+TouchInstallResult installStagedFromTouch(const char* pin, const char* expectedVersion);
 // Explicit version-bound request from the opted-in MQTT controller only.
 bool requestInstallFromHa(const char* version);
 }

@@ -989,6 +989,7 @@ void collectEntities() {
 }
 
 void runAction(TileRt& r, const TileAction& a) {
+  if (!tilePinAccess(r)) return;
   const String& entity = r.def->entity;
   const String domain = entityDomain(entity);
   const bool haUp = haLink() == HA_CONNECTED;
@@ -1094,6 +1095,7 @@ const char* actionVerb(const TileRt& r, const TileAction& a) {
 }
 
 void requestAction(TileRt& r, bool hold) {
+  if (!tilePinAccess(r)) return;
   const TileAction& a = hold ? r.def->hold : r.def->tap;
   // Some saved headline temperature tiles carry an explicit empty tap.
   if (!hold && a.kind == ACT_NONE && !r.def->http.enabled &&
@@ -1131,6 +1133,7 @@ void sliderEvent(lv_event_t* e) {
     setSliderFill(r, r.frac);
     return;
   }
+  if (!tilePinAccess(r, code == LV_EVENT_PRESSED)) return;
   lv_point_t p;
   lv_indev_get_point(lv_indev_active(), &p);
   if (code == LV_EVENT_PRESSED) {

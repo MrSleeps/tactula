@@ -4,6 +4,7 @@
 // board/edition, size, SHA-256 and ESP image verification remain mandatory.
 #include "debug_log.h"
 #include "deck_updates.h"
+#include "deck_auth.h"
 #include "firmware_mirror_ca.h"
 #include "config.h"
 #include "web_server.h"
@@ -400,6 +401,7 @@ void begin() {
     status.autoDownload = prefs.getBool("autodl", false);
     status.allowBeta = prefs.getBool("beta", false);
     status.allowTouchUpdates = prefs.getBool("touch", true);
+    status.requireTouchPin = prefs.getBool("touchPin", true);
     status.allowHaUpdates = prefs.getBool("haInstall", false);
     prefs.end();
   }
@@ -420,7 +422,7 @@ State snapshot() {
   portEXIT_CRITICAL(&mux);
   return result;
 }
-void setPreferences(bool checksEnabled, bool showBadge, bool autoDownload, bool allowBeta, bool allowTouchUpdates, bool allowHaUpdates) {
+void setPreferences(bool checksEnabled, bool showBadge, bool autoDownload, bool allowBeta, bool allowTouchUpdates, bool allowHaUpdates, bool requireTouchPin) {
   Preferences prefs;
   prefs.begin("tactula_upd", false);
   prefs.putBool("checks", checksEnabled);
@@ -429,6 +431,8 @@ void setPreferences(bool checksEnabled, bool showBadge, bool autoDownload, bool 
   prefs.putBool("beta", allowBeta);
   prefs.putBool("touch", allowTouchUpdates);
   prefs.putBool("haInstall", allowHaUpdates);
+  // Do not change the runtime PIN policy if it could not be persisted.
+  const bool pinSaved = prefs.putBool("touchPin", requireTouchPin) != 0;
   prefs.end();
   portENTER_CRITICAL(&mux);
   const bool channelChanged = status.allowBeta != allowBeta;
@@ -439,6 +443,10 @@ void setPreferences(bool checksEnabled, bool showBadge, bool autoDownload, bool 
   status.allowBeta = allowBeta;
   status.allowTouchUpdates = allowTouchUpdates;
   status.allowHaUpdates = allowHaUpdates;
+  if (pinSaved && status.requireTouchPin != requireTouchPin) {
+    status.requireTouchPin = requireTouchPin;
+    installRequested = false;
+  }
   if (!allowHaUpdates || !checksEnabled || channelChanged) remoteInstallRequested = false;
   if (touchChanged) {
     webConfirmationUntil = 0;
@@ -526,21 +534,34 @@ void cancelTouchConfirmation() {
   portEXIT_CRITICAL(&mux);
 }
 
+bool touchPinRequired() {
+  return snapshot().requireTouchPin && deckAuth::devicePinEnabled();
+}
+
 // Only the physical LVGL confirmation may invoke the installation request.
-bool installStagedFromTouch() {
+TouchInstallResult installStagedFromTouch(const char* pin, const char* expectedVersion) {
 #if defined(TACTULA_DEV_UPDATE_SIMULATION) && TACTULA_DEV_UPDATE_SIMULATION
-  return false;
+  return TouchInstallResult::NotReady;
 #endif
+  // Verify outside the critical section; PBKDF2 can be expensive.
+  // No reusable unlock token: each physical install requires its own PIN.
+  const bool pinRequired = touchPinRequired();
+  const auto verified = pinRequired ? deckAuth::verifyDevicePin(pin) : deckAuth::PinResult::Accepted;
+  if (verified == deckAuth::PinResult::Locked) return TouchInstallResult::PinLocked;
+  if (verified != deckAuth::PinResult::Accepted) return TouchInstallResult::IncorrectPin;
   portENTER_CRITICAL(&mux);
-  const bool ok = (status.allowTouchUpdates || webConfirmationValid()) &&
-                  status.staged && !status.downloading && stagedPartition != nullptr;
+  const bool ok = (!status.requireTouchPin || !deckAuth::devicePinEnabled() || pinRequired) &&
+                  (status.allowTouchUpdates || webConfirmationValid()) &&
+                  status.staged && !status.downloading && !remoteInstallRequested &&
+                  stagedPartition != nullptr && expectedVersion && expectedVersion[0] &&
+                  strcmp(expectedVersion, status.version) == 0;
   if (ok) {
     installRequested = true;
     touchConfirmationRequested = false;
     webConfirmationUntil = 0;
   }
   portEXIT_CRITICAL(&mux);
-  return ok;
+  return ok ? TouchInstallResult::Accepted : TouchInstallResult::NotReady;
 }
 
 bool requestInstallFromHa(const char* version) {

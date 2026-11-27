@@ -3,6 +3,7 @@
 #include "debug_log.h"
 #include "p4_trace.h"
 #include "deck_ui_int.h"
+#include "deck_auth.h"
 #if defined(BOARD_IS_JC8012P4A1C)
 #include "p4_board.h"
 #endif
@@ -386,23 +387,286 @@ void goToPage(const String& id) {
 
 
 static lv_obj_t* s_firmwareConfirm = nullptr;
+static lv_obj_t* s_pinMask = nullptr;
+static lv_obj_t* s_pinStatus = nullptr;
+static char s_updatePin[9] = {};
+static char s_confirmVersion[40] = {};
+static uint8_t s_pinLength = 0;
+static uint32_t s_pinOpened = 0;
+// -1 = firmware, -2 = editor, >=0 = index of one protected widget.
+static int s_pinTarget = -1, s_pinPage = -1;
+static int s_widgetUnlocked = -1, s_editorGrant = -1;
+static uint32_t s_widgetAt = 0, s_widgetRevision = 0, s_editorRevision = 0;
+static constexpr uint32_t WIDGET_UNLOCK_MS = 30000;
+static void openUpdatePin(int target = -1, int page = -1);
+static void lockWidgets();
+static void refreshPinShields();
+static bool widgetPinGranted(const TileRt& r) {
+  return !r.def->requirePin || (deckAuth::widgetPinEnabled() &&
+      s_widgetUnlocked >= 0 && size_t(s_widgetUnlocked) < s_tiles.size() &&
+      &r == &s_tiles[s_widgetUnlocked] && !r.off && r.page == sh.active &&
+      s_widgetRevision == deckAuth::widgetPinRevision() &&
+      millis() - s_widgetAt < WIDGET_UNLOCK_MS);
+}
+bool tilePinAccess(const TileRt& r, bool prompt) {
+  if (widgetPinGranted(r)) return true;
+  if (!prompt || r.off || r.page != sh.active || s_firmwareConfirm) return false;
+  if (!deckAuth::widgetPinEnabled()) {
+    deckToastShow("Set a widget PIN in Security", 2200);
+    return false;
+  }
+  const int idx = int(&r - s_tiles.data());
+  lockWidgets();
+  openUpdatePin(idx, r.page);
+  return false; // never replay a tap/drag after PIN entry
+}
+static bool editorNeedsPin() {
+  if (deckAuth::widgetPinEnabled()) return true;
+  for (const auto& page : s_cfg.pages)
+    for (const auto& tile : page.tiles) if (tile.requirePin) return true;
+  return false;
+}
+bool editorPinAccess(int page) {
+  if (!editorNeedsPin()) return true;
+  if (s_editorGrant == page && s_editorRevision == deckAuth::widgetPinRevision()) {
+    s_editorGrant = -1;
+    return true;
+  }
+  if (!deckAuth::widgetPinEnabled()) {
+    deckToastShow("Set a widget PIN in Security", 2200);
+    return false;
+  }
+  if (!s_firmwareConfirm && page == sh.active) {
+    lockWidgets();
+    openUpdatePin(-2, page);
+  }
+  return false;
+}
+static void clearUpdatePin() {
+  memset(s_updatePin, 0, sizeof(s_updatePin));
+  s_pinLength = 0;
+}
 // Track a freshly staged image independently of top-bar badge preferences.
 // Declining the popup must not make it appear once per second.
 static bool s_firmwarePrompted = false;
 static void dismissFirmwareConfirm() {
+  clearUpdatePin();
+  s_pinMask = s_pinStatus = nullptr;
+  s_pinOpened = 0;
+  s_pinTarget = s_pinPage = -1;
   if (s_firmwareConfirm) {
     lv_obj_delete_async(s_firmwareConfirm);
     s_firmwareConfirm = nullptr;
+    setModalOpen(s_modalCard != nullptr);
   }
 }
 static void closeFirmwareConfirm(lv_event_t*) {
-  firmwareUpdate::cancelTouchConfirmation();
+  if (s_pinTarget == -1) firmwareUpdate::cancelTouchConfirmation();
   dismissFirmwareConfirm();
 }
+static void updatePinMask() {
+  if (!s_pinMask) return;
+  char mask[9] = {};
+  memset(mask, '*', s_pinLength);
+  lv_label_set_text(s_pinMask, s_pinLength ? mask : "Enter PIN");
+}
+
+static void submitUpdatePin() {
+  if (s_pinTarget != -1) {
+    const int target = s_pinTarget, page = s_pinPage;
+    const auto result = deckAuth::verifyWidgetPin(s_updatePin);
+    clearUpdatePin();
+    if (result == deckAuth::PinResult::Accepted && page == sh.active &&
+        deckAuth::widgetPinEnabled()) {
+      dismissFirmwareConfirm();
+      s_widgetRevision = deckAuth::widgetPinRevision();
+      s_widgetAt = millis();
+      if (target == -2) {
+        s_editorRevision = s_widgetRevision;
+        s_editorGrant = page;
+        edOpen(page);
+        s_editorGrant = -1;
+      } else if (target >= 0 && size_t(target) < s_tiles.size() &&
+                 !s_tiles[target].off && s_tiles[target].page == page &&
+                 s_tiles[target].def->requirePin) {
+        s_widgetUnlocked = target;
+        refreshPinShields();
+        deckToastShow("Widget unlocked for 30 seconds", 1800);
+      }
+      return;
+    }
+    updatePinMask();
+    if (s_pinStatus) lv_label_set_text(s_pinStatus, result == deckAuth::PinResult::Locked ?
+        "Too many attempts. Wait 30s." : "Incorrect widget PIN.");
+    return;
+  }
+  using R = firmwareUpdate::TouchInstallResult;
+  const auto result = firmwareUpdate::installStagedFromTouch(s_updatePin, s_confirmVersion);
+  clearUpdatePin();
+  if (result == R::Accepted || result == R::NotReady) {
+    closeFirmwareConfirm(nullptr);
+    if (result == R::NotReady) debugSerial.println("Update: staged image no longer ready");
+    return;
+  }
+  updatePinMask();
+  if (s_pinStatus) lv_label_set_text(s_pinStatus, result == R::PinLocked ?
+      "Too many attempts. Wait 30s." : "Incorrect PIN. Try again.");
+}
+
+static void updatePinKey(lv_event_t* event) {
+  if (!s_pinMask) return;
+  const int key = (int)(intptr_t)lv_event_get_user_data(event);
+  if (key == 11) {
+    if (s_pinLength >= 4) submitUpdatePin();
+    else lv_label_set_text(s_pinStatus, "Enter at least 4 digits.");
+    return;
+  }
+  if (key == 10) {
+    if (s_pinLength) s_updatePin[--s_pinLength] = 0;
+  } else if (key >= 0 && key <= 9 && s_pinLength < 8) {
+    s_updatePin[s_pinLength++] = char('0' + key);
+    s_updatePin[s_pinLength] = 0;
+  }
+  updatePinMask();
+}
+
+static void openUpdatePin(int target, int page) {
+  dismissFirmwareConfirm(); // keep expected version and any web permission
+  s_pinTarget = target;
+  s_pinPage = page;
+  s_pinOpened = millis();
+  setModalOpen(true);
+  const int w = logicalW(), h = logicalH();
+  const bool large = std::min(w,h) >= 800;
+  const int cw = std::min(w - 16, large ? 500 : 304);
+  const int pad = large ? 22 : 10, gap = large ? 12 : 6;
+  const int headH = large ? 40 : 28, fieldH = large ? 58 : 34;
+  const int statusH = large ? 30 : 20;
+  const int keyH = std::min(large ? 76 : 42, (h - 16 - 2*pad - headH - fieldH - statusH - 6*gap)/4);
+  const int ch = 2*pad + headH + fieldH + statusH + 4*keyH + 6*gap;
+  const int innerW = cw - 2*pad;
+  const lv_font_t* labelFont = large ? &deck_font_20 : &deck_font_14;
+  const lv_font_t* keyFont = large ? &deck_font_28 : &deck_font_20;
+  // A full-screen scrim consumes taps; dashboard controls cannot receive them.
+  s_firmwareConfirm = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_firmwareConfirm);
+  lv_obj_set_size(s_firmwareConfirm, w, h);
+  lv_obj_center(s_firmwareConfirm);
+  lv_obj_set_style_bg_color(s_firmwareConfirm, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(s_firmwareConfirm, LV_OPA_60, 0);
+  lv_obj_add_flag(s_firmwareConfirm, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_remove_flag(s_firmwareConfirm, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* card = lv_obj_create(s_firmwareConfirm);
+  lv_obj_remove_style_all(card);
+  lv_obj_set_size(card, cw, ch);
+  lv_obj_center(card);
+  lv_obj_set_style_bg_color(card, lv_color_hex(C_PANEL), 0);
+  lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(card, large ? 22 : 14, 0);
+  lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* title = lv_label_create(card);
+  lv_obj_set_style_text_font(title, labelFont, 0);
+  lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
+  lv_label_set_text(title, target == -1 ? "Firmware update PIN" : target == -2 ? "Editor PIN" : "Widget PIN");
+  lv_obj_set_pos(title, pad, pad + (headH - lv_font_get_line_height(labelFont))/2);
+  auto button = [&](int x, int y, int bw, int bh, const char* label, const lv_font_t* font,
+                    bool primary, lv_event_cb_t cb, void* data) {
+    lv_obj_t* b = lv_button_create(card);
+    lv_obj_remove_style_all(b);
+    lv_obj_set_pos(b,x,y);
+    lv_obj_set_size(b,bw,bh);
+    lv_obj_set_style_radius(b, large ? 12 : 8, 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(primary ? C_OK : C_BUTTON), 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_70, LV_STATE_PRESSED);
+    lv_obj_t* l = lv_label_create(b);
+    lv_obj_set_style_text_font(l,font,0);
+    lv_obj_set_style_text_color(l,lv_color_hex(primary ? C_BG : C_TEXT),0);
+    lv_label_set_text(l,label);
+    lv_obj_center(l);
+    lv_obj_add_event_cb(b,cb,LV_EVENT_CLICKED,data);
+  };
+  const int cancelW = large ? 90 : 58;
+  button(cw-pad-cancelW,pad,cancelW,headH,"Cancel",labelFont,false,closeFirmwareConfirm,nullptr);
+  int y = pad + headH + gap;
+  lv_obj_t* field = lv_obj_create(card);
+  lv_obj_remove_style_all(field);
+  lv_obj_set_pos(field,pad,y);
+  lv_obj_set_size(field,innerW,fieldH);
+  lv_obj_set_style_bg_color(field,lv_color_hex(C_BG),0);
+  lv_obj_set_style_bg_opa(field,LV_OPA_COVER,0);
+  lv_obj_set_style_radius(field,8,0);
+  lv_obj_remove_flag(field, LV_OBJ_FLAG_SCROLLABLE);
+  s_pinMask = lv_label_create(field);
+  lv_obj_set_style_text_font(s_pinMask,keyFont,0);
+  lv_obj_set_style_text_color(s_pinMask,lv_color_hex(C_TEXT),0);
+  updatePinMask();
+  lv_obj_center(s_pinMask);
+  y += fieldH + gap;
+  const char* labels[] = {"1","2","3","4","5","6","7","8","9","Del","0","OK"};
+  const int keys[] = {1,2,3,4,5,6,7,8,9,10,0,11};
+  const int kw = (innerW - 2*gap)/3;
+  for (int i=0;i<12;++i)
+    button(pad+(i%3)*(kw+gap),y+(i/3)*(keyH+gap),kw,keyH,labels[i],
+        keyFont,keys[i]==11,updatePinKey,(void*)(intptr_t)keys[i]);
+  y += 4*keyH + 4*gap;
+  s_pinStatus = lv_label_create(card);
+  lv_obj_set_width(s_pinStatus,innerW);
+  lv_obj_set_pos(s_pinStatus,pad,y);
+  lv_obj_set_style_text_font(s_pinStatus,labelFont,0);
+  lv_obj_set_style_text_color(s_pinStatus,lv_color_hex(C_DIM),0);
+  lv_label_set_text(s_pinStatus,target == -1 ? "Enter firmware PIN to install." : "Enter widget PIN to unlock.");
+}
+
+static void refreshPinShields() {
+  for (auto& r : s_tiles) {
+    if (!r.pinShield) continue;
+    const bool show = !widgetPinGranted(r);
+    const bool hidden = lv_obj_has_flag(r.pinShield, LV_OBJ_FLAG_HIDDEN);
+    if (show == hidden) {
+      if (show) lv_obj_remove_flag(r.pinShield, LV_OBJ_FLAG_HIDDEN);
+      else lv_obj_add_flag(r.pinShield, LV_OBJ_FLAG_HIDDEN);
+      markPageStale(r.page);
+    }
+  }
+}
+static void lockWidgets() {
+  if (s_widgetUnlocked >= 0 && s_modalTile == s_widgetUnlocked) closeModal();
+  s_widgetUnlocked = -1;
+  refreshPinShields();
+}
+static void sizePinShield(lv_event_t* ev) {
+  auto* tile = lv_event_get_target_obj(ev);
+  auto* shield = static_cast<lv_obj_t*>(lv_event_get_user_data(ev));
+  lv_obj_set_size(shield, lv_obj_get_width(tile), lv_obj_get_height(tile));
+  lv_obj_center(shield);
+}
+static void addPinShield(TileRt& r, size_t index) {
+  if (!r.def->requirePin) return;
+  auto* shield = lv_obj_create(r.obj);
+  r.pinShield = shield;
+  lv_obj_remove_style_all(shield);
+  lv_obj_add_flag(shield, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_FLOATING | LV_OBJ_FLAG_IGNORE_LAYOUT));
+  lv_obj_remove_flag(shield, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_EVENT_BUBBLE));
+  lv_obj_set_size(shield, lv_obj_get_width(r.obj), lv_obj_get_height(r.obj));
+  lv_obj_center(shield);
+  auto* label = lv_label_create(shield);
+  lv_label_set_text(label, "PIN");
+  lv_obj_set_style_text_font(label, &deck_font_12, 0);
+  lv_obj_set_style_text_color(label, lv_color_white(), 0);
+  lv_obj_set_style_bg_color(label, lv_color_hex(C_PANEL), 0);
+  lv_obj_set_style_bg_opa(label, LV_OPA_80, 0);
+  lv_obj_set_style_pad_all(label, 3, 0);
+  lv_obj_align(label, LV_ALIGN_TOP_RIGHT, -3, 3);
+  lv_obj_add_event_cb(r.obj, sizePinShield, LV_EVENT_SIZE_CHANGED, shield);
+  lv_obj_add_event_cb(shield, [](lv_event_t* ev) {
+    const size_t i = (size_t)(uintptr_t)lv_event_get_user_data(ev);
+    if (i < s_tiles.size()) tilePinAccess(s_tiles[i]);
+  }, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)index);
+}
 static void approveFirmwareFromTouch(lv_event_t*) {
-  const bool approved = firmwareUpdate::installStagedFromTouch();
-  closeFirmwareConfirm(nullptr);
-  if (!approved) debugSerial.println("Update: staged image no longer ready");
+  if (firmwareUpdate::touchPinRequired()) openUpdatePin();
+  else submitUpdatePin();
 }
 static void downloadFirmwareFromTouch(lv_event_t*) {
   // Queue a verified OTA download; the firmware is never installed without
@@ -413,6 +677,7 @@ static void downloadFirmwareFromTouch(lv_event_t*) {
 static void openFirmwareConfirmation(lv_event_t*) {
   if (s_firmwareConfirm) return;
   const auto st = firmwareUpdate::snapshot();
+  snprintf(s_confirmVersion,sizeof(s_confirmVersion),"%s",st.version);
   if (!st.allowTouchUpdates && !(st.staged && st.webConfirmationAuthorized)) return;
   if (!st.available && !st.staged && !st.downloading) return;
   const int w = logicalW(), h = logicalH();
@@ -743,6 +1008,7 @@ void addTilesPage(const PageDef& def) {
     if (!c.placed && !c.off) debugSerial.printf("Deck: page '%s' has no room for tile '%s'\n",
                        def.id.c_str(), def.tiles[i].id.c_str());
     makeTile(parent, def.tiles[i], page, c.placed ? c.x : 0, c.placed ? c.y : 0, c.w, c.h);
+    addPinShield(s_tiles.back(), s_tiles.size() - 1);
     if (!c.placed) {
       s_tiles.back().off = true;
       lv_obj_add_flag(s_tiles.back().obj, LV_OBJ_FLAG_HIDDEN);
@@ -935,6 +1201,9 @@ void setPager(int page) {
 }
 
 void destroyPages(bool keepGlass = false) {
+  if (s_firmwareConfirm) closeFirmwareConfirm(nullptr);
+  lockWidgets();
+  s_editorGrant = -1;
   inlineClimateFlush();  // Don't lose an unsent setpoint during page rebuild.
   clearGlassCache();
   edClose();
@@ -1008,6 +1277,8 @@ void switchTo(int page) {
   const int w = logicalW();
   const int old = sh.active;
   if (page == old || page < 0 || page >= s_count) return;
+  if (s_pinTarget != -1) dismissFirmwareConfirm();
+  lockWidgets();
   lv_obj_set_x(s_pages[old].root, w);
   lv_obj_set_x(s_pages[page].root, 0);
   portENTER_CRITICAL(&s_mux);
@@ -1284,7 +1555,12 @@ void updateHeaders() {
   const auto updateState = firmwareUpdate::snapshot();
   // Requests from the local web UI only bring the existing LVGL physical
   // confirmation to the foreground; they never install or reboot remotely.
-  if (!updateState.allowTouchUpdates && !updateState.webConfirmationAuthorized && s_firmwareConfirm)
+  if (s_pinMask && (millis() - s_pinOpened >= 120000 ||
+      (s_pinTarget == -1 && (!updateState.staged || updateState.remoteInstalling ||
+        strcmp(s_confirmVersion, updateState.version) != 0)) ||
+      (s_pinTarget != -1 && s_pinPage != sh.active))) closeFirmwareConfirm(nullptr);
+  if (s_pinTarget == -1 && !updateState.allowTouchUpdates &&
+      !updateState.webConfirmationAuthorized && s_firmwareConfirm)
     dismissFirmwareConfirm();
   if (firmwareUpdate::takeTouchConfirmationRequest()) {
     dismissFirmwareConfirm();
@@ -1345,7 +1621,7 @@ void updateHeaders() {
 }
 
 // Pages are rebuilt only once nothing is in the user's hands.
-bool canRebuild() { return !touchIsDown() && !s_ed.root && !s_modalCard && !s_qp.open; }
+bool canRebuild() { return !touchIsDown() && !s_ed.root && !s_modalCard && !s_qp.open && !s_firmwareConfirm; }
 
 // The shown page stays by id, even when pages before it come or go.
 void rebuildPages() {
@@ -1839,6 +2115,15 @@ void deckTick() {
     presenceTick();
     frameTick();
   }
+  const bool screenLocked = displaySleepingForTouch() || manualDisplayOff() ||
+      frameActive() || getScreenState() != SCREEN_DECK;
+  if (s_widgetUnlocked >= 0 && (screenLocked ||
+      size_t(s_widgetUnlocked) >= s_tiles.size() || !widgetPinGranted(s_tiles[s_widgetUnlocked])))
+    lockWidgets();
+  if (s_pinTarget != -1 && screenLocked) dismissFirmwareConfirm();
+  if (s_ed.root && editorNeedsPin() &&
+      (screenLocked || s_editorRevision != deckAuth::widgetPinRevision() ||
+       millis() - touchLastActivity() >= 120000)) edClose();
 
   // System screens (splash, WiFi setup, OTA) cover the pages: no gestures,
   // no panel or card under them.
@@ -1852,7 +2137,7 @@ void deckTick() {
     edClose();
   }
   portENTER_CRITICAL(&s_mux);
-  sh.swipeEnabled = !systemScreen && !frameActive() && !renderOnly;
+  sh.swipeEnabled = !systemScreen && !frameActive() && !renderOnly && !s_firmwareConfirm;
   portEXIT_CRITICAL(&s_mux);
   p4Trace::run(p4Trace::Stage::SystemScreen, [&] { sysScreenSync(sc); });
   // Once per boot, when the deck is first visible.
@@ -2176,6 +2461,7 @@ bool deckTestCard(const String& tileId) {
   if (s_ed.root) return false;  // the editor blocks gestures until it closes
   for (size_t i = 0; i < s_tiles.size(); i++) {
     if (s_tiles[i].def->id != tileId) continue;
+    if (!tilePinAccess(s_tiles[i], false) || s_tiles[i].def->requirePin) return false;
     openModal((int)i);
     return true;
   }
@@ -2187,6 +2473,7 @@ bool deckTestTap(const String& tileId, bool hold) {
   if (s_ed.root) return false;
   for (TileRt& r : s_tiles) {
     if (r.def->id != tileId || r.def->type == TILE_CLOCK || r.def->type == TILE_WEATHER_CLOCK) continue;
+    if (r.def->requirePin) return false; // bench endpoint cannot use a physical grant
     const TileAction& a = hold ? r.def->hold : r.def->tap;
     requestAction(r, hold);
     return true;
@@ -2198,6 +2485,7 @@ bool deckTestSlide(const String& tileId, int pct) {
   if (frameActive()) return false;
   for (TileRt& r : s_tiles) {
     if (r.def->id != tileId || !r.fill) continue;
+    if (r.def->requirePin) return false;
     const float f = constrain(pct, 0, 100) / 100.0f;
     return setWish(r.def->entity, true, f);
   }
@@ -2207,6 +2495,7 @@ bool deckTestSlide(const String& tileId, int pct) {
 bool deckTestConfirm(bool ok) {
   if (s_confirmHold < 0 || s_modalTile < 0 || (size_t)s_modalTile >= s_tiles.size()) return false;
   const TileDef& d = *s_tiles[s_modalTile].def;
+  if (d.requirePin) return false;
   const TileAction& a = s_confirmHold ? d.hold : d.tap;
   if (ok) onConfirmOk(nullptr);
   else closeModal();
@@ -2214,6 +2503,7 @@ bool deckTestConfirm(bool ok) {
 }
 
 bool deckTestEdit(const String& op, int tile, int x, int y, int w, int h) {
+  if (editorNeedsPin()) return false;
   if (frameActive()) return false;
   if (!s_disp) return false;
   if (op == "open") {

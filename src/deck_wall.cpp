@@ -720,6 +720,7 @@ WallFiles wallFiles(bool portrait) {
 }
 
 String wallCurrent(bool portrait) { initGallery(portrait); return s_current[portrait]; }
+String wallDisplayedName() { return s_sharp ? s_loadedName : String(); }
 String wallPinned(bool portrait) { initGallery(portrait); return s_pin[portrait]; }
 
 bool wallPin(bool portrait, const String& name) {
@@ -755,7 +756,30 @@ void wallClearPin(bool portrait) {
 
 // Camera-specific entry point: accepts arbitrary baseline JPEG sizes, leaving
 // the stricter wallpaper validation path unchanged.
-bool wallDecodeCamera(const uint8_t* data, size_t bytes, int w, int h, uint16_t* pixels) {
+// Interpolate RGB565 channels independently; pixel-center mapping avoids a
+// half-pixel shift. Called on the artwork worker, never on the LVGL loop.
+static void upscaleArtwork(const uint16_t* src, int sw, int sh, uint16_t* dst, int w, int h) {
+  auto channel = [](uint16_t c, int k) { return k == 0 ? c >> 11 : k == 1 ? (c >> 5) & 63 : c & 31; };
+  for (int y = 0; y < h; ++y) {
+    const int fy = std::max(0, (2*y+1)*sh*64/h - 64);
+    const int y0 = std::min(sh-1, fy>>7), y1 = std::min(sh-1, y0+1), wy = fy&127;
+    const auto* a = src + y0*sw;
+    const auto* b = src + y1*sw;
+    for (int x = 0; x < w; ++x) {
+      const int fx = std::max(0, (2*x+1)*sw*64/w - 64);
+      const int x0 = std::min(sw-1, fx>>7), x1 = std::min(sw-1, x0+1), wx = fx&127;
+      uint16_t v[3];
+      for (int k = 0; k < 3; ++k) {
+        const int top = channel(a[x0],k)*(128-wx) + channel(a[x1],k)*wx;
+        const int bot = channel(b[x0],k)*(128-wx) + channel(b[x1],k)*wx;
+        v[k] = (top*(128-wy) + bot*wy + 8192)>>14;
+      }
+      dst[y*w+x] = (uint16_t)(v[0]<<11 | v[1]<<5 | v[2]);
+    }
+  }
+}
+
+static bool decodeCameraOrArtwork(const uint8_t* data, size_t bytes, int w, int h, uint16_t* pixels, bool smooth) {
   if (!data || !bytes || !pixels || w < 1 || h < 1) return false;
   void* work = heap_caps_malloc(JPEG_WORK_BYTES, MALLOC_CAP_SPIRAM);
   if (!work) return false;
@@ -768,10 +792,29 @@ bool wallDecodeCamera(const uint8_t* data, size_t bytes, int w, int h, uint16_t*
     in.sourceH = std::max(1, std::min<int>(jd.height, jd.width * h / w));
     in.cropX = (jd.width - in.sourceW) / 2;
     in.cropY = (jd.height - in.sourceH) / 2;
+    uint16_t* small = nullptr;
+    const int sw = in.sourceW, sh = in.sourceH;
+    // Only upscale genuinely small images; never allocate another full-size
+    // image for large covers or camera streams.
+    const size_t scratch = (size_t)sw*sh*2;
+    if (smooth && sw < w && sh < h &&
+        heap_caps_get_free_size(MALLOC_CAP_SPIRAM) >= scratch + WALL_RESERVE) {
+      small = (uint16_t*)heap_caps_malloc(scratch, MALLOC_CAP_SPIRAM);
+      if (small) { in.w = sw; in.h = sh; in.rgb565 = small; }
+    }
     ok = jd_decomp(&jd, jpegOutput, 0) == JDR_OK;
+    if (ok && small) upscaleArtwork(small, sw, sh, pixels, w, h);
+    free(small);
   } else ok = false;
   free(work);
   return ok;
+}
+
+bool wallDecodeCamera(const uint8_t* data, size_t bytes, int w, int h, uint16_t* pixels) {
+  return decodeCameraOrArtwork(data, bytes, w, h, pixels, false);
+}
+bool wallDecodeArtwork(const uint8_t* data, size_t bytes, int w, int h, uint16_t* pixels) {
+  return decodeCameraOrArtwork(data, bytes, w, h, pixels, true);
 }
 
 bool wallLoadPicture(const char* path, int w, int h, uint16_t* pixels) {

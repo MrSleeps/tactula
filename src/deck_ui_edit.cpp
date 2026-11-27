@@ -679,7 +679,7 @@ void edMakeBox(int k, const TileDef& d) {
 }
 
 void edOpen(int page) {
-  if (s_ed.root || page < 0 || page >= s_count || !s_pages[page].def) return;
+  if (s_ed.root || page < 0 || page >= s_count || !s_pages[page].def || !editorPinAccess(page)) return;
   hidePanelNow();
   closeModal();
   const PageDef& def = *s_pages[page].def;

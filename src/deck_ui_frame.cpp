@@ -597,7 +597,9 @@ void wake() {
   s_page = s_base = nullptr;
   s_rects = nullptr;
   s_runs = nullptr;
-  if (!s_count || !capturePage()) {
+  // Low-memory entry can borrow the dashboard image without owning a copy.
+  // The compositor requires owned picture pixels; exit directly in that case.
+  if (!s_picture || !s_count || !capturePage()) {
     frameAbort();
     return;
   }
@@ -606,9 +608,13 @@ void wake() {
 
 bool enter() {
   if (s_state != FRAME_OFF || !s_disp || !s_count || getScreenState() != SCREEN_DECK ||
-      s_qp.open || s_modalCard || s_ed.root || sh.owned || compMode() != COMP_NONE ||
+      s_qp.open || s_modalCard || s_ed.root || sh.modalOpen || sh.owned || compMode() != COMP_NONE ||
       touchIsDown() || manualDisplayOff() || nightScreenOff()) return false;
   stopGestures();
+  // Closed detail cards keep two full-screen buffers for fast reopening.
+  // Drop them after compositor quiescence, before allocating frame buffers.
+  cardUnderFree();
+  fxCardPicFree();
   s_width = logicalW();
   s_height = logicalH();
   s_source = wallSource();
@@ -625,17 +631,43 @@ bool enter() {
   sh.swipeEnabled = false;
   portEXIT_CRITICAL(&s_mux);
   setIdleSleep(true, 255);
-#if defined(BOARD_IS_JC8012P4A1C)
-  // Reuse the live wallpaper immediately; do not require another full-screen
-  // allocation just to enter photo mode. Gallery decoding can follow later.
-  s_name = wallCurrent(s_width < s_height);
-  s_nextName = s_name;
-  shown();
-  makeScreen();
-  s_state = FRAME_IDLE;
-  debugSerial.printf("Deck frame: entered using current wallpaper\n");
-  return true;
+  // Start with the pixels actually displayed by the dashboard. A selected
+  // gallery filename may refer to an image that has not been committed yet.
+  const auto* live = themeUsesWallpaper(s_theme) ? wallSharp() : nullptr;
+  if (live && live->data && live->header.cf == LV_COLOR_FORMAT_RGB565 &&
+      live->header.w == s_width && live->header.h == s_height &&
+      live->header.stride >= s_width * 2) {
+    s_nextName = wallDisplayedName();
+#if !defined(BOARD_IS_JC8012P4A1C)
+    // S3 retains the existing tile fade using a private, stable picture.
+    // Do not re-decode a different gallery file or require a copy on low heap.
+    s_picture = (uint16_t*)heap_caps_malloc(FRAME_BYTES, MALLOC_CAP_SPIRAM);
+    if (s_picture) {
+      for (int y = 0; y < s_height; ++y)
+        memcpy(s_picture + y * s_width, live->data + y * live->header.stride, s_width * 2);
+      if (presenceSettings.frameAnim && capturePage()) {
+        shown();
+        makeScreen();
+        startAnimation(FRAME_ENTER);
+        debugSerial.println("Deck frame: animated entry using displayed wallpaper");
+        return true;
+      }
+      // Snapshot allocation failed or animations disabled: enter directly.
+      free(s_page); free(s_base); free(s_rects); free(s_runs);
+      s_page = s_base = nullptr;
+      s_rects = nullptr;
+      s_runs = nullptr;
+      s_rectCount = 0;
+    }
 #endif
+    // P4 and low-memory S3 can borrow the live image without allocating.
+    shown();
+    makeScreen();
+    s_state = FRAME_IDLE;
+    debugSerial.println("Deck frame: entered using displayed wallpaper");
+    return true;
+  }
+  // Without a displayed wallpaper (solid theme/initial load), use the gallery.
   if (loadState() == LOAD_IDLE && !requestPicture()) {
     debugSerial.printf("Deck frame: entry failed: %s\n", s_error.c_str());
     frameAbort();

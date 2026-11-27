@@ -561,6 +561,15 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         if (err) *err = where + ": navigation requires tap: {action: page, page: id} and no hold action";
         return false;
       }
+      if (!tv["requirePin"].isNull() && !tv["requirePin"].is<bool>()) {
+        if (err) *err = where + ": requirePin must be boolean";
+        return false;
+      }
+      t.requirePin = tv["requirePin"] | false;
+      if (t.requirePin && t.type == TILE_GROUP) {
+        if (err) *err = where + ": set requirePin on individual widgets, not the group";
+        return false;
+      }
       const char* cf = tv["confirm"] | "";
       if (!strcmp(cf, "off")) t.confirm = CONFIRM_OFF;
       else if (!strcmp(cf, "always")) t.confirm = CONFIRM_ALWAYS;

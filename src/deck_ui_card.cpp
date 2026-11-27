@@ -84,6 +84,19 @@ bool modalShown() { return s_modalCard != nullptr; }
 lv_obj_t* s_modalUnder = nullptr;
 lv_draw_buf_t* s_underBuf = nullptr;  // kept once used
 
+void cardUnderFree() {
+  if (s_modalCard || s_modalUnder || compMode() != COMP_NONE || !s_underBuf) return;
+  lv_image_cache_drop(s_underBuf);
+  lv_draw_buf_destroy(s_underBuf);
+  s_underBuf = nullptr;
+}
+
+bool mediaCardOpen() {
+  return s_modalCard && s_confirmHold < 0 && s_modalTile >= 0 &&
+      size_t(s_modalTile) < s_tiles.size() && s_tiles[s_modalTile].def &&
+      s_tiles[s_modalTile].def->type == TILE_HA_MEDIA;
+}
+
 bool coverPage() {
   const int w = logicalW(), h = logicalH();
   if (s_underBuf && (s_underBuf->header.w != w || s_underBuf->header.h != h)) {
@@ -1003,6 +1016,7 @@ void cleanPage() {
 }
 
 void openModal(int tileIdx) {
+  if (tileIdx < 0 || size_t(tileIdx) >= s_tiles.size() || !tilePinAccess(s_tiles[tileIdx])) return;
   closeModal();
   cleanPage();
   const TileRt& r = s_tiles[tileIdx];
@@ -1512,6 +1526,7 @@ void onConfirmTimeout(lv_timer_t*) {
 // Confirmation card for tiles with "confirm". Cancel, the scrim, the
 // timeout or a state change close it without running anything.
 void openConfirm(int tileIdx, bool hold) {
+  if (tileIdx < 0 || size_t(tileIdx) >= s_tiles.size() || !tilePinAccess(s_tiles[tileIdx])) return;
   closeModal();
   cleanPage();
   const TileRt& r = s_tiles[tileIdx];

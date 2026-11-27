@@ -85,6 +85,7 @@ struct PresenceSettings {
   uint8_t frameWeatherTemperature = 0; // 0 inherit (actual for explicit source), 1 actual, 2 feels-like
   bool frameClockBackground = true;
   bool frameAnim = true;
+  bool mediaKeepAwake = false;
   bool nightWake = false;        // presence lifts the night schedule to nightWakeLevel
   uint8_t nightWakeLevel = 128;  // 0..255
   String entities[MAX_PRESENCE_ENTITIES];  // "" = unused slot

@@ -4,7 +4,7 @@
 // =============================================================================
 //  Firmware version
 // =============================================================================
-#define FW_VERSION          "2.0.0-beta.2"
+#define FW_VERSION          "2.0.0-beta.3"
 #define PRODUCT_NAME        "tactula"
 
 // Board variant - reported to the portal and the OTA page.

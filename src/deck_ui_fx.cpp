@@ -734,6 +734,13 @@ lv_obj_t* visibleTile(int tileIdx) {
 
 }  // namespace
 
+void fxCardPicFree() {
+  if (modalShown() || compMode() != COMP_NONE || !s_cardPic) return;
+  lv_image_cache_drop(s_cardPic);
+  lv_draw_buf_destroy(s_cardPic);
+  s_cardPic = nullptr;
+}
+
 PageFx fxPage() { return fx().page; }
 
 void fxQuiet() { s_quietUntil = millis() + 800; }

@@ -19,26 +19,6 @@
     <link rel="stylesheet" href="/portal.css?v={{v:portal.css}}" />
     <link rel="stylesheet" href="/portal-layout.css?v={{v:portal-layout.css}}" />
     <style>
-      input[type="time"] {
-        appearance: none;
-        width: 100%;
-        max-width: 520px;
-        background: var(--card);
-        color: var(--ink);
-        border: 1px solid var(--line-2);
-        border-radius: var(--r-md);
-        padding: 10px 14px;
-        font-size: 14px;
-        box-shadow: var(--shadow);
-      }
-      input[type="time"]:focus {
-        outline: none;
-        border-color: var(--accent-line);
-        box-shadow: 0 0 0 3px var(--accent-soft);
-      }
-      [data-mode="dark"] input[type="time"] {
-        color-scheme: dark;
-      }
       .maintenance-copy {
         margin: 8px 0 17px;
         color: var(--mute);
@@ -150,7 +130,7 @@
               <button type="button" class="nav-item" data-nav="network">Network</button
               ><button type="button" class="nav-item" data-nav="storage">Storage</button>
               <button type="button" class="nav-item" data-nav="maintenance">Maintenance</button>
-              <button type="button" class="nav-item hidden" data-nav="logs" id="navLogs">Logs</button>
+              <button type="button" class="nav-item" data-nav="debug">Debug</button>
             </div>
           </nav>
           <div class="sidebar-spacer"></div>
@@ -277,26 +257,67 @@
                   <div><dt>WiFi signal</dt><dd id="diagRssi">--</dd></div>
                   <div><dt>Uptime</dt><dd id="diagUptime">--</dd></div>
                 </dl>
-                <label class="check-row standalone" style="margin-top: 12px">
-                  <input type="checkbox" id="debugMode" disabled /><span class="check-box"></span>
-                  <span class="check-text"><strong>Debug mode</strong>
-                    <span class="ct-hint" id="debugModeHint">Restarts the device and enables the Logs page.</span>
-                  </span>
-                </label>
+                <p class="field-hint"><a href="#debug" data-page="debug">Debug mode and device logs</a></p>
               </div>
             </section>
 
-            <section class="page" data-page="logs">
+            <section class="page" data-page="debug">
               <div class="page-header">
-                <h1 class="page-h1">Logs</h1>
+                <h1 class="page-h1">Debug</h1>
               </div>
               <div class="card">
+                <label class="check-row standalone">
+                  <input type="checkbox" id="debugMode" aria-describedby="debugModeHint" disabled />
+                  <span class="check-box"></span>
+                  <span class="check-text"><strong>Debug mode</strong></span>
+                </label>
+                <p class="field-hint" id="debugModeHint" role="status">Checking debug mode…</p>
+                <button type="button" class="btn hidden" id="debugModeRetry">Retry</button>
+              </div>
+              <div class="card hidden" id="debugLogViewer">
                 <div class="card-head">
                   <p id="debugLogsStatus" class="field-hint" role="status">Connecting...</p>
                   <button type="button" class="btn" id="debugLogsPause" aria-pressed="false">Pause</button>
                 </div>
                 <pre id="debugLogsOutput" tabindex="0" aria-label="Device log output"
                   style="height: min(56vh, 520px); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere"></pre>
+              </div>
+              <div class="card hidden" id="p4DiagnosticsCard">
+                <h2 class="card-title">P4 display diagnostics</h2>
+                <p class="maintenance-copy">Compare DMA faults without changing the display or restarting. Silent stops P4 diagnostic reports, not unrelated firmware logs. Modes and counters are temporary and reset on reboot.</p>
+                <div class="field">
+                  <label class="field-label" for="p4DiagnosticsMode">Diagnostic mode</label>
+                  <select id="p4DiagnosticsMode" disabled>
+                    <option value="verbose">Verbose — periodic reports and faults</option>
+                    <option value="faults" selected>Faults only — no periodic reports</option>
+                    <option value="silent">Silent — counters only</option>
+                  </select>
+                </div>
+                <dl class="kv">
+                  <dt>Late DMA frames</dt><dd id="p4DiagLate">—</dd>
+                  <dt>Display underruns</dt><dd id="p4DiagUnderruns">—</dd>
+                  <dt>Worst DMA gap</dt><dd id="p4DiagGap">—</dd>
+                  <dt>Test duration</dt><dd id="p4DiagElapsed">—</dd>
+                </dl>
+                <div class="maintenance-actions">
+                  <button type="button" class="btn" id="p4DiagRefresh">Refresh counters</button>
+                  <button type="button" class="btn" id="p4DiagReset">Reset counters</button>
+                </div>
+                <p class="field-hint" id="p4DiagStatus" role="status">Counters reset when changing mode. Refresh manually to avoid continuous diagnostic web traffic.</p>
+                <details id="scanoutHoldControls" class="hidden" style="margin-top: 16px">
+                  <summary style="cursor: pointer; font-weight: 600">Advanced display diagnostics</summary>
+                  <p class="field-hint">Temporary troubleshooting tests may interrupt normal display updates. All tests expire automatically.</p>
+                  <div class="maintenance-actions">
+                    <button type="button" class="btn" id="scanoutHold">Hold display frame for 60 seconds</button>
+                    <button type="button" class="btn" id="scanoutReplay">Replay display frame for 60 seconds</button>
+                    <button type="button" class="btn" id="renderOnly">Render without presenting for 60 seconds</button>
+                    <button type="button" class="btn" id="cpuScanout">Test CPU scanout for 2 minutes</button>
+                    <button type="button" class="btn" id="partialScanout">Test partial scanout for 60 seconds</button>
+                    <button type="button" class="btn" id="pauseSnapshots">Pause background snapshots for 2 minutes</button>
+                    <button type="button" class="btn" id="scanoutStop">Stop test / Resume normal operation</button>
+                  </div>
+                  <p class="field-hint" id="scanoutHoldStatus" role="status"></p>
+                </details>
               </div>
             </section>
 
@@ -308,6 +329,18 @@
                 <p class="page-lede">Install and manage the icon packs and custom artwork used by your touchscreen tiles.</p>
               </div>
               <div id="deckIconsSection"></div>
+              <div class="card" id="weatherIconPacksCard">
+                <h2 class="card-title">Weather icon packs</h2>
+                <p class="maintenance-copy">Install static Meteocons or animated Tactula Outline artwork onto the microSD card. Compatible P4 devices also receive high-resolution frames for weather popups. Select the artwork style in your weather clock settings.</p>
+                <div class="field">
+                  <div class="maintenance-actions">
+                    <button type="button" class="btn" data-wclock-install="fill">Install / update Fill</button>
+                    <button type="button" class="btn" data-wclock-install="flat">Install / update Flat</button>
+                    <button type="button" class="btn" data-skycons-install>Install / update Tactula Outline</button>
+                  </div>
+                  <p class="field-hint" role="status" data-wclock-status>Requires a mounted microSD card. Meteocons also requires browser internet access.</p>
+                </div>
+              </div>
               <div class="card" id="bedroomIconsCard">
                 <h2 class="card-title">Custom PNG icons</h2>
                 <p class="maintenance-copy">
@@ -322,7 +355,7 @@
                   <input type="file" id="bedroomIconsFiles" accept=".png,image/png" multiple hidden />
                 </div>
                 <div id="bedroomIconsList" class="dk-row" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:14px"></div>
-                <p class="field-hint">Maximum 512 KB and 160×160 pixels per icon. Existing names are replaced.
+                <p class="field-hint">Maximum 512 KB and 256×256 pixels per icon. Existing names are replaced.
                   Custom icon files are stored on the microSD card and can be used by compatible tiles.</p>
               </div>
             </section>
@@ -352,7 +385,7 @@
                         </select>
                       </div>
                     </div>
-                    <div class="field">
+                    <div class="field" id="legacyThemeField">
                       <label class="field-label" for="theme">Theme</label>
                       <div class="select-wrap">
                         <select id="theme" name="theme">
@@ -360,10 +393,36 @@
                           <option value="1">Daylight (light)</option>
                           <option value="2">Glass (wallpaper)</option>
                           <option value="3">Tactula</option>
-                          <option value="4">Minimal Console (dark)</option>
-                          <option value="5">Tactula Midnight (default)</option>
+                          <option value="6" id="cinematicTheme" hidden disabled>Tactula Ocean</option>
+                          <option value="7" hidden disabled>Tactula Ember</option>
+                          <option value="8" hidden disabled>Tactula Ocean Glass</option>
+                          <option value="9" hidden disabled>Tactula Ember Glass</option>
+                          <option value="10" hidden disabled>Tactula Amethyst</option>
+                          <option value="11" hidden disabled>Tactula Forest</option>
+                          <option value="12" hidden disabled>Tactula Graphite</option>
+                          <option value="13" hidden disabled>Tactula Amethyst Glass</option>
+                          <option value="14" hidden disabled>Tactula Forest Glass</option>
+                          <option value="15" hidden disabled>Tactula Graphite Glass</option>
                         </select>
                       </div>
+                    </div>
+                    <div class="field hidden" id="modernPaletteField">
+                      <label class="field-label" for="tactulaPalette">Tactula colour palette</label>
+                      <div class="select-wrap">
+                        <select id="tactulaPalette">
+                          <option value="ocean">Ocean (blue)</option>
+                          <option value="ember">Ember (graphite and orange)</option>
+                          <option value="amethyst">Amethyst (purple and lavender)</option>
+                          <option value="forest">Forest (green and mint)</option>
+                          <option value="graphite">Graphite (charcoal and silver)</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="field hidden" id="modernGlassField">
+                      <label class="check-row standalone">
+                        <input type="checkbox" id="tactulaGlass" /><span class="check-box"></span>
+                        <span class="check-text"><strong>Glass mode</strong><span class="ct-hint">Translucent cards over your wallpaper, with the selected colour palette.</span></span>
+                      </label>
                     </div>
                     <div class="field">
                       <label class="field-label" for="tileFx">Animations</label>
@@ -432,7 +491,6 @@
                 </div>
                 <div class="card hidden" id="tactulaLook">
                   <h2 class="card-title">Tile appearance</h2>
-                  <p class="field-hint">Midnight uses deep navy cards over your wallpaper, soft blue active borders and rounded icon badges. Adjust the tile opacity separately from Glass/Tactula. Individual tiles can still override these defaults.</p>
                   <div class="grid-2">
                     <div class="field">
                       <label class="field-label" for="tactulaRadius">Tile corner radius</label>
@@ -448,22 +506,6 @@
                         <span class="range-val" id="tactulaPaddingVal">--</span>
                       </div>
                       <p class="field-hint" data-tip>Small tiles use less padding to leave room for their contents. Groups use their own padding.</p>
-                    </div>
-                    <div class="field hidden" id="midnightTintField">
-                      <label class="field-label" for="midnightTint">Widget background opacity</label>
-                      <div class="range-row">
-                        <input type="range" id="midnightTint" name="midnightTint" min="0" max="100" step="1" />
-                        <span class="range-val" id="midnightTintVal">--</span>
-                      </div>
-                      <p class="field-hint" data-tip>0% shows the wallpaper through the widgets; 100% gives an opaque navy background. Default: 90%.</p>
-                    </div>
-                    <div class="field hidden" id="midnightOnField">
-                      <label class="field-label" for="midnightOn">Active widget opacity</label>
-                      <div class="range-row">
-                        <input type="range" id="midnightOn" name="midnightOn" min="0" max="100" step="1" />
-                        <span class="range-val" id="midnightOnVal">--</span>
-                      </div>
-                      <p class="field-hint" data-tip>Opacity of the coloured fill on active widgets. Default: 92%. Per-widget settings override this.</p>
                     </div>
                   </div>
                 </div>
@@ -525,7 +567,7 @@
                       </p>
                     </div>
                   </div>
-                  <label class="check-row standalone"
+                  <label class="check-row standalone" id="glassAutoTextField"
                     ><input type="checkbox" id="glassAutoText" name="glassAutoText" /><span
                       class="check-box"
                     ></span
@@ -855,7 +897,7 @@
                     <div class="field">
                       <label class="field-label" for="sleepMin">Sleep after (minutes)</label
                       ><input type="number" id="sleepMin" name="sleepMin" min="0" max="1440" step="1" />
-                      <p class="field-hint">Without touch and without presence. 0 = never.</p>
+                      <p class="field-hint">Without touch and without presence (Photo frame uses touch inactivity only). 0 = never.</p>
                     </div>
                     <div class="field">
                       <label class="field-label" for="sleepMode">When asleep</label>
@@ -882,7 +924,7 @@
                         </select>
                       </div>
                       <p class="field-hint">
-                        Shows the wallpaper gallery (<a href="#" data-page="wallpapers">Wallpapers</a>) in any theme. At night it uses the
+                        Shows the wallpaper gallery (<a href="#" data-page="wallpapers">Wallpapers</a>) in any theme. Touch anywhere to restore the last dashboard page. The clock uses your configured weather clock when available. At night it uses the
                         night brightness; the screen turns off when that is 0 or the gallery is empty.
                         Pictures on a microSD card: enable it in
                         <a href="#" data-page="storage">Storage &gt; microSD card</a>.
@@ -890,11 +932,29 @@
                     </div>
                     <label class="check-row standalone"
                       ><input type="checkbox" id="frameClock" name="frameClock" checked /><span class="check-box"></span
-                      ><span class="check-text"><strong>Show clock and date</strong></span></label
+                      ><span class="check-text"><strong>Show clock / weather clock</strong></span></label
+                    >
+                    <div class="field">
+                      <label class="field-label" for="frameClockSize">Photo frame clock size</label>
+                      <div class="select-wrap">
+                        <select id="frameClockSize" name="frameClockSize">
+                          <option value="small">Small (original)</option>
+                          <option value="large">Large (approximately double)</option>
+                        </select>
+                      </div>
+                      <p class="field-hint">Changes the time display only; the date and weather retain their original size.</p>
+                    </div>
+                    <label class="check-row standalone"
+                      ><input type="checkbox" id="frameWeatherIcon" name="frameWeatherIcon" checked /><span class="check-box"></span
+                      ><span class="check-text"><strong>Show weather icon</strong><span class="ct-hint">Keep the temperature and weather description even when the icon is hidden.</span></span></label
+                    >
+                    <label class="check-row standalone"
+                      ><input type="checkbox" id="frameClockBackground" name="frameClockBackground" checked /><span class="check-box"></span
+                      ><span class="check-text"><strong>Show clock background</strong></span></label
                     >
                     <label class="check-row standalone"
                       ><input type="checkbox" id="frameAnim" name="frameAnim" checked /><span class="check-box"></span
-                      ><span class="check-text"><strong>Animate tiles</strong></span></label
+                      ><span class="check-text"><strong>Animate tiles (S3)</strong></span></label
                     >
                   </div>
                   <div class="field hidden" id="sleepDimField">
@@ -1283,23 +1343,7 @@
               >
                 <div class="card">
                   <h2 class="card-title">WiFi</h2>
-                  <div class="grid-2">
-                    <div class="field">
-                      <label class="field-label" for="wifiSsid">Network name</label
-                      ><input type="text" id="wifiSsid" name="ssid" maxlength="32" autocomplete="off" />
-                    </div>
-                    <div class="field">
-                      <label class="field-label" for="wifiPass">Password</label
-                      ><input
-                        type="password"
-                        id="wifiPass"
-                        name="pass"
-                        maxlength="64"
-                        placeholder="Unchanged if left empty"
-                        autocomplete="new-password"
-                      />
-                    </div>
-                  </div>
+                  {{include:wifi-fields.html}}
                 </div>
                 <div class="card">
                   <h2 class="card-title">Device identity</h2>
@@ -1514,6 +1558,16 @@
                     <div class="field">
                       <label class="field-label" for="prDisplayName">Printer display name</label>
                       <input type="text" id="prDisplayName" name="display_name" maxlength="48" placeholder="e.g. Kung Fu Printer" />
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="prCamera">Home Assistant camera entity (optional)</label>
+                      <input type="text" id="prCamera" name="camera" maxlength="128" placeholder="camera.printer_camera" list="prCameraList" />
+                      <datalist id="prCameraList"></datalist>
+                      <p class="field-hint">Leave empty to use the printer icon.</p>
+                    </div>
+                    <div class="field">
+                      <label class="field-label" for="prCameraRefresh">Camera refresh (seconds)</label>
+                      <input type="number" id="prCameraRefresh" name="camera_refresh" min="15" max="600" value="60" />
                     </div>
                     <div class="field">
                       <label class="field-label" for="prSerial">Printer serial number</label>

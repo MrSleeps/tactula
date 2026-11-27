@@ -1,7 +1,8 @@
 #include "deck_sys.h"
+#include "tactula_setup_view.h"
 #include "deck_panel.h"
 #include "config.h"
-#include "settings.h"
+#include "tactula_settings.h"
 #include "wifi_manager.h"
 #include <WiFi.h>
 #include <lvgl.h>
@@ -9,20 +10,30 @@
 namespace deck {
 namespace {
 
-constexpr uint32_t C_BG = 0x0C1019;
-constexpr uint32_t C_CHIP = 0x252E3D;
-constexpr uint32_t C_TITLE = 0xEDF0F8;
-constexpr uint32_t C_TEXT = 0xD3DAEA;
-constexpr uint32_t C_DIM = 0x8795AC;
-constexpr uint32_t C_AMBER = 0x927DFF;
-constexpr uint32_t C_TEAL = 0x927DFF;  // success accent, not old teal
+constexpr uint32_t C_BG = tactula_setup::BG;
+constexpr uint32_t C_CHIP = tactula_setup::TRACK;
+constexpr uint32_t C_TITLE = tactula_setup::TITLE;
+constexpr uint32_t C_TEXT = tactula_setup::TEXT;
+constexpr uint32_t C_DIM = tactula_setup::DIM;
+constexpr uint32_t C_TEAL = tactula_setup::ACCENT;  // Tactula blue success accent
 constexpr uint32_t C_VIOLET = 0xB8ADFF;
-constexpr uint32_t C_BLUE = 0x48A5FF;
+constexpr uint32_t C_BLUE = tactula_setup::ACCENT;
 constexpr uint32_t C_RED = 0xFF8A7A;
 
 lv_obj_t* s_root = nullptr;
 ScreenState s_shown = SCREEN_DECK;
 bool s_rebuild = false;
+
+lv_obj_t* s_splashStatus = nullptr;
+lv_obj_t* s_splashDots[3] = {};
+lv_timer_t* s_splashTimer = nullptr;
+unsigned s_splashStep = 0;
+
+void pulseSplash(lv_timer_t*) {
+  lv_obj_set_style_bg_opa(s_splashDots[s_splashStep], LV_OPA_30, 0);
+  s_splashStep = (s_splashStep + 1) % 3;
+  lv_obj_set_style_bg_opa(s_splashDots[s_splashStep], LV_OPA_COVER, 0);
+}
 
 // Firmware update widgets, valid while that screen is up.
 lv_obj_t* s_otaTitle = nullptr;
@@ -60,131 +71,118 @@ lv_obj_t* gap(lv_obj_t* parent, int h) {
   return o;
 }
 
-// Four rounded tiles in the deck's accent colours: the product mark.
-void logoMark(lv_obj_t* parent, int cell) {
-  // Approximation of the tactula vector mark, built with four LVGL tiles.
-  // Drawn directly, so boot does not depend on a filesystem or PNG decoder.
-  const int width = cell * 2 + cell / 3;
-  lv_obj_t* m = lv_obj_create(parent);
-  lv_obj_remove_style_all(m);
-  lv_obj_set_size(m, width, width);
-  const int x[] = {0, cell + 4, 0, cell - 1};
-  const int y[] = {0, cell / 5, cell + 4, cell + 1};
-  const int w[] = {cell + 3, cell - 6, cell - 4, cell + 5};
-  const int h[] = {cell + 2, cell - 8, cell - 7, cell - 1};
-  const uint32_t colors[] = {0x7160FB, 0x444963, 0x444963, 0x444963};
-  for (int i = 0; i < 4; ++i) {
-    lv_obj_t* tile = lv_obj_create(m);
-    lv_obj_remove_style_all(tile);
-    lv_obj_set_pos(tile, x[i], y[i]);
-    lv_obj_set_size(tile, w[i], h[i]);
-    lv_obj_set_style_radius(tile, cell / 3, 0);
-    lv_obj_set_style_bg_color(tile, lv_color_hex(colors[i]), 0);
-    lv_obj_set_style_bg_opa(tile, LV_OPA_COVER, 0);
-    if (i == 0) {
-      lv_obj_set_style_bg_grad_color(tile, lv_color_hex(0x1FA4F3), 0);
-      lv_obj_set_style_bg_grad_dir(tile, LV_GRAD_DIR_HOR, 0);
-    }
-  }
-}
+using tactula_setup::logoMark;
 
 // Round chip with a symbol, for the state screens.
-void badge(lv_obj_t* parent, const char* symbol, uint32_t bg, uint32_t fg) {
+void badge(lv_obj_t* parent, const char* symbol, uint32_t bg, uint32_t fg, bool largeScreen) {
   lv_obj_t* c = lv_obj_create(parent);
   lv_obj_remove_style_all(c);
-  lv_obj_set_size(c, 56, 56);
+  const int size = largeScreen ? 76 : 48;
+  lv_obj_set_size(c, size, size);
   lv_obj_set_style_radius(c, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_style_bg_color(c, lv_color_hex(bg), 0);
   lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
-  lv_obj_t* l = text(c, symbol, &deck_font_28, fg);
+  lv_obj_t* l = text(c, symbol, largeScreen ? &deck_font_28 : &deck_font_20, fg);
   lv_obj_center(l);
 }
 
-void buildSplash(lv_obj_t* col) {
-  logoMark(col, 30);
-  gap(col, 6);
+void buildSplash(lv_obj_t* col, bool largeScreen) {
+  logoMark(col, largeScreen ? 42 : 30);
+  gap(col, largeScreen ? 16 : 6);
   text(col, PRODUCT_NAME, &lv_font_montserrat_40, C_TITLE);
-  text(col, "v" FW_VERSION, &deck_font_14, C_DIM);
+  text(col, "v" FW_VERSION, largeScreen ? &deck_font_28 : &deck_font_14, C_DIM);
+  gap(col, largeScreen ? 16 : 8);
+  s_splashStatus = text(col, "Starting...", largeScreen ? &deck_font_28 : &deck_font_20, C_TEXT);
+  const int dotSize = largeScreen ? 16 : 8;
+  lv_obj_t* dots = box(col, LV_FLEX_FLOW_ROW, dotSize);
+  s_splashStep = 0;
+  for (unsigned i = 0; i < 3; ++i) {
+    lv_obj_t* dot = lv_obj_create(dots);
+    lv_obj_remove_style_all(dot);
+    lv_obj_set_size(dot, dotSize, dotSize);
+    lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(dot, lv_color_hex(C_BLUE), 0);
+    lv_obj_set_style_bg_opa(dot, i == 0 ? LV_OPA_COVER : LV_OPA_30, 0);
+    s_splashDots[i] = dot;
+  }
+  s_splashTimer = lv_timer_create(pulseSplash, largeScreen ? 140 : 220, nullptr);
 }
 
-void buildConnecting(lv_obj_t* col) {
-  lv_obj_t* sp = lv_spinner_create(col);
-  lv_obj_set_size(sp, 48, 48);
-  lv_spinner_set_anim_params(sp, 1100, 240);
-  lv_obj_set_style_arc_width(sp, 5, LV_PART_MAIN);
-  lv_obj_set_style_arc_width(sp, 5, LV_PART_INDICATOR);
-  lv_obj_set_style_arc_color(sp, lv_color_hex(C_CHIP), LV_PART_MAIN);
-  lv_obj_set_style_arc_color(sp, lv_color_hex(C_AMBER), LV_PART_INDICATOR);
-  gap(col, 8);
-  text(col, "Connecting to WiFi", &deck_font_20, C_TITLE);
-  text(col, wifiSSID, &deck_font_14, C_AMBER);
-}
-
-void buildConnected(lv_obj_t* col) {
-  badge(col, LV_SYMBOL_OK, 0x927DFF, 0xFFFFFF);
-  gap(col, 6);
-  text(col, "Connected", &deck_font_20, C_TITLE);
-  text(col, WiFi.localIP().toString().c_str(), &lv_font_montserrat_40, C_TEXT);
+void buildConnected(lv_obj_t* col, bool largeScreen) {
+  if (largeScreen) {
+    logoMark(col, 30);
+    gap(col, 12);
+  }
+  badge(col, LV_SYMBOL_OK, 0x192E50, 0x48A5FF, largeScreen);
+  gap(col, largeScreen ? 16 : 6);
+  text(col, "Connected to Wi-Fi", largeScreen ? &lv_font_montserrat_40 : &deck_font_20, C_TITLE);
+  auto* ssid = text(col, WiFi.SSID().c_str(), largeScreen ? &deck_font_28 : &deck_font_14, C_BLUE);
+  lv_obj_set_width(ssid, logicalW() - 32);
+  lv_label_set_long_mode(ssid, LV_LABEL_LONG_MODE_DOTS);
+  text(col, WiFi.localIP().toString().c_str(), largeScreen ? &deck_font_28 : &deck_font_20, C_TEXT);
   if (netSettings.mdnsEnabled && netSettings.hostname[0]) {
     String host = String("http://") + netSettings.hostname + ".local";
-    text(col, host.c_str(), &deck_font_14, C_DIM);
+    auto* label = text(col, host.c_str(), largeScreen ? &deck_font_20 : &deck_font_14, C_DIM);
+    lv_obj_set_width(label, logicalW() - 32);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
   }
+  gap(col, largeScreen ? 10 : 4);
+  text(col, "Loading dashboard...", largeScreen ? &deck_font_20 : &deck_font_14, C_DIM);
 }
 
-// WiFi join QR code next to the written steps; stacked in portrait.
+// Same setup view is used by the 10.1-inch P4 firmware. The original
+// JC3248 layout, fonts, colour palette and QR encoding are preserved.
 void buildApSetup(lv_obj_t* root, bool landscape) {
-  const String ssid = getAPSSID();
-  lv_obj_t* wrap = box(root, landscape ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN, landscape ? 28 : 16);
-
-  lv_obj_t* qrBox = lv_obj_create(wrap);
-  lv_obj_remove_style_all(qrBox);
-  lv_obj_set_size(qrBox, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-  lv_obj_set_style_bg_color(qrBox, lv_color_white(), 0);
-  lv_obj_set_style_bg_opa(qrBox, LV_OPA_COVER, 0);
-  lv_obj_set_style_radius(qrBox, 14, 0);
-  lv_obj_set_style_pad_all(qrBox, 10, 0);
-  lv_obj_t* qr = lv_qrcode_create(qrBox);
-  lv_qrcode_set_size(qr, landscape ? 150 : 132);
-  lv_qrcode_set_dark_color(qr, lv_color_hex(C_BG));
-  lv_qrcode_set_light_color(qr, lv_color_white());
-  const String data = "WIFI:T:WPA;S:" + ssid + ";P:" WIFI_AP_PASSWORD ";;";
-  lv_qrcode_update(qr, data.c_str(), data.length());
-
-  lv_obj_t* col = box(wrap, LV_FLEX_FLOW_COLUMN, 2);
-  lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, landscape ? LV_FLEX_ALIGN_START : LV_FLEX_ALIGN_CENTER,
-                        LV_FLEX_ALIGN_CENTER);
-  text(col, "WiFi setup", &deck_font_28, C_TITLE);
-  gap(col, 8);
-  text(col, "1. Join this network", &deck_font_14, C_DIM);
-  text(col, ssid.c_str(), &deck_font_20, C_AMBER);
-  text(col, "Password  " WIFI_AP_PASSWORD, &deck_font_14, C_TEXT);
-  gap(col, 8);
-  text(col, "2. Open in a browser", &deck_font_14, C_DIM);
-  text(col, WiFi.softAPIP().toString().c_str(), &deck_font_20, C_AMBER);
-  gap(col, 8);
-  text(col, "Or scan the code with a phone.", &deck_font_14, C_DIM);
+  tactula_setup::buildApSetup(root, landscape, getAPSSID(),
+                              WIFI_AP_PASSWORD, WiFi.softAPIP().toString(),
+                              logicalW() >= 800 && logicalH() >= 800);
 }
 
-void buildOta(lv_obj_t* col, int w) {
-  s_otaTitle = text(col, "Updating firmware", &deck_font_28, C_TITLE);
-  s_otaPct = text(col, "0%", &lv_font_montserrat_40, C_AMBER);
-  gap(col, 4);
-  s_otaBar = lv_bar_create(col);
-  lv_obj_set_size(s_otaBar, w - 80 < 360 ? w - 80 : 360, 12);
-  lv_bar_set_range(s_otaBar, 0, 1000);
-  lv_obj_set_style_radius(s_otaBar, 6, LV_PART_MAIN);
-  lv_obj_set_style_radius(s_otaBar, 6, LV_PART_INDICATOR);
-  lv_obj_set_style_bg_color(s_otaBar, lv_color_hex(C_CHIP), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(s_otaBar, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(s_otaBar, lv_color_hex(C_AMBER), LV_PART_INDICATOR);
-  lv_obj_set_style_bg_opa(s_otaBar, LV_OPA_COVER, LV_PART_INDICATOR);
-  gap(col, 4);
-  s_otaInfo = text(col, "Receiving", &deck_font_14, C_TEXT);
-  s_otaNote = text(col, "Keep the power on.", &deck_font_14, C_DIM);
+void buildOta(lv_obj_t* col, int w, int h) {
+  const bool large = w >= 800 && h >= 800;
+  const int shortSide = w < h ? w : h;
+  const int diameter = large ? (shortSide * 60 / 100) : shortSide * 85 / 100;
+  const int stroke = large ? 20 : 9;
+  auto* ring = lv_obj_create(col);
+  lv_obj_remove_style_all(ring);
+  lv_obj_set_size(ring, diameter, diameter);
+  lv_obj_remove_flag(ring, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+  s_otaBar = lv_arc_create(ring);
+  lv_obj_remove_style_all(s_otaBar);
+  lv_obj_set_size(s_otaBar, diameter, diameter);
+  lv_obj_center(s_otaBar);
+  lv_arc_set_rotation(s_otaBar, 270);
+  lv_arc_set_bg_angles(s_otaBar, 0, 360);
+  lv_arc_set_range(s_otaBar, 0, 1000);
+  lv_arc_set_value(s_otaBar, 0);
+  lv_obj_set_style_arc_width(s_otaBar, stroke, LV_PART_MAIN);
+  lv_obj_set_style_arc_width(s_otaBar, stroke, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_color(s_otaBar, lv_color_hex(C_CHIP), LV_PART_MAIN);
+  lv_obj_set_style_arc_color(s_otaBar, lv_color_hex(C_BLUE), LV_PART_INDICATOR);
+  lv_obj_set_style_arc_opa(s_otaBar, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_arc_opa(s_otaBar, LV_OPA_COVER, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_rounded(s_otaBar, true, LV_PART_INDICATOR);
+  lv_obj_remove_flag(s_otaBar, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+
+  auto* content = box(ring, LV_FLEX_FLOW_COLUMN, large ? 12 : 4);
+  lv_obj_set_width(content, diameter * 79 / 100);
+  lv_obj_center(content);
+  logoMark(content, large ? 26 : 23);
+  s_otaTitle = text(content, "Updating firmware", large ? &deck_font_28 : &deck_font_20, C_TITLE);
+  s_otaPct = text(content, "0%", large ? &lv_font_montserrat_40 : &deck_font_28, C_BLUE);
+  s_otaInfo = text(content, "Receiving", large ? &deck_font_20 : &deck_font_14, C_TEXT);
+  s_otaNote = text(content, "Keep the power on.", large ? &deck_font_20 : &deck_font_14, C_DIM);
+  for (auto* label : {s_otaTitle, s_otaInfo, s_otaNote}) {
+    lv_obj_set_width(label, diameter * 76 / 100);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_WRAP);
+  }
   s_otaLastPct = -1;
 }
 
 void destroy() {
+  if (s_splashTimer) lv_timer_delete(s_splashTimer);
+  s_splashTimer = nullptr;
+  s_splashStatus = nullptr;
   if (s_root) lv_obj_delete(s_root);
   s_root = nullptr;
   s_otaTitle = s_otaPct = s_otaBar = s_otaInfo = s_otaNote = nullptr;
@@ -194,6 +192,7 @@ void build(ScreenState st) {
   destroy();
   if (st == SCREEN_DECK) return;
   const int w = logicalW(), h = logicalH();
+  const bool largeScreen = w >= 800 && h >= 800;
   // Opaque and clickable: covers the pages and swallows their taps.
   s_root = lv_obj_create(lv_layer_sys());
   lv_obj_remove_style_all(s_root);
@@ -203,16 +202,16 @@ void build(ScreenState st) {
   lv_obj_set_style_text_color(s_root, lv_color_hex(C_TEXT), 0);
   lv_obj_set_flex_flow(s_root, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(s_root, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_row(s_root, 6, 0);
+  lv_obj_set_style_pad_row(s_root, largeScreen ? 6 : 4, 0);
   lv_obj_remove_flag(s_root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(s_root, LV_OBJ_FLAG_CLICKABLE);
 
   switch (st) {
-    case SCREEN_SPLASH: buildSplash(s_root); break;
-    case SCREEN_CONNECTING_WIFI: buildConnecting(s_root); break;
-    case SCREEN_WIFI_CONNECTED: buildConnected(s_root); break;
+    case SCREEN_SPLASH: buildSplash(s_root, largeScreen); break;
+    case SCREEN_CONNECTING_WIFI: tactula_setup::buildConnecting(s_root, wifiSSID, largeScreen); break;
+    case SCREEN_WIFI_CONNECTED: buildConnected(s_root, largeScreen); break;
     case SCREEN_AP_MODE: buildApSetup(s_root, w > h); break;
-    case SCREEN_OTA_UPDATE: buildOta(s_root, w); break;
+    case SCREEN_OTA_UPDATE: buildOta(s_root, w, h); break;
     default: break;
   }
 }
@@ -226,6 +225,12 @@ void sysScreenSync(ScreenState state) {
   build(state);
 }
 
+#if defined(BOARD_IS_JC8012P4A1C)
+void sysSplashStatus(const char* status) {
+  if (s_splashStatus) lv_label_set_text(s_splashStatus, status);
+}
+#endif
+
 void sysScreenRelayout() { s_rebuild = s_shown != SCREEN_DECK; }
 
 void sysOtaProgress(uint32_t done, uint32_t total) {
@@ -233,7 +238,7 @@ void sysOtaProgress(uint32_t done, uint32_t total) {
   char buf[40];
   if (total) {
     const int permille = (int)((uint64_t)done * 1000 / total);
-    lv_bar_set_value(s_otaBar, permille > 1000 ? 1000 : permille, LV_ANIM_OFF);
+    lv_arc_set_value(s_otaBar, permille > 1000 ? 1000 : permille);
     const int pct = permille / 10;
     if (pct != s_otaLastPct) {
       s_otaLastPct = pct;
@@ -251,12 +256,12 @@ void sysOtaResult(bool ok, const char* message) {
   const uint32_t color = ok ? C_TEAL : C_RED;
   lv_label_set_text(s_otaTitle, ok ? "Update complete" : "Update failed");
   lv_obj_set_style_text_color(s_otaPct, lv_color_hex(color), 0);
-  lv_obj_set_style_bg_color(s_otaBar, lv_color_hex(color), LV_PART_INDICATOR);
+  lv_obj_set_style_arc_color(s_otaBar, lv_color_hex(color), LV_PART_INDICATOR);
   if (ok) {
     lv_label_set_text(s_otaPct, "100%");
-    lv_bar_set_value(s_otaBar, 1000, LV_ANIM_OFF);
+    lv_arc_set_value(s_otaBar, 1000);
     lv_label_set_text(s_otaInfo, "Restarting");
-    lv_label_set_text(s_otaNote, "");
+    lv_label_set_text(s_otaNote, LV_SYMBOL_OK "  Keep the power on.");
   } else {
     lv_label_set_text(s_otaPct, LV_SYMBOL_CLOSE);
     lv_label_set_text(s_otaInfo, message && message[0] ? message : "The upload did not complete");

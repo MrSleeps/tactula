@@ -1,9 +1,12 @@
+#if defined(BOARD_IS_JC8012P4A1C)
+#include "p4_board.h"
+#endif
 // TouchDeck web portal, JSON APIs, live screen capture, OTA update, and
 // captive-portal redirects. Static UI assets are streamed from PROGMEM in
 // bounded chunks so the full page is never assembled in heap.
 #include "debug_log.h"
 #include "web_server.h"
-#include "settings.h"
+#include "tactula_settings.h"
 #include "deck_auth.h"
 #include "wifi_manager.h"
 #include "display_ui.h"
@@ -13,6 +16,7 @@
 #include "config.h"
 #include "web_assets.h"
 #include "deck_ui.h"
+#include "p4_trace.h"
 #include "deck_config.h"
 #include "deck_ha.h"
 #include "deck_http.h"
@@ -36,6 +40,7 @@
 #include <esp_task_wdt.h>
 #include <esp_heap_caps.h>
 #include "esp_ota_ops.h"
+#include "esp_app_format.h"
 #include <WiFi.h>
 #include <time.h>
 #include <algorithm>
@@ -53,6 +58,8 @@ static void scheduleRestart(unsigned long delayMs, bool eraseWifi = false) {
 // OTA state.
 static bool   otaInProgress = false;
 static bool   otaFirstChunk = true;
+static uint8_t otaImageHeader[sizeof(esp_image_header_t)] = {};
+static size_t otaImageHeaderBytes = 0;
 static String otaError = "";
 
 
@@ -60,6 +67,7 @@ static String otaError = "";
 //  Portal assets and JSON helpers
 // ---------------------------------------------------------------------------
 static bool writeClientAll(WiFiClient& client, const uint8_t* data, size_t len) {
+  p4Trace::HttpScope trace(p4Trace::HttpPhase::Write);
   unsigned long lastProgress = millis();
   while (len > 0 && client.connected()) {
     size_t sent = client.write(data, len);
@@ -166,6 +174,9 @@ static void presenceJson(JsonObject out) {
   out["frame"] = presenceSettings.frame;
   out["frameEvery"] = presenceSettings.frameEvery;
   out["frameClock"] = presenceSettings.frameClock;
+  out["frameClockLarge"] = presenceSettings.frameClockLarge;
+  out["frameWeatherIcon"] = presenceSettings.frameWeatherIcon;
+  out["frameClockBackground"] = presenceSettings.frameClockBackground;
   out["frameAnim"] = presenceSettings.frameAnim;
   out["nightWake"] = presenceSettings.nightWake;
   out["nightWakeLevel"] = presenceSettings.nightWakeLevel;
@@ -213,10 +224,9 @@ static void handleApiConfig() {
   display["powerScale"] = dispSettings.powerScaleW;
   display["warnThreshold"] = dispSettings.warnThresholdPct;
   display["theme"] = dispSettings.theme;
+  display["cinematicAvailable"] = CINEMATIC_THEME_AVAILABLE;
   display["tactulaRadius"] = dispSettings.tactulaRadius;
   display["tactulaPadding"] = dispSettings.tactulaPadding;
-  display["midnightTint"] = dispSettings.midnightTint;
-  display["midnightOn"] = dispSettings.midnightOn;
   display["glassTint"] = dispSettings.glassTint;
   display["glassBlur"] = dispSettings.glassBlur;
   display["glassDim"] = dispSettings.glassDim;
@@ -323,10 +333,9 @@ static void handleConfigExport() {
   display["powerScale"] = dispSettings.powerScaleW;
   display["warnThreshold"] = dispSettings.warnThresholdPct;
   display["theme"] = dispSettings.theme;
+  display["cinematicAvailable"] = CINEMATIC_THEME_AVAILABLE;
   display["tactulaRadius"] = dispSettings.tactulaRadius;
   display["tactulaPadding"] = dispSettings.tactulaPadding;
-  display["midnightTint"] = dispSettings.midnightTint;
-  display["midnightOn"] = dispSettings.midnightOn;
   display["glassTint"] = dispSettings.glassTint;
   display["glassBlur"] = dispSettings.glassBlur;
   display["glassDim"] = dispSettings.glassDim;
@@ -536,14 +545,12 @@ static void handleConfigImport() {
   READ_INT(display, "tempScale", 1, 500, nextDisplay.tempScaleMax, uint16_t);
   READ_INT(display, "powerScale", 1, 65535, nextDisplay.powerScaleW, uint16_t);
   READ_INT(display, "warnThreshold", 0, 100, nextDisplay.warnThresholdPct, uint8_t);
-  READ_INT(display, "theme", 0, THEME_MAX, nextDisplay.theme, uint8_t);
+  if (!display["theme"].isNull()) nextDisplay.theme = normalizeDisplayTheme(display["theme"].as<int>());
   // Backups from before the Glass sliders restore them to their defaults.
   DisplaySettings displayDefaults;
   defaultDisplaySettings(displayDefaults);
   nextDisplay.tactulaRadius = displayDefaults.tactulaRadius;
   nextDisplay.tactulaPadding = displayDefaults.tactulaPadding;
-  nextDisplay.midnightTint = displayDefaults.midnightTint;
-  nextDisplay.midnightOn = displayDefaults.midnightOn;
   nextDisplay.glassTint = displayDefaults.glassTint;
   nextDisplay.glassBlur = displayDefaults.glassBlur;
   nextDisplay.glassDim = displayDefaults.glassDim;
@@ -569,8 +576,6 @@ static void handleConfigImport() {
     READ_INT(display, "tactulaRadius", 0, TACTULA_RADIUS_MAX, nextDisplay.tactulaRadius, uint8_t);
   if (!display["tactulaPadding"].isNull())
     READ_INT(display, "tactulaPadding", 0, TACTULA_PADDING_MAX, nextDisplay.tactulaPadding, uint8_t);
-  if (!display["midnightTint"].isNull()) READ_INT(display, "midnightTint", 0, 100, nextDisplay.midnightTint, uint8_t);
-  if (!display["midnightOn"].isNull()) READ_INT(display, "midnightOn", 0, 100, nextDisplay.midnightOn, uint8_t);
   if (!display["glassTint"].isNull()) READ_INT(display, "glassTint", 0, 100, nextDisplay.glassTint, uint8_t);
   if (!display["glassBlur"].isNull()) READ_INT(display, "glassBlur", 0, 24, nextDisplay.glassBlur, uint8_t);
   if (!display["glassDim"].isNull()) READ_INT(display, "glassDim", 0, 100, nextDisplay.glassDim, uint8_t);
@@ -724,6 +729,9 @@ static void handleConfigImport() {
     READ_INT(presence, "dim", 0, 100, nextPresence.dimPct, uint8_t);
     if (!presence["frame"].isNull()) READ_BOOL(presence, "frame", nextPresence.frame);
     if (!presence["frameClock"].isNull()) READ_BOOL(presence, "frameClock", nextPresence.frameClock);
+    if (!presence["frameClockLarge"].isNull()) READ_BOOL(presence, "frameClockLarge", nextPresence.frameClockLarge);
+    if (!presence["frameWeatherIcon"].isNull()) READ_BOOL(presence, "frameWeatherIcon", nextPresence.frameWeatherIcon);
+    if (!presence["frameClockBackground"].isNull()) READ_BOOL(presence, "frameClockBackground", nextPresence.frameClockBackground);
     if (!presence["frameAnim"].isNull()) READ_BOOL(presence, "frameAnim", nextPresence.frameAnim);
     if (!presence["nightWake"].isNull()) READ_BOOL(presence, "nightWake", nextPresence.nightWake);
     if (!presence["nightWakeLevel"].isNull())
@@ -834,6 +842,9 @@ static void handleSaveLight() {
   }
   nextPresence.frameEvery = frameEvery;
   nextPresence.frameClock = server.hasArg("frameClock");
+  nextPresence.frameClockLarge = server.hasArg("frameClockSize") ? server.arg("frameClockSize") == "large" : presenceSettings.frameClockLarge;
+  nextPresence.frameWeatherIcon = server.hasArg("frameWeatherIcon");
+  nextPresence.frameClockBackground = server.hasArg("frameClockBackground");
   nextPresence.frameAnim = server.hasArg("frameAnim");
   size_t n = 0;
   for (size_t i = 0; i < MAX_PRESENCE_ENTITIES; i++) {
@@ -1237,13 +1248,9 @@ static void handleSaveDisplay() {
   const uint8_t oldTheme = dispSettings.theme;
   const uint8_t oldRadius = dispSettings.tactulaRadius;
   const uint8_t oldPadding = dispSettings.tactulaPadding;
-  const uint8_t oldMidnightTint = dispSettings.midnightTint;
-  const uint8_t oldMidnightOn = dispSettings.midnightOn;
   dispSettings.tactulaRadius = (uint8_t)clampedArg("tactulaRadius", oldRadius, 0, TACTULA_RADIUS_MAX);
   dispSettings.tactulaPadding = (uint8_t)clampedArg("tactulaPadding", oldPadding, 0, TACTULA_PADDING_MAX);
-  dispSettings.midnightTint = (uint8_t)clampedArg("midnightTint", oldMidnightTint, 0, 100);
-  dispSettings.midnightOn = (uint8_t)clampedArg("midnightOn", oldMidnightOn, 0, 100);
-  dispSettings.theme = (uint8_t)clampedArg("theme", dispSettings.theme, 0, THEME_MAX);
+  if (server.hasArg("theme")) dispSettings.theme = normalizeDisplayTheme(server.arg("theme").toInt());
   const uint32_t oldGlass = dispSettings.glassOn << 24 | dispSettings.glassTint << 16 |
                             dispSettings.glassBlur << 8 | dispSettings.glassDim;
   const bool oldAuto = dispSettings.glassAutoText;
@@ -1269,10 +1276,7 @@ static void handleSaveDisplay() {
   saveSettings();
   if (dispSettings.rotation != oldRotation || dispSettings.theme != oldTheme) applyDisplaySettings();
   else if (glassChanged || (dispSettings.theme == THEME_TACTULA &&
-           (dispSettings.tactulaRadius != oldRadius || dispSettings.tactulaPadding != oldPadding)) ||
-           (dispSettings.theme == THEME_MIDNIGHT_STUDIO &&
-           (dispSettings.midnightTint != oldMidnightTint || dispSettings.midnightOn != oldMidnightOn ||
-            dispSettings.tactulaRadius != oldRadius || dispSettings.tactulaPadding != oldPadding)))
+           (dispSettings.tactulaRadius != oldRadius || dispSettings.tactulaPadding != oldPadding)))
     deckReloadWallpaper(false);
   sendJsonMessage(200, true, "Display settings applied.");
 }
@@ -1407,36 +1411,87 @@ static void handleApiStatus() {
   doc["led_duty"] = ledCurrentDuty();
   doc["led_night"] = ledNightActive();
   doc["led_ha"] = ledHaLevel();  // -1 not linked, -2 on at the local level
-  // Keep legacy fields for existing status clients.
-  doc["free_heap"]    = ESP.getFreeHeap();
-  doc["max_block"]    = ESP.getMaxAllocHeap();
-  doc["internal_free"] = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-  doc["psram_free"]   = ESP.getFreePsram();
-  // A useful allocation must be byte-addressable. Separate internal 8-bit
-  // heap from external PSRAM instead of mixing their free-space figures.
-  // "minimum_free" is the IDF low-water mark since this boot, not a persisted
-  // lifetime reading.
+  // Preserve the status schema; on P4 avoid repeated allocator walks.
+  struct MemoryStatus {
+    uint32_t at = 0;
+    bool valid = false;
+    size_t free_heap = 0;
+    size_t max_block = 0;
+    size_t internal_free = 0;
+    size_t psram_free = 0;
+    size_t values[2][4]{};
+  };
+#if defined(BOARD_IS_JC8012P4A1C)
+  static MemoryStatus memory;
+#else
+  MemoryStatus memory;
+#endif
+  const uint32_t now = millis();
+  if (!memory.valid || now - memory.at >= 15000U) {
+    constexpr uint32_t INTERNAL_RAM_CAPS = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    constexpr uint32_t PSRAM_CAPS = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+    memory.free_heap = ESP.getFreeHeap();
+    memory.max_block = ESP.getMaxAllocHeap();
+    memory.internal_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    memory.psram_free = ESP.getFreePsram();
+    memory.values[0][0] = heap_caps_get_total_size(INTERNAL_RAM_CAPS);
+    memory.values[0][1] = heap_caps_get_free_size(INTERNAL_RAM_CAPS);
+    memory.values[0][2] = heap_caps_get_largest_free_block(INTERNAL_RAM_CAPS);
+    memory.values[0][3] = heap_caps_get_minimum_free_size(INTERNAL_RAM_CAPS);
+    memory.values[1][0] = heap_caps_get_total_size(PSRAM_CAPS);
+    memory.values[1][1] = heap_caps_get_free_size(PSRAM_CAPS);
+    memory.values[1][2] = heap_caps_get_largest_free_block(PSRAM_CAPS);
+    memory.values[1][3] = heap_caps_get_minimum_free_size(PSRAM_CAPS);
+    memory.at = millis();
+    memory.valid = true;
+  }
+  doc["free_heap"] = memory.free_heap;
+  doc["max_block"] = memory.max_block;
+  doc["internal_free"] = memory.internal_free;
+  doc["psram_free"] = memory.psram_free;
   JsonObject mem = doc["memory"].to<JsonObject>();
-  constexpr uint32_t INTERNAL_RAM_CAPS = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
-  constexpr uint32_t PSRAM_CAPS = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
   JsonObject internal = mem["internal"].to<JsonObject>();
-  internal["total"]        = heap_caps_get_total_size(INTERNAL_RAM_CAPS);
-  internal["free"]         = heap_caps_get_free_size(INTERNAL_RAM_CAPS);
-  internal["largest_block"] = heap_caps_get_largest_free_block(INTERNAL_RAM_CAPS);
-  internal["minimum_free"] = heap_caps_get_minimum_free_size(INTERNAL_RAM_CAPS);
+  internal["total"] = memory.values[0][0];
+  internal["free"] = memory.values[0][1];
+  internal["largest_block"] = memory.values[0][2];
+  internal["minimum_free"] = memory.values[0][3];
   JsonObject psram = mem["psram"].to<JsonObject>();
-  psram["total"]         = heap_caps_get_total_size(PSRAM_CAPS);
-  psram["free"]          = heap_caps_get_free_size(PSRAM_CAPS);
-  psram["largest_block"] = heap_caps_get_largest_free_block(PSRAM_CAPS);
-  psram["minimum_free"] = heap_caps_get_minimum_free_size(PSRAM_CAPS);
+  psram["total"] = memory.values[1][0];
+  psram["free"] = memory.values[1][1];
+  psram["largest_block"] = memory.values[1][2];
+  psram["minimum_free"] = memory.values[1][3];
   doc["reset_reason"] = resetReasonName();
   doc["last_crash"] = lastCrash();
   doc["wifi_disconnects"]     = wifiDisconnectCount();
+  doc["wifi_weak_reconnects"] = wifiWeakReconnectCount();
   doc["wifi_last_disc_reason"] = wifiLastDisconnectReason();
-  doc["wifi_bssid"] = WiFi.status() == WL_CONNECTED ? WiFi.BSSIDstr() : String("");
-  doc["wifi_channel"] = WiFi.status() == WL_CONNECTED ? WiFi.channel() : 0;
+  struct WifiStatus {
+    uint32_t at = 0, disconnects = 0;
+    bool valid = false, connected = false;
+    String bssid;
+    int32_t channel = 0, rssi = 0;
+  };
+#if defined(BOARD_IS_JC8012P4A1C)
+  static WifiStatus wifi;
+#else
+  WifiStatus wifi;
+#endif
+  const bool connected = WiFi.status() == WL_CONNECTED;
+  const uint32_t disconnects = wifiDisconnectCount();
+  if (!wifi.valid || wifi.connected != connected || wifi.disconnects != disconnects ||
+      now - wifi.at >= 10000U) {
+    wifi.bssid = connected ? WiFi.BSSIDstr() : String("");
+    wifi.channel = connected ? WiFi.channel() : 0;
+    wifi.rssi = connected ? WiFi.RSSI() : 0;
+    wifi.connected = connected;
+    wifi.disconnects = disconnects;
+    wifi.at = millis();
+    wifi.valid = true;
+  }
+  doc["wifi_bssid"] = wifi.bssid;
+  doc["wifi_channel"] = wifi.channel;
   doc["hostname"] = netSettings.hostname;
-  doc["rssi"] = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
+  doc["rssi"] = wifi.rssi;
   doc["uptime_seconds"] = millis() / 1000UL;
   doc["ap_mode"] = isAPMode();
   String out;
@@ -1560,6 +1615,18 @@ static void handleDeckGet() {
   out += "device";
   out += "\",\"header\":";
   out += deckHeaderVisible() ? "true" : "false";
+  out += ",\"rotation\":";
+  out += String(dispSettings.rotation);
+#if defined(BOARD_IS_JC8012P4A1C)
+  out += ",\"grid_max_cols\":8,\"grid_max_rows\":6,\"display_landscape_width\":1280,\"display_landscape_height\":800";
+#else
+  out += ",\"grid_max_cols\":6,\"grid_max_rows\":6,\"display_landscape_width\":480,\"display_landscape_height\":320";
+#endif
+#if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
+  out += ",\"bambu_available\":true";
+#else
+  out += ",\"bambu_available\":false";
+#endif
 #if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
   out += ",\"bambu_enabled\":";
   out += deck::officeBambuConfigured() ? "true" : "false";
@@ -1628,10 +1695,47 @@ static void handleHaForget() {
   sendJsonMessage(200, true, "Removed");
 }
 
-// GET /api/ha/entities[?refresh=1] - picker list, cached on flash.
+// GET /api/ha/entities[?refresh=1] - picker list.
 static void handleHaEntities() {
   String out, err;
   const bool refresh = server.arg("refresh") == "1";
+#if defined(BOARD_IS_JC8012P4A1C)
+  if (deck::wallOnSd()) {
+    if (refresh && !deck::haRefreshSdEntityList(err)) {
+      sendJsonMessage(502, false, err.c_str());
+      return;
+    }
+    File f = deck::haOpenSdEntityList();
+    // Read the pre-existing flash cache without allocating a full copy.
+    if (!f && !refresh && deck::deckFsReady()) f = LittleFS.open(deck::haEntityListPath(), "r");
+    if (f) {
+      const size_t bytes = f.size();
+      uint8_t chunk[2048];
+      server.sendHeader("Cache-Control", "no-store");
+      server.setContentLength(bytes);
+      server.send(200, "application/json", "");
+      WiFiClient client = server.client();
+      size_t remaining = bytes;
+      bool ok = true;
+      while (remaining && ok) {
+        const size_t wanted = min(remaining, sizeof(chunk));
+        const size_t got = f.read(chunk, wanted);
+        if (got != wanted) { ok = false; break; }
+        ok = writeClientAll(client, chunk, got);
+        remaining -= got;
+        esp_task_wdt_reset();
+        delay(0);
+      }
+      f.close();
+      if (!ok) client.stop();
+      return;
+    }
+    if (refresh) {
+      sendJsonMessage(500, false, "Refreshed entity catalogue could not be opened");
+      return;
+    }
+  }
+#else
   if (!refresh && deck::deckFsReady() && LittleFS.exists(deck::haEntityListPath())) {
     // Straight from flash: loading 160 KB into a String first took seconds.
     File f = LittleFS.open(deck::haEntityListPath(), "r");
@@ -1642,6 +1746,7 @@ static void handleHaEntities() {
       return;
     }
   }
+#endif
   if (!deck::haFetchEntityList(out, refresh, err)) {
     sendJsonMessage(502, false, err.c_str());
     return;
@@ -1895,15 +2000,22 @@ static const char* bedroomIconPngError(const String& name) {
       ((uint32_t)bedroomIconHeader[21] << 16) |
       ((uint32_t)bedroomIconHeader[22] << 8) | bedroomIconHeader[23];
   if (!width || !height) return "invalid PNG dimensions";
-  // Animated Skycons weather packs use eight 64 px frames in one strip.
-  if (name.startsWith("wc_sky_") && name.endsWith("_off.png") &&
+  // Animated weather packs use eight 64 px frames in one strip.
+  if ((name.startsWith("wc_sky_") || name.startsWith("wc_outline_anim_")) && name.endsWith("_off.png") &&
       width == 512 && height == 64) return nullptr;
-  if (width > 160 || height > 160) return "PNG dimensions must be 160x160 pixels or smaller";
+#if defined(BOARD_IS_JC8012P4A1C)
+  if (name.startsWith("wc_sky_hd_") && name.endsWith("_off.png") &&
+      width == 1280 && height == 160) return nullptr;
+#endif
+  if (width > 256 || height > 256) return "PNG dimensions must be 256x256 pixels or smaller";
   return nullptr;
 }
 
 static void handleBedroomIconList() {
   JsonDocument doc;
+#if defined(BOARD_IS_JC8012P4A1C)
+  doc["skyconsHdFrameSize"] = 160;
+#endif
   doc["mounted"] = deck::wallOnSd();
   JsonArray files = doc["files"].to<JsonArray>();
   if (deck::wallOnSd()) {
@@ -2368,6 +2480,81 @@ static void handleFramePost() {
   handleFrameGet();
 }
 
+#if defined(BOARD_IS_JC8012P4A1C)
+static void handleP4DiagnosticsStatus() {
+  p4Trace::poll(static_cast<uint32_t>(esp_timer_get_time()), true, false);
+  const auto& p = p4Trace::faultPoll();
+  JsonDocument doc;
+  doc["mode"] = p4Trace::modeName();
+  doc["lateFrames"] = p.totalLate;
+  doc["underruns"] = p.totalUnderruns;
+  doc["worstGapUs"] = p.worstGap;
+  doc["lastFaultUs32"] = p.lastFaultUs;
+  doc["elapsedMs"] = millis() - p.modeStartedMs;
+  String response;
+  serializeJson(doc, response);
+  server.sendHeader("Cache-Control", "no-store");
+  server.send(200, "application/json", response);
+}
+static void handleP4DiagnosticsSave() {
+  const String mode = server.arg("mode");
+  if (mode == "verbose") p4Trace::setMode(p4Trace::Mode::Verbose);
+  else if (mode == "faults") p4Trace::setMode(p4Trace::Mode::FaultsOnly);
+  else if (mode == "silent") p4Trace::setMode(p4Trace::Mode::Silent);
+  else if (mode != "" || server.arg("reset") != "1") {
+    sendJsonMessage(400, false, "Expected verbose, faults or silent.");
+    return;
+  }
+  if (server.arg("reset") == "1") p4Trace::resetCounters();
+  handleP4DiagnosticsStatus();
+}
+static void handleDeckDmaLiveReload() {
+  const bool started = deckBeginDisplayTest(DeckDisplayTest::DmaLiveReload);
+  sendJsonMessage(started ? 200 : 409, started,
+                  started ? "Live DMA reload active; staged band copies; reboot to exit." :
+                  "Live DMA reload refused; close popups or check debug logs.");
+}
+
+static void handleDeckDmaReload() {
+  const bool started = deckBeginDisplayTest(DeckDisplayTest::DmaReload);
+  sendJsonMessage(started ? 200 : 409, started,
+                  started ? "DMA auto-reload diagnostic active; reboot to exit." :
+                  "DMA auto-reload diagnostic refused; check debug logs.");
+}
+
+static void handleDeckScanoutHold() {
+  if (server.arg("mode") == "stop") {
+    deckStopDisplayTest();
+    sendJsonMessage(200, true, "Normal display operation requested.");
+    return;
+  }
+  DeckDisplayTest test = DeckDisplayTest::Hold;
+  const char* message = "Holding the current frame for 60 seconds.";
+  if (server.arg("mode") == "dma-reload") {
+    test = DeckDisplayTest::DmaReload;
+    message = "Static DMA auto-reload active. Display is frozen intentionally; stop or reboot to exit.";
+  } else if (server.arg("mode") == "snapshots") {
+    test = DeckDisplayTest::WithoutSnapshots;
+    message = "Background snapshots paused for 2 minutes.";
+  } else if (server.arg("mode") == "render-only") {
+    test = DeckDisplayTest::RenderOnly;
+    message = "Rendering with the display held for 60 seconds.";
+  } else if (server.arg("mode") == "cpu-scanout") {
+    test = DeckDisplayTest::CpuScanout;
+    message = "Copying live frames with the CPU for 2 minutes. Normal scanout resumes automatically.";
+  } else if (server.arg("mode") == "partial-scanout") {
+    test = DeckDisplayTest::PartialScanout;
+    message = "Testing direct partial scanout for 60 seconds. Full-frame scanout resumes automatically.";
+  } else if (server.arg("replay") == "1") {
+    test = DeckDisplayTest::Replay;
+    message = "Replaying the same frame for 60 seconds.";
+  }
+  const bool started = deckBeginDisplayTest(test);
+  sendJsonMessage(started ? 200 : 409, started,
+                  started ? message : "Finish the current test or close any pop-up and try again.");
+}
+#endif
+
 // POST /api/deck/bench?n=5 - bench hook, time a render of the shown page.
 static void handleDeckBench() {
   uint32_t avg = 0, mx = 0;
@@ -2515,6 +2702,8 @@ static void otaShowProgress(uint32_t done, bool force) {
   const size_t total = server.clientContentLength();
   deck::sysOtaProgress(done, total > done ? (uint32_t)total : 0);
   deckRefreshNow();
+  // Multipart uploads block the normal loop's backlight tick.
+  updateBacklightControl();
 }
 
 static void otaFail(const String& message) {
@@ -2533,26 +2722,47 @@ static void handleOtaUpload() {
   HTTPUpload& upload = server.upload();
 
   if (upload.status == UPLOAD_FILE_START) {
-    if (firmwareUpdate::snapshot().downloading) {
-      otaFail("A verified firmware download is already in progress");
+    if (restartAt) {
+      otaError = "The device is already restarting";
+      return;
+    }
+    const auto verified = firmwareUpdate::snapshot();
+    if (verified.downloading || verified.staged) {
+      otaFail(verified.staged
+          ? "A verified firmware update is already staged; reboot or clear it first"
+          : "A verified firmware download is already in progress");
       return;
     }
     otaError = "";
     otaInProgress = true;
     otaFirstChunk = true;
+    otaImageHeaderBytes = 0;
     otaFailedAt = 0;
     if (getScreenState() != SCREEN_OTA_UPDATE) otaPrevScreen = getScreenState();
     setScreenState(SCREEN_OTA_UPDATE);
     deck::sysScreenRelayout();  // a retry right after a failure starts clean
     displayTick();
+    updateBacklightControl();
     otaShowProgress(0, true);
     debugSerial.printf("OTA: start, file=%s\n", upload.filename.c_str());
 
-    const esp_partition_t* partition = esp_ota_get_next_update_partition(NULL);
-    if (!partition) {
-      otaFail("No OTA partition found");
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    const esp_partition_t* partition = esp_ota_get_next_update_partition(running);
+    if (!running || !partition || partition->address == running->address ||
+        !esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, nullptr)) {
+      otaFail("No inactive OTA app slot or OTA boot data partition found");
       return;
     }
+    esp_ota_img_states_t runningState;
+    if (esp_ota_get_state_partition(running, &runningState) == ESP_OK &&
+        runningState == ESP_OTA_IMG_PENDING_VERIFY) {
+      otaFail("Wait for the current firmware to finish boot validation before updating");
+      return;
+    }
+    debugSerial.printf("OTA: running=%s at 0x%lx, target=%s at 0x%lx (%lu bytes)\n",
+                       running->label, static_cast<unsigned long>(running->address),
+                       partition->label, static_cast<unsigned long>(partition->address),
+                       static_cast<unsigned long>(partition->size));
     if (!Update.begin(partition->size)) {
       otaFail("OTA begin failed: " + String(Update.errorString()));
       return;
@@ -2566,15 +2776,43 @@ static void handleOtaUpload() {
     if (!otaInProgress) return;
     // loop() cannot feed the task watchdog during the upload; feed it per chunk.
     esp_task_wdt_reset();
-    if (otaFirstChunk && upload.currentSize > 0) {
-      otaFirstChunk = false;
-      if (upload.buf[0] != 0xE9) {
+    size_t consumed = 0;
+    if (otaFirstChunk) {
+      // HTTP multipart chunks can split the 24-byte ESP image header.
+      // Buffer just that header; no flash write occurs until it is checked.
+      consumed = std::min<size_t>(upload.currentSize,
+                                  sizeof(otaImageHeader) - otaImageHeaderBytes);
+      memcpy(otaImageHeader + otaImageHeaderBytes, upload.buf, consumed);
+      otaImageHeaderBytes += consumed;
+      if (otaImageHeaderBytes < sizeof(otaImageHeader)) return;
+
+      esp_image_header_t imageHeader = {};
+      memcpy(&imageHeader, otaImageHeader, sizeof(imageHeader));
+#if defined(BOARD_IS_JC8012P4A1C)
+      constexpr auto expectedChip = ESP_CHIP_ID_ESP32P4;
+#else
+      constexpr auto expectedChip = ESP_CHIP_ID_ESP32S3;
+#endif
+      if (imageHeader.magic != ESP_IMAGE_HEADER_MAGIC) {
         Update.abort();
-        otaFail("Not a firmware file");
+        otaFail("Use an OTA application .bin, not a full/factory image");
         return;
       }
+      if (imageHeader.chip_id != expectedChip) {
+        Update.abort();
+        otaFail("Firmware is for a different board (ESP32-S3 vs ESP32-P4)");
+        return;
+      }
+      if (Update.write(otaImageHeader, sizeof(otaImageHeader)) != sizeof(otaImageHeader)) {
+        const String err = Update.errorString();
+        Update.abort();
+        otaFail(err);
+        return;
+      }
+      otaFirstChunk = false;
     }
-    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+    const size_t remaining = upload.currentSize - consumed;
+    if (remaining && Update.write(upload.buf + consumed, remaining) != remaining) {
       const String err = Update.errorString();
       Update.abort();
       otaFail(err);
@@ -2584,6 +2822,11 @@ static void handleOtaUpload() {
 
   } else if (upload.status == UPLOAD_FILE_END) {
     if (!otaInProgress) return;
+    if (otaFirstChunk) {
+      Update.abort();
+      otaFail("Firmware image header missing or incomplete");
+      return;
+    }
     if (Update.end(true)) {
       debugSerial.printf("OTA: success, %u bytes\n", upload.totalSize);
       otaInProgress = false;
@@ -2650,7 +2893,9 @@ static void handleOfficePrinterSave() {
   String error;
   const bool enabled = server.arg("enabled") == "1";
   if (!deck::officeBambuSave(enabled, server.arg("source"), server.arg("address"),
-                             server.arg("serial"), server.arg("code"), server.arg("display_name"), error)) {
+                             server.arg("serial"), server.arg("code"), server.arg("display_name"), error,
+                             server.hasArg("camera") ? server.arg("camera") : deck::officeBambuCamera(),
+                             server.hasArg("camera_refresh") ? server.arg("camera_refresh").toInt() : deck::officeBambuCameraRefresh())) {
     server.send(400, "application/json", String("{\"error\":\"") + error + "\"}");
     return;
   }
@@ -2704,7 +2949,16 @@ static void handleUpdateStatus() {
   doc["available"] = st.available && st.checksEnabled;
   doc["latest"] = st.available ? st.version : "";
   doc["error"] = st.error;
-  doc["automaticInstallation"] = false; // gated pending signed release metadata + portal auth
+  // Detect missing dual-OTA partitions without changing bootloader, partition
+  // table or the one-time P4 touch-controller firmware kept in NVS.
+  const esp_partition_t* currentPartition = esp_ota_get_running_partition();
+  const esp_partition_t* targetPartition = esp_ota_get_next_update_partition(currentPartition);
+  const bool otaSupported = currentPartition && targetPartition &&
+      currentPartition->address != targetPartition->address &&
+      esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, nullptr);
+  doc["otaSupported"] = otaSupported;
+  doc["otaSlotBytes"] = otaSupported ? targetPartition->size : 0;
+  doc["automaticInstallation"] = false; // every verified download needs touch approval
   server.sendHeader("Cache-Control", "no-store");
   String output;
   serializeJson(doc, output);
@@ -2767,10 +3021,29 @@ static bool portalAuthorized(bool challenge = true) {
   return false;
 }
 
+static const char* traceHttpMethod(HTTPMethod method) {
+  switch (method) {
+    case HTTP_GET: return "GET";
+    case HTTP_POST: return "POST";
+    default: return "OTHER";
+  }
+}
+static void tracedHttpHandler(const char* path, HTTPMethod method,
+                              const WebServer::THandlerFunction& handler) {
+  bool allowed;
+  {
+    p4Trace::HttpScope trace(p4Trace::HttpPhase::Auth, path, traceHttpMethod(method));
+    allowed = portalAuthorized();
+  }
+  if (allowed) {
+    p4Trace::HttpScope trace(p4Trace::HttpPhase::Handler, path, traceHttpMethod(method));
+    handler();
+  }
+}
 static void authOn(const char* path, HTTPMethod method,
                    WebServer::THandlerFunction handler) {
-  server.on(path, method, [handler]() {
-    if (portalAuthorized()) handler();
+  server.on(path, method, [path, method, handler]() {
+    tracedHttpHandler(path, method, handler);
   });
 }
 
@@ -2778,12 +3051,16 @@ static void authOn(const char* path, HTTPMethod method,
                    WebServer::THandlerFunction handler,
                    WebServer::THandlerFunction uploader) {
   server.on(path, method,
-            [handler]() { if (portalAuthorized()) handler(); },
+            [path, method, handler]() { tracedHttpHandler(path, method, handler); },
             // Authenticate once when the multipart upload starts; repeating
             // PBKDF2 for every file chunk would stall the ESP32 display.
-            [uploader, allowed = false]() mutable {
+            [path, method, uploader, allowed = false]() mutable {
+              p4Trace::HttpScope trace(p4Trace::HttpPhase::Upload, path, traceHttpMethod(method));
               HTTPUpload& up = server.upload();
-              if (up.status == UPLOAD_FILE_START) allowed = portalAuthorized(false);
+              if (up.status == UPLOAD_FILE_START) {
+                p4Trace::HttpScope auth(p4Trace::HttpPhase::Auth, path, traceHttpMethod(method));
+                allowed = portalAuthorized(false);
+              }
               if (allowed) uploader();
               if (up.status == UPLOAD_FILE_END ||
                   up.status == UPLOAD_FILE_ABORTED) allowed = false;
@@ -2874,11 +3151,26 @@ static void handleDebugLogs() {
 
 void initWebServer() {
   deckAuth::begin();
-  server.on("/generate_204", HTTP_GET, handleCaptiveDetect);
-  server.on("/gen_204", HTTP_GET, handleCaptiveDetect);
-  server.on("/connecttest.txt", HTTP_GET, handleCaptiveDetect);
-  server.on("/hotspot-detect.html", HTTP_GET, handleCaptiveDetect);
-  server.on("/canonical.html", HTTP_GET, handleCaptiveDetect);
+  server.on("/generate_204", HTTP_GET, [] {
+    p4Trace::HttpScope trace(p4Trace::HttpPhase::Handler, "/generate_204", "GET");
+    handleCaptiveDetect();
+  });
+  server.on("/gen_204", HTTP_GET, [] {
+    p4Trace::HttpScope trace(p4Trace::HttpPhase::Handler, "/gen_204", "GET");
+    handleCaptiveDetect();
+  });
+  server.on("/connecttest.txt", HTTP_GET, [] {
+    p4Trace::HttpScope trace(p4Trace::HttpPhase::Handler, "/connecttest.txt", "GET");
+    handleCaptiveDetect();
+  });
+  server.on("/hotspot-detect.html", HTTP_GET, [] {
+    p4Trace::HttpScope trace(p4Trace::HttpPhase::Handler, "/hotspot-detect.html", "GET");
+    handleCaptiveDetect();
+  });
+  server.on("/canonical.html", HTTP_GET, [] {
+    p4Trace::HttpScope trace(p4Trace::HttpPhase::Handler, "/canonical.html", "GET");
+    handleCaptiveDetect();
+  });
 
   authOn("/api/debug", HTTP_GET, handleDebugStatus);
   authOn("/api/debug", HTTP_POST, handleDebugSave);
@@ -2958,6 +3250,34 @@ void initWebServer() {
   authOn("/api/deck/daily/run", HTTP_POST, handleDailyRun);
   authOn("/api/deck/wallpaper/remove", HTTP_POST, handleWallRemove);
   authOn("/api/deck/bench", HTTP_POST, handleDeckBench);
+#if defined(BOARD_IS_JC8012P4A1C)
+  authOn("/api/deck/scanout-hold", HTTP_POST, handleDeckScanoutHold);
+  authOn("/api/deck/dma-live", HTTP_POST, handleDeckDmaLiveReload);
+  authOn("/api/deck/dma-live", HTTP_GET, []() {
+    sendJsonMessage(200, true, p4Board::liveReloadActive() ?
+                    "Live DMA reload active" : "Live DMA reload endpoint ready; normal or static mode");
+  });
+  authOn("/api/deck/dma-stop", HTTP_POST, []() {
+    if (p4Board::liveReloadActive() && !p4Board::setDmaBootEnabled(false)) {
+      sendJsonMessage(500, false, "Could not save legacy boot mode");
+      return;
+    }
+    deckStopDisplayTest();
+    sendJsonMessage(200, true, "Display test stop requested; live reload disabled for future boots");
+  });
+  authOn("/api/deck/dma-enable-boot", HTTP_POST, []() {
+    const bool ok = p4Board::setDmaBootEnabled(true);
+    sendJsonMessage(ok ? 200 : 500, ok, ok ?
+                    "Automatic live DMA enabled for next boot; reboot normally" :
+                    "Could not save DMA boot mode");
+  });
+  authOn("/api/deck/dma-reload", HTTP_POST, handleDeckDmaReload);
+  authOn("/api/deck/dma-reload", HTTP_GET, []() {
+    sendJsonMessage(200, true, "DMA auto-reload diagnostic endpoint v1");
+  });
+  authOn("/api/p4/diagnostics", HTTP_GET, handleP4DiagnosticsStatus);
+  authOn("/api/p4/diagnostics", HTTP_POST, handleP4DiagnosticsSave);
+#endif
   authOn("/api/deck/frame", HTTP_GET, handleFrameGet);
   authOn("/api/deck/frame", HTTP_POST, handleFramePost);
   authOn("/api/deck/prefs", HTTP_POST, handleDeckPrefs);
@@ -2976,13 +3296,20 @@ void initWebServer() {
   const char* headers[] = { "X-MD5", "Content-Type", "Authorization" };
   server.collectHeaders(headers, 3);
 
-  server.onNotFound(handleNotFound);
+  server.onNotFound([] {
+    p4Trace::HttpScope trace(p4Trace::HttpPhase::Handler, "(unmatched)", traceHttpMethod(server.method()));
+    handleNotFound();
+  });
   server.begin();
   debugSerial.println("Web server started on :80");
 }
 
 void handleWebServer() {
-  server.handleClient();
+  {
+    p4Trace::HttpScope trace(p4Trace::HttpPhase::Client);
+    server.handleClient();
+  }
+  p4Trace::HttpScope cleanup(p4Trace::HttpPhase::Cleanup);
   // Parsing can fail after a file ends without calling the finish handler.
   if (wallParts) {
     wallUploadCleanup();

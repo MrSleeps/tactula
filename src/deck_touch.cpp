@@ -2,20 +2,32 @@
 #include "deck_touch.h"
 #include "deck_panel.h"
 #include "deck_ui.h"
+#if defined(BOARD_IS_JC8012P4A1C)
+#include "p4_board.h"
+#else
 #include <Wire.h>
 #include <driver/gpio.h>
+#endif
 
 namespace deck {
 namespace {
 
+#if !defined(BOARD_IS_JC8012P4A1C)
 constexpr int PIN_SDA = 4;
 constexpr int PIN_SCL = 8;
 constexpr int PIN_INT = 3;   // wired on this board (Phase 0), despite older docs
 constexpr uint8_t ADDR = 0x3B;
+#endif
 
 // No valid frame for this long = finger lifted (the controller reports no
 // explicit release event that we have seen).
+#if defined(BOARD_IS_JC8012P4A1C)
+// The P4 polls every 10 ms; three missed polls distinguish successive taps
+// without the longer interrupt-driven S3 release timeout.
+constexpr uint32_t RELEASE_MS = 30;
+#else
 constexpr uint32_t RELEASE_MS = 60;
+#endif
 // Movement before a touch is classified as a swipe or a vertical gesture.
 constexpr int SLOP_PX = 12;
 // A released swipe changes page when it travelled this share of the width,
@@ -42,7 +54,7 @@ volatile bool s_suppress = false;
 
 // G_EAT: a swipe with no page that way; LVGL must not see it as a tap.
 // G_WAIT: the compositor was busy (previous slide landing); retried each frame.
-enum GestureState : uint8_t { G_IDLE, G_PENDING, G_PASS, G_DRAG, G_EAT, G_WAIT };
+enum GestureState : uint8_t { G_IDLE, G_PENDING, G_PASS, G_DRAG, G_EAT, G_WAIT, G_DIRECT, G_PANEL_LIVE };
 
 struct Sample {
   uint32_t ms;
@@ -60,6 +72,7 @@ struct Drag {
 };
 constexpr int NSAMPLES = 8;
 
+#if !defined(BOARD_IS_JC8012P4A1C)
 void IRAM_ATTR intIsr(void*) {
   if (!s_task) return;
   BaseType_t woken = pdFALSE;
@@ -96,6 +109,8 @@ void toLogical(int nx, int ny, int16_t& x, int16_t& y) {
   }
 }
 
+#endif
+
 // cancel goes with the release in one critical section, so LVGL cannot read
 // the release without it.
 void publish(int16_t x, int16_t y, bool pressed, bool cancel = false) {
@@ -108,6 +123,7 @@ void publish(int16_t x, int16_t y, bool pressed, bool cancel = false) {
 }
 
 void touchTask(void*) {
+#if !defined(BOARD_IS_JC8012P4A1C)
   Wire.begin(PIN_SDA, PIN_SCL, 400000);
   Wire.setTimeOut(5);  // bounded; Wire's default is 50 ms
   // Raw IDF handler: the GPIO ISR service is already installed by
@@ -119,25 +135,41 @@ void touchTask(void*) {
   g.intr_type = GPIO_INTR_NEGEDGE;
   gpio_config(&g);
   gpio_isr_handler_add((gpio_num_t)PIN_INT, intIsr, nullptr);
+#endif
 
   GestureState state = G_IDLE;
   int16_t x0 = 0, y0 = 0, lastX = 0, lastY = 0;
   bool noSwipe = false;
   uint32_t lastMs = 0;
   Drag drag = {};
+#if defined(BOARD_IS_JC8012P4A1C)
+  int directOrigin = -1, directTarget = -1;
+  uint32_t directEpoch = 0;
+#endif
   Sample samples[NSAMPLES];
   int nsamples = 0;
 
   for (;;) {
+#if defined(BOARD_IS_JC8012P4A1C)
+    const TickType_t poll = pdMS_TO_TICKS(10);
+    vTaskDelay(poll ? poll : 1);
+    const uint32_t now = millis();
+    p4Board::TouchSample sample{};
+    const bool valid = p4Board::readTouch(sample);
+    const int16_t x = static_cast<int16_t>(sample.x);
+    const int16_t y = static_cast<int16_t>(sample.y);
+#else
     const bool woke = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(s_down ? RELEASE_MS : 1000)) != 0;
     const uint32_t now = millis();
     int nx, ny;
-    if (woke && readPoint(nx, ny)) {
+    int16_t x = 0, y = 0;
+    const bool valid = woke && readPoint(nx, ny);
+    if (valid) toLogical(nx, ny, x, y);
+#endif
+    if (valid) {
       portENTER_CRITICAL(&s_mux);
       s_lastTouch = now;
       portEXIT_CRITICAL(&s_mux);
-      int16_t x, y;
-      toLogical(nx, ny, x, y);
       if (!s_down) {
         s_down = true;
         s_activity = true;
@@ -176,7 +208,15 @@ void touchTask(void*) {
               uiSwipeAborted();
               state = G_WAIT;
             }
-          } else {
+          }
+#if defined(BOARD_IS_JC8012P4A1C)
+          else if (uiUncachedSwipeTarget(d, false, directOrigin, directTarget, directEpoch)) {
+            state = G_DIRECT;
+            const int range = logicalW();
+            drag = {false, false, d > 0 ? 0 : range, d > 0 ? range : 0, range, d > 0 ? 0 : range, (int8_t)d};
+          }
+#endif
+          else {
             state = uiSwipeOwnsTouch() ? G_EAT : G_PASS;
           }
         } else if (abs(dy) >= SLOP_PX && abs(dy) > abs(dx)) {
@@ -196,6 +236,10 @@ void touchTask(void*) {
                 uiSwipeAborted();
                 state = G_WAIT;
               }
+            } else {
+              // Keep the gesture reserved; on release a sufficiently long
+              // swipe may open/close a panel without a snapshot.
+              state = G_PANEL_LIVE;
             }
           } else if (!open && y0 >= EDGE_PX) {
             // Finger moving up reveals the page below.
@@ -211,7 +255,15 @@ void touchTask(void*) {
                 uiSwipeAborted();
                 state = G_WAIT;
               }
-            } else if (uiSwipeOwnsTouch()) {
+            }
+#if defined(BOARD_IS_JC8012P4A1C)
+            else if (uiUncachedSwipeTarget(d, true, directOrigin, directTarget, directEpoch)) {
+              state = G_DIRECT;
+              const int range = logicalH();
+              drag = {true, false, d > 0 ? 0 : range, d > 0 ? range : 0, range, d > 0 ? 0 : range, (int8_t)d};
+            }
+#endif
+            else if (uiSwipeOwnsTouch()) {
               state = G_EAT;
             }
           }
@@ -220,21 +272,28 @@ void touchTask(void*) {
         took = was == G_PENDING && state != G_PENDING && state != G_PASS;
         if (took) s_swipeStarted = true;
       }
-      if (state == G_DRAG) {
+      if (state == G_DRAG || state == G_DIRECT) {
         int off = drag.panel      ? drag.startOff + (y - y0)
                   : drag.vertical ? drag.startOff - (y - y0)
                                   : drag.startOff - (x - x0);
         if (off < 0) off = 0;
         if (off > drag.range) off = drag.range;
         drag.off = off;
-        compDrag(off);
+        if (state == G_DRAG) compDrag(off);
       }
       publish(x, y, (state == G_PENDING || state == G_PASS) && !s_suppress, took);
       continue;
     }
 
     if (s_down && now - lastMs >= RELEASE_MS) {
-      if (state == G_DRAG) {
+      if (state == G_PANEL_LIVE && !s_suppress) {
+        const bool open = uiPanelIsOpen();
+        const int dy = lastY - y0;
+        if (abs(dy) >= 40 && abs(dy) > abs(lastX - x0) &&
+            ((!open && dy > 0 && y0 < EDGE_PX) || (open && dy < 0)))
+          uiRequestLivePanel(!open);
+      }
+      if (state == G_DRAG || state == G_DIRECT) {
         // Offset velocity (px/ms) over the last samples. Page offsets grow as
         // the finger moves left or up, the panel's as it moves down.
         float v = 0.0f;
@@ -265,7 +324,10 @@ void touchTask(void*) {
         }
         if (dur < SLIDE_MIN_MS) dur = SLIDE_MIN_MS;
         if (dur > SLIDE_MAX_MS) dur = SLIDE_MAX_MS;
-        compRelease(target, dur, commit ? drag.landing : 0);
+        if (state == G_DRAG) compRelease(target, dur, commit ? drag.landing : 0);
+#if defined(BOARD_IS_JC8012P4A1C)
+        else if (commit && !s_suppress) uiQueueUncachedSwipe(directOrigin, directTarget, directEpoch);
+#endif
       }
       portENTER_CRITICAL(&s_mux);
       s_lastTouch = now;

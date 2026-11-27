@@ -670,7 +670,11 @@
 #define LV_FONT_MONTSERRAT_42 0
 #define LV_FONT_MONTSERRAT_44 0
 #define LV_FONT_MONTSERRAT_46 0
+#if defined(BOARD_IS_JC8012P4A1C)
+#define LV_FONT_MONTSERRAT_48 1
+#else
 #define LV_FONT_MONTSERRAT_48 0
+#endif
 
 /* Demonstrate special features */
 #define LV_FONT_MONTSERRAT_28_COMPRESSED    0  /**< bpp = 3 */
@@ -694,7 +698,11 @@
 #define LV_FONT_CUSTOM_DECLARE LV_FONT_DECLARE(deck_font_12) LV_FONT_DECLARE(deck_font_14) LV_FONT_DECLARE(deck_font_20) LV_FONT_DECLARE(deck_font_28) LV_FONT_DECLARE(deck_font_clock_56) LV_FONT_DECLARE(deck_font_clock_72)
 
 /** Always set a default font */
+#if defined(BOARD_IS_JC8012P4A1C)
+#define LV_FONT_DEFAULT &lv_font_montserrat_40
+#else
 #define LV_FONT_DEFAULT &deck_font_14
+#endif
 
 /** Enable handling large font and/or fonts with a lot of characters.
  *  The limit depends on the font size, font face and bpp.

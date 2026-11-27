@@ -1,16 +1,24 @@
 #include "debug_log.h"
 #include "display_ui.h"
 #include "config.h"
-#include "settings.h"
+#include "tactula_settings.h"
 #include "deck_ui.h"
 #include "deck_touch.h"
 #include <time.h>
+#if defined(BOARD_IS_JC8012P4A1C)
+#include "deck_sd.h"
+#include "p4_board.h"
+#include <esp_system.h>
+#endif
 
 static ScreenState s_screen = SCREEN_SPLASH;
 
 ScreenState getScreenState() { return s_screen; }
-void setScreenState(ScreenState state) { s_screen = state; }
-void displayTick() { deckTick(); }
+void setScreenState(ScreenState state) {
+  if (s_screen == state) return;
+  s_screen = state;
+  refreshBacklightControl();
+}
 
 // ---------------------------------------------------------------------------
 //  Backlight
@@ -44,7 +52,11 @@ constexpr uint8_t PEEK_LEVEL = 26;
 constexpr uint32_t PEEK_MS = 60000;
 
 void setBacklight(uint8_t level) {
+#if defined(BOARD_IS_JC8012P4A1C)
+  p4Board::setBacklight(level);
+#else
   analogWrite(BACKLIGHT_PIN, level);
+#endif
   lastAppliedBrightness = level;
 }
 
@@ -111,6 +123,23 @@ static bool inNightWindow(uint16_t minute, uint16_t start, uint16_t end) {
 }
 
 void updateBacklightControl() {
+#if defined(BOARD_IS_JC8012P4A1C)
+  if (deckScanoutHoldActive() || !p4Board::hasPresentedFrame()) return;
+#endif
+  // An OTA progress screen must be visible even when normal brightness is
+  // zero. Do not mutate saved/manual/night/idle settings.
+  if (getScreenState() == SCREEN_OTA_UPDATE) {
+    g_fade_ms = 0;
+    g_next_fade_ms = 0;
+    if (g_target != 255 || lastAppliedBrightness != 255) {
+      debugSerial.println("Display: OTA backlight override 100%");
+      g_target = 255;
+      setBacklight(255);
+    }
+    // Re-evaluate normal brightness as soon as the OTA screen is dismissed.
+    g_backlight_refresh = true;
+    return;
+  }
   const uint32_t nowMs = millis();
   if (g_fade_ms) {
     const uint32_t t = nowMs - g_fade_start;
@@ -157,9 +186,17 @@ void updateBacklightControl() {
   }
   if (g_idle_sleep) target = min(target, g_idle_level);
   if (g_manual_display_off) target = 0;
+#if defined(BOARD_IS_JC8012P4A1C)
+  const uint16_t fade = g_target < 0 && target > 0 ? 300 : g_next_fade_ms;
+#else
   const uint16_t fade = g_next_fade_ms;
+#endif
   g_next_fade_ms = 0;
   if (target == g_target) return;
+#if defined(BOARD_IS_JC8012P4A1C)
+  debugSerial.printf("Display: P4 backlight target t=%ums %d->%u fade=%ums\n",
+                     (unsigned)nowMs, (int)g_target, (unsigned)target, (unsigned)fade);
+#endif
   g_target = target;
   if (fade) {
     g_fade_from = lastAppliedBrightness;
@@ -174,13 +211,42 @@ void updateBacklightControl() {
 // ---------------------------------------------------------------------------
 //  Init
 // ---------------------------------------------------------------------------
+void displayTick() {
+  deckTick();
+#if defined(BOARD_IS_JC8012P4A1C)
+  // The splash loop also ticks the display during setup, before loop() starts.
+  if (g_target < 0 || g_fade_ms) updateBacklightControl();
+#endif
+}
+
 void initDisplay() {
   // Panel bring-up wants the rails settled after power-on.
   delay(500);
-  if (!deckBegin(dispSettings.rotation)) debugSerial.println("Display: deck pipeline init FAILED");
-  displayTick();  // the splash is on the panel before the light comes on
+  if (!deckBegin(dispSettings.rotation)) {
+    debugSerial.println("Display: deck pipeline init FAILED");
+#if defined(BOARD_IS_JC8012P4A1C)
+    deck::wallStorageBegin();
+#endif
+    return;
+  }
+#if defined(BOARD_IS_JC8012P4A1C)
+  // Switch off the light before a software reset stops panel scanout.
+  const esp_err_t err = esp_register_shutdown_handler(p4Board::blankBacklightForRestart);
+  if (err != ESP_OK) {
+    debugSerial.printf("Display: could not register P4 shutdown handler: %s\n", esp_err_to_name(err));
+  }
+  deckShowBootSplash("Mounting storage...");
+  const uint32_t started = millis();
+  while (!p4Board::hasPresentedFrame() && millis() - started < 250) delay(1);
+  updateBacklightControl();
+  deck::wallStorageBegin();
+#endif
+  deckLoadDashboard();
+  displayTick();
+#if !defined(BOARD_IS_JC8012P4A1C)
   pinMode(BACKLIGHT_PIN, OUTPUT);
   setBacklight(brightness);
+#endif
 }
 
 void applyDisplaySettings() {

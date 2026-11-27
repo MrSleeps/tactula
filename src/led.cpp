@@ -1,7 +1,7 @@
 #include "debug_log.h"
 #include "led.h"
 #include "config.h"
-#include "settings.h"
+#include "tactula_settings.h"
 #include "display_ui.h"
 #include "soc/soc_caps.h"
 
@@ -26,6 +26,10 @@ static uint8_t previewBrightness = 0;
 // Refuses a pin that would kill the display, touch, USB or boot; it does not
 // try to model which pins the board physically breaks out.
 bool ledPinAllowed(uint8_t pin) {
+#if defined(BOARD_IS_JC8012P4A1C)
+  // Extension GPIOs need a board-specific pin policy.
+  return false;
+#else
   // GPIO 0 is the "unset" sentinel (LED_DEFAULT_PIN) and a strapping pin on
   // every board here, so it is never a valid choice.
   if (pin == 0) return false;
@@ -44,6 +48,7 @@ bool ledPinAllowed(uint8_t pin) {
   // Pins the chip does not have (the S3 has no GPIO 22..25).
   if (pin >= SOC_GPIO_PIN_COUNT || !((SOC_GPIO_VALID_OUTPUT_GPIO_MASK >> pin) & 1)) return false;
   return true;
+#endif
 }
 
 bool ledPinValid() {

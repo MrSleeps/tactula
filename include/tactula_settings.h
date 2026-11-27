@@ -1,5 +1,5 @@
-#ifndef SETTINGS_H
-#define SETTINGS_H
+#ifndef TACTULA_SETTINGS_H
+#define TACTULA_SETTINGS_H
 
 #include <Arduino.h>
 #include "config.h"
@@ -49,8 +49,6 @@ struct DisplaySettings {
   uint8_t  theme;             // THEME_* display preset
   uint8_t  tactulaRadius = 22; // tile corner radius in pixels
   uint8_t  tactulaPadding = 9; // preferred inner padding in pixels
-  uint8_t  midnightTint = 90; // Midnight: widget background opacity %, 0..100
-  uint8_t  midnightOn = 92;   // Midnight: active widget fill opacity %, 0..100
   uint8_t  glassTint;         // Glass: tile tint opacity %, 0..100
   uint8_t  glassBlur;         // Glass: blur radius px, 0..24 (0 = clear glass)
   uint8_t  glassDim;          // Glass: wallpaper black overlay %, 0..100 (sharp + blurred)
@@ -81,6 +79,9 @@ struct PresenceSettings {
   bool frame = false;
   uint8_t frameEvery = 5;
   bool frameClock = true;
+  bool frameClockLarge = false;
+  bool frameWeatherIcon = true;
+  bool frameClockBackground = true;
   bool frameAnim = true;
   bool nightWake = false;        // presence lifts the night schedule to nightWakeLevel
   uint8_t nightWakeLevel = 128;  // 0..255
@@ -112,16 +113,56 @@ constexpr uint8_t THEME_MIDNIGHT = 0;
 constexpr uint8_t THEME_DAYLIGHT = 1;
 constexpr uint8_t THEME_GLASS = 2;  // Midnight colours, glass tiles over a wallpaper
 constexpr uint8_t THEME_TACTULA = 3;
-constexpr uint8_t THEME_MINIMAL_CONSOLE = 4;
-constexpr uint8_t THEME_MIDNIGHT_STUDIO = 5;  // Figma-inspired default; preserve existing IDs
-constexpr uint8_t THEME_MAX = THEME_MIDNIGHT_STUDIO;
+// Retired display theme IDs 4 and 5 are reserved for older settings and backups.
+// Modern Tactula: the persisted byte encodes palette and independent Glass mode.
+constexpr uint8_t THEME_CINEMATIC = 6; // existing Ocean ID
+constexpr uint8_t THEME_EMBER = 7;
+constexpr uint8_t THEME_OCEAN_GLASS = 8;
+constexpr uint8_t THEME_EMBER_GLASS = 9;
+constexpr uint8_t THEME_AMETHYST = 10;
+constexpr uint8_t THEME_FOREST = 11;
+constexpr uint8_t THEME_GRAPHITE = 12;
+constexpr uint8_t THEME_AMETHYST_GLASS = 13;
+constexpr uint8_t THEME_FOREST_GLASS = 14;
+constexpr uint8_t THEME_GRAPHITE_GLASS = 15;
+#if defined(BOARD_IS_JC8012P4A1C)
+constexpr bool CINEMATIC_THEME_AVAILABLE = true;
+#else
+constexpr bool CINEMATIC_THEME_AVAILABLE = false;
+#endif
+
+constexpr bool themeUsesModernLayout(int theme) {
+  return theme >= THEME_CINEMATIC && theme <= THEME_GRAPHITE_GLASS;
+}
+constexpr bool themeUsesGlassMode(int theme) {
+  return theme == THEME_OCEAN_GLASS || theme == THEME_EMBER_GLASS ||
+         (theme >= THEME_AMETHYST_GLASS && theme <= THEME_GRAPHITE_GLASS);
+}
+constexpr bool themeUsesEmber(int theme) {
+  return theme == THEME_EMBER || theme == THEME_EMBER_GLASS;
+}
+constexpr bool themeUsesAmethyst(int theme) {
+  return theme == THEME_AMETHYST || theme == THEME_AMETHYST_GLASS;
+}
+constexpr bool themeUsesForest(int theme) {
+  return theme == THEME_FOREST || theme == THEME_FOREST_GLASS;
+}
+constexpr bool themeUsesGraphite(int theme) {
+  return theme == THEME_GRAPHITE || theme == THEME_GRAPHITE_GLASS;
+}
+constexpr uint8_t normalizeDisplayTheme(int theme) {
+  // Both boards migrate retired themes; keep legacy IDs for portable backups.
+  if (theme == THEME_MIDNIGHT || theme == THEME_DAYLIGHT || theme == THEME_TACTULA) return THEME_CINEMATIC;
+  if (theme == THEME_GLASS) return THEME_OCEAN_GLASS;
+  if (themeUsesModernLayout(theme)) return static_cast<uint8_t>(theme);
+  return THEME_OCEAN_GLASS;
+}
 
 constexpr uint8_t TACTULA_RADIUS_MAX = 32;
 constexpr uint8_t TACTULA_PADDING_MAX = 20;
 
 constexpr bool themeUsesWallpaper(uint8_t theme) {
-  // Midnight Studio shares wallpaper loading, but uses its own opaque navy cards.
-  return theme == THEME_GLASS || theme == THEME_TACTULA || theme == THEME_MIDNIGHT_STUDIO;
+  return theme == THEME_GLASS || theme == THEME_TACTULA || themeUsesModernLayout(theme);
 }
 
 // Network settings. NVS blob "net", layout shared with StatNode.

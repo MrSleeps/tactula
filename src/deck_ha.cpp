@@ -1,8 +1,10 @@
 // Guition deck: Home Assistant client. See deck_ha.h.
 #include "debug_log.h"
+#include "p4_trace.h"
 #include "deck_ha.h"
 #include "deck_config.h"
 #include "deck_panel.h"
+#include "deck_sd.h"
 #include <LittleFS.h>
 #include <time.h>
 #include <ArduinoJson.h>
@@ -23,6 +25,7 @@ namespace {
 // per subscription keeps that frame small even for chatty lights.
 constexpr size_t SUB_BATCH = 4;
 constexpr uint32_t RECONNECT_MS = 5000;
+constexpr uint32_t WEATHER_REFRESH_MS = 60000;
 constexpr size_t MAX_QUEUED_CALLS = 8;
 
 // ArduinoJson grows a document in small blocks, and small blocks land in
@@ -102,7 +105,9 @@ bool s_started = false;
 uint32_t s_appliedCredGen = 0;
 uint32_t s_subscribedGen = 0;
 uint32_t s_nextId = 1;
+uint32_t s_lastWeatherRefresh = 0;
 std::vector<uint32_t> s_subIds;
+std::vector<uint32_t> s_mediaRegistryIds;
 struct Pending {
   uint32_t id;
   String entity;
@@ -287,10 +292,10 @@ bool parseUrl(const String& url, String& host, uint16_t& port, String& err) {
   return true;
 }
 
-void sendJson(JsonDocument& doc) {
+bool sendJson(JsonDocument& doc) {
   String out;
   serializeJson(doc, out);
-  s_ws.sendTXT(out);
+  return s_ws.sendTXT(out);
 }
 
 // The climate attribute a number field holds, or null for other keys.
@@ -343,6 +348,8 @@ void clearWeather(HaEntity& e) {
   e.weatherTempUnit = e.weatherWindUnit = e.weatherPressureUnit = e.weatherVisibilityUnit = "";
 }
 
+bool historyEpoch(const char* s, time_t& epoch);
+
 void entityFromAttrs(HaEntity& e, JsonObjectConst a, bool isWeather) {
   if (a.isNull()) return;
   if (a["friendly_name"].is<const char*>()) e.name = (const char*)a["friendly_name"];
@@ -358,8 +365,22 @@ void entityFromAttrs(HaEntity& e, JsonObjectConst a, bool isWeather) {
     } else if (!strcmp(k, "rgb_color")) {
       JsonArrayConst c = kv.value().as<JsonArrayConst>();
       e.rgb = c.size() == 3 ? (int32_t)((c[0].as<int>() & 255) << 16 | (c[1].as<int>() & 255) << 8 | (c[2].as<int>() & 255)) : -1;
+    } else if (!strcmp(k, "supported_color_modes")) {
+      e.lightSupportsColor = false;
+      e.lightSupportsWarmth = false;
+      for (JsonVariantConst mode : kv.value().as<JsonArrayConst>()) {
+        const char* name = mode | "";
+        if (!strcmp(name, "color_temp")) e.lightSupportsWarmth = true;
+        if (!strcmp(name, "hs") || !strcmp(name, "xy") || !strcmp(name, "rgb") ||
+            !strcmp(name, "rgbw") || !strcmp(name, "rgbww"))
+          e.lightSupportsColor = true;
+      }
     } else if (!strcmp(k, "color_temp_kelvin")) {
       e.colorTempKelvin = kv.value().is<int>() ? kv.value().as<int>() : -1;
+    } else if (!strcmp(k, "min_color_temp_kelvin")) {
+      e.minColorTempKelvin = kv.value().is<int>() ? kv.value().as<int>() : -1;
+    } else if (!strcmp(k, "max_color_temp_kelvin")) {
+      e.maxColorTempKelvin = kv.value().is<int>() ? kv.value().as<int>() : -1;
     } else if (!strcmp(k, "current_position") || !strcmp(k, "percentage")) {
       e.level = kv.value().is<float>() ? (int)lroundf(kv.value().as<float>()) : -1;
     } else if (!strcmp(k, "volume_level")) {
@@ -368,8 +389,35 @@ void entityFromAttrs(HaEntity& e, JsonObjectConst a, bool isWeather) {
       e.mediaTitle = kv.value().is<const char*>() ? (const char*)kv.value() : "";
     } else if (!strcmp(k, "media_artist")) {
       e.mediaArtist = kv.value().is<const char*>() ? (const char*)kv.value() : "";
+    } else if (!strcmp(k, "is_volume_muted")) {
+      e.mediaMute = kv.value().is<bool>() ? (int8_t)kv.value().as<bool>() : -1;
+    } else if (!strcmp(k, "shuffle")) {
+      e.mediaShuffle = kv.value().is<bool>() ? (int8_t)kv.value().as<bool>() : -1;
+    } else if (!strcmp(k, "repeat")) {
+      e.mediaRepeat = kv.value().is<const char*>() ? (const char*)kv.value() : "";
+    } else if (!strcmp(k, "entity_picture")) {
+      const char* picture = kv.value().as<const char*>();
+      e.mediaPicture = picture && strlen(picture) <= 1024 ? picture : "";
+    } else if (!strcmp(k, "media_album_name")) {
+      e.mediaAlbum = kv.value().is<const char*>() ? (const char*)kv.value() : "";
+    } else if (!strcmp(k, "source_list")) {
+      e.mediaSources = "";
+      for (JsonVariantConst source : kv.value().as<JsonArrayConst>()) {
+        const char* name = source.as<const char*>();
+        if (!name || !*name || strchr(name, '\n')) continue;
+        if (e.mediaSources.length() + strlen(name) + 1 > 768) break;
+        if (e.mediaSources.length()) e.mediaSources += '\n';
+        e.mediaSources += name;
+      }
+    } else if (!strcmp(k, "app_name")) {
+      e.mediaApp = kv.value().is<const char*>() ? (const char*)kv.value() : "";
+    } else if (!strcmp(k, "source")) {
+      e.mediaSource = kv.value().is<const char*>() ? (const char*)kv.value() : "";
+    } else if (!strcmp(k, "supported_features")) {
+      e.mediaFeatures = kv.value() | -1;
     } else if (!strcmp(k, "media_position")) {
       e.mediaPosition = kv.value().is<float>() ? kv.value().as<float>() : NAN;
+      e.mediaPositionAt = millis();
     } else if (!strcmp(k, "media_duration")) {
       e.mediaDuration = kv.value().is<float>() ? kv.value().as<float>() : NAN;
     } else if (float* f = isWeather ? weatherField(e, k) : nullptr) {
@@ -395,6 +443,21 @@ void entityFromAttrs(HaEntity& e, JsonObjectConst a, bool isWeather) {
   if (a["min"].is<float>()) e.numMin = a["min"].as<float>();
   if (a["max"].is<float>()) e.numMax = a["max"].as<float>();
   if (a["step"].is<float>()) e.numStep = a["step"].as<float>();
+  // HA can update the timestamp without changing the numeric position (e.g.
+  // successive tracks starting at zero). Re-anchor using the actual sample age.
+  if (a["media_position_updated_at"].is<const char*>() && isfinite(e.mediaPosition)) {
+    time_t stamp = 0;
+    const time_t now = time(nullptr);
+    if (now >= 1609459200 && historyEpoch(a["media_position_updated_at"].as<const char*>(), stamp)) {
+      const int64_t age = std::max<int64_t>(0, (int64_t)now - stamp);
+      // Limit to a plausible sample age and keep wrap-safe monotonic arithmetic.
+      e.mediaPositionAt = millis() - (uint32_t)(std::min<int64_t>(age, 86400) * 1000);
+      if (!e.mediaPositionAt) e.mediaPositionAt = 1;
+    } else {
+      e.mediaPositionAt = millis();
+    }
+  }
+
 }
 
 Entry* findEntry(const char* id) {
@@ -431,9 +494,16 @@ void applyEvent(JsonObjectConst ev) {
     e.deviceClass = "";
     e.brightness = -1;
     e.rgb = -1;
-    e.colorTempKelvin = -1;
+    e.lightSupportsColor = false;
+    e.lightSupportsWarmth = false;
+    e.colorTempKelvin = e.minColorTempKelvin = e.maxColorTempKelvin = -1;
     e.level = -1;
     e.mediaTitle = e.mediaArtist = "";
+    e.mediaApp = e.mediaSource = e.mediaAlbum = e.mediaSources = "";
+    e.mediaPositionAt = 0;
+    e.mediaPicture = e.mediaRepeat = "";
+    e.mediaMute = e.mediaShuffle = -1;
+    e.mediaFeatures = -1;
     e.mediaPosition = e.mediaDuration = NAN;
     e.numMin = e.numMax = e.numStep = NAN;
     clearClimate(e);
@@ -457,7 +527,10 @@ void applyEvent(JsonObjectConst ev) {
       const char* key = k | "";
       if (!strcmp(key, "brightness")) e.brightness = -1;
       else if (!strcmp(key, "rgb_color")) e.rgb = -1;
+      else if (!strcmp(key, "supported_color_modes")) e.lightSupportsColor = e.lightSupportsWarmth = false;
       else if (!strcmp(key, "color_temp_kelvin")) e.colorTempKelvin = -1;
+      else if (!strcmp(key, "min_color_temp_kelvin")) e.minColorTempKelvin = -1;
+      else if (!strcmp(key, "max_color_temp_kelvin")) e.maxColorTempKelvin = -1;
       else if (!strcmp(key, "current_position") || !strcmp(key, "percentage") ||
                !strcmp(key, "volume_level"))
         e.level = -1;
@@ -469,6 +542,15 @@ void applyEvent(JsonObjectConst ev) {
       else if (!strcmp(key, "hvac_modes")) e.hvacModes = "";
       else if (!strcmp(key, "media_title")) e.mediaTitle = "";
       else if (!strcmp(key, "media_artist")) e.mediaArtist = "";
+      else if (!strcmp(key, "is_volume_muted")) e.mediaMute = -1;
+      else if (!strcmp(key, "shuffle")) e.mediaShuffle = -1;
+      else if (!strcmp(key, "repeat")) e.mediaRepeat = "";
+      else if (!strcmp(key, "entity_picture")) e.mediaPicture = "";
+      else if (!strcmp(key, "media_album_name")) e.mediaAlbum = "";
+      else if (!strcmp(key, "source_list")) e.mediaSources = "";
+      else if (!strcmp(key, "app_name")) e.mediaApp = "";
+      else if (!strcmp(key, "source")) e.mediaSource = "";
+      else if (!strcmp(key, "supported_features")) e.mediaFeatures = -1;
       else if (!strcmp(key, "media_position")) e.mediaPosition = NAN;
       else if (!strcmp(key, "media_duration")) e.mediaDuration = NAN;
       else if (!strcmp(key, "icon")) e.icon = "";
@@ -557,6 +639,24 @@ void handleText(const uint8_t* payload, size_t len) {
       regReply(ok, doc);
       return;
     }
+    auto mediaRequest = std::find(s_mediaRegistryIds.begin(), s_mediaRegistryIds.end(), id);
+    if (mediaRequest != s_mediaRegistryIds.end()) {
+      s_mediaRegistryIds.erase(mediaRequest);
+      if (ok) {
+        Lock g;
+        for (JsonPairConst kv : doc["result"].as<JsonObjectConst>()) {
+          Entry* en = findEntry(kv.key().c_str());
+          if (!en || !kv.value()["platform"].is<const char*>()) continue;
+          const int8_t platform = !strcmp(kv.value()["platform"] | "", "webostv") ? 1 : 0;
+          if (en->e.mediaWebOsPlatform != platform) {
+            en->e.mediaWebOsPlatform = platform;
+            ++en->e.version;
+            ++s_version;
+          }
+        }
+      }
+      return;
+    }
     for (size_t i = 0; i < s_pending.size(); i++) {
       if (s_pending[i].id != id) continue;
       {
@@ -588,6 +688,7 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
                                        s_everConnected ? String() : String("no answer from Home Assistant"));
       s_subscribedGen = 0;
       s_subIds.clear();
+      s_mediaRegistryIds.clear();
       if (s_reg) regFinish(false, "connection to Home Assistant lost");
       // Never replay an uncertain call after a reconnect: report it instead.
       failPending("connection to Home Assistant lost");
@@ -598,6 +699,48 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
       break;
     default:
       break;
+  }
+}
+
+uint32_t subscribeEntities(const char* const* ids, size_t count) {
+  JsonDocument d(psram());
+  const uint32_t id = s_nextId++;
+  d["id"] = id;
+  d["type"] = "subscribe_entities";
+  JsonArray batch = d["entity_ids"].to<JsonArray>();
+  for (size_t i = 0; i < count; ++i) batch.add(ids[i]);
+  // A missing entity_ids filter subscribes to every entity on the server.
+  if (d.overflowed() || batch.size() != count || !count) return 0;
+  return sendJson(d) ? id : 0;
+}
+
+bool unsubscribeEntities(uint32_t subscription) {
+  JsonDocument d(psram());
+  d["id"] = s_nextId++;
+  d["type"] = "unsubscribe_events";
+  d["subscription"] = subscription;
+  return !d.overflowed() && sendJson(d);
+}
+
+void refreshWeather(uint32_t now) {
+  if (now - s_lastWeatherRefresh < WEATHER_REFRESH_MS) return;
+  s_lastWeatherRefresh = now;
+  std::vector<String> weather;
+  {
+    Lock g;
+    for (const auto& id : s_wanted)
+      if (id.startsWith("weather.")) weather.push_back(id);
+  }
+  // Each subscription returns its initial state before HA processes the
+  // following unsubscribe. Keep the normal live subscriptions in place.
+  for (const auto& entity : weather) {
+    const char* id = entity.c_str();
+    const uint32_t sub = subscribeEntities(&id, 1);
+    if (!sub || !unsubscribeEntities(sub)) {
+      debugSerial.printf("HA: weather refresh could not be sent for %s\n", id);
+      if (sub) s_ws.disconnect();  // Also releases the temporary subscription.
+      return;
+    }
   }
 }
 
@@ -621,26 +764,29 @@ void resubscribe() {
   for (const String& id : wanted) ids.push_back(id.c_str());
   for (size_t i = 0; i < rawCount; i++)
     if (!std::binary_search(wanted.begin(), wanted.end(), String(raw[i].id))) ids.push_back(raw[i].id);
-  for (uint32_t sub : s_subIds) {
-    JsonDocument u(psram());
-    u["id"] = s_nextId++;
-    u["type"] = "unsubscribe_events";
-    u["subscription"] = sub;
-    sendJson(u);
-  }
+  for (uint32_t sub : s_subIds) unsubscribeEntities(sub);
   s_subIds.clear();
   for (size_t i = 0; i < ids.size(); i += SUB_BATCH) {
-    JsonDocument d(psram());
-    const uint32_t id = s_nextId++;
-    d["id"] = id;
-    d["type"] = "subscribe_entities";
-    JsonArray batch = d["entity_ids"].to<JsonArray>();
-    for (size_t k = i; k < ids.size() && k < i + SUB_BATCH; k++) batch.add(ids[k]);
-    sendJson(d);
-    s_subIds.push_back(id);
+    const uint32_t sub = subscribeEntities(ids.data() + i, std::min(SUB_BATCH, ids.size() - i));
+    if (sub) s_subIds.push_back(sub);
   }
   heap_caps_free(raw);
+  // Identify integrations for watched media entities only, in small batches.
+  // Registry access may be denied: normal media controls remain available.
+  std::vector<String> mediaIds;
+  for (const String& id : wanted) if (id.startsWith("media_player.")) mediaIds.push_back(id);
+  for (size_t i=0; i<mediaIds.size(); i+=REG_BATCH) {
+    JsonDocument d(psram());
+    const uint32_t id=s_nextId++;
+    d["id"]=id;
+    d["type"]="config/entity_registry/get_entries";
+    JsonArray batch=d["entity_ids"].to<JsonArray>();
+    for (size_t k=i;k<std::min(i+REG_BATCH,mediaIds.size());++k) batch.add(mediaIds[k]);
+    s_mediaRegistryIds.push_back(id);
+    sendJson(d);
+  }
   s_subscribedGen = gen;
+  s_lastWeatherRefresh = millis();
 }
 
 void sendQueuedCalls() {
@@ -742,6 +888,7 @@ void haTask(void*) {
       if (s_subscribedGen != wantedGen) resubscribe();
       sendQueuedCalls();
       regStep();
+      refreshWeather(millis());
     }
     vTaskDelay(pdMS_TO_TICKS(5));
   }
@@ -946,6 +1093,9 @@ bool haTakeFailure(String& entity, String& message) {
 namespace {
 
 const char* const LIST_PATH = "/ha_entities.json";
+#if defined(BOARD_IS_JC8012P4A1C)
+String s_entityListRam;
+#endif
 constexpr size_t MAX_BODY = 4 * 1024 * 1024;
 
 // Fetch a bounded sorted page from Home Assistant. Rendering all entities in
@@ -1018,7 +1168,7 @@ bool readBody(HTTPClient& http, char*& body, size_t& len, String& err) {
     } else {
       vTaskDelay(1);
     }
-    esp_task_wdt_reset();
+    if (esp_task_wdt_status(nullptr) == ESP_OK) esp_task_wdt_reset();
   }
   body[len] = 0;
   if (declared > 0 && len < (size_t)declared) {
@@ -1210,6 +1360,7 @@ void regStep() {
   }
   if (!s_reg || s_reg->started) return;
   s_reg->started = true;
+  p4Trace::WorkerScope trace(p4Trace::Worker::HaRegistry);
   const uint32_t t0 = millis();
   String err;
   if (!regRender(*s_reg, err)) {
@@ -1488,7 +1639,7 @@ bool fetchViaTemplate(String& out, size_t& count, String& err) {
       out += json.substring(1, json.length() - 1);
       count += n;
     }
-    esp_task_wdt_reset();
+    if (esp_task_wdt_status(nullptr) == ESP_OK) esp_task_wdt_reset();
     if (n < pageSize) { out += ']'; return true; }
     // A stalled cursor could otherwise loop forever on a malformed answer.
     if (last <= after || last.indexOf('\'') >= 0 || last.indexOf('\\') >= 0) {
@@ -1505,7 +1656,10 @@ bool fetchViaTemplate(String& out, size_t& count, String& err) {
 // Fallback when the template endpoint is not available to this token. Slow
 // on a big installation (ArduinoJson 7 deduplicates strings linearly, ~10 s
 // for 1400 entities), but correct.
-bool fetchViaStates(String& out, size_t& count, String& err) {
+// Emit one validated entity at a time. The sink must report short writes or
+// allocation failures; a parsed entity is not counted until it is emitted.
+template<typename Sink>
+bool fetchStateRecords(Sink&& emit, size_t& count, String& err) {
   HTTPClient http;
   String token;
   if (!openHa(http, "/api/states", token, err)) return false;
@@ -1524,8 +1678,9 @@ bool fetchViaStates(String& out, size_t& count, String& err) {
   filter["attributes"]["friendly_name"] = true;
   filter["attributes"]["icon"] = true;
   filter["attributes"]["unit_of_measurement"] = true;
-  out = "[";
   count = 0;
+  JsonDocument record(psram());
+  String line;
   bool valid = stream.next() == '[';
   int ch = valid ? stream.next() : -1;
   while (valid && ch != ']') {
@@ -1535,28 +1690,30 @@ bool fetchViaStates(String& out, size_t& count, String& err) {
       break;
     }
     const char* id = doc["entity_id"] | "";
-    const char* name = doc["attributes"]["friendly_name"] | "";
-    const char* state = doc["state"] | "";
-    if (count) out += ',';
-    out += "{\"id\":";
-    appendJsonString(out, id, strlen(id));
-    out += ",\"name\":";
-    appendJsonString(out, name, strlen(name));
-    out += ",\"state\":";
-    appendJsonString(out, state, strlen(state));
+    if (!*id) { err = "Home Assistant returned an entity without an ID"; valid = false; break; }
+    record.clear();
+    record["id"] = id;
+    record["name"] = doc["attributes"]["friendly_name"] | "";
+    record["state"] = doc["state"] | "";
     const char* icon = doc["attributes"]["icon"] | "";
-    if (*icon) {
-      out += ",\"icon\":";
-      appendJsonString(out, icon, strlen(icon));
-    }
     const char* unit = doc["attributes"]["unit_of_measurement"] | "";
-    if (*unit) {
-      out += ",\"unit\":";
-      appendJsonString(out, unit, strlen(unit));
+    if (*icon) record["icon"] = icon;
+    if (*unit) record["unit"] = unit;
+    const size_t bytes = measureJson(record);
+    line = "";
+    if (record.overflowed() || !line.reserve(bytes) ||
+        serializeJson(record, line) != bytes || line.length() != bytes) {
+      err = "Not enough memory to encode an entity";
+      valid = false;
+      break;
     }
-    out += '}';
+    if (!emit(line, count != 0)) {
+      err = "Could not store the complete entity catalogue (memory or storage full)";
+      valid = false;
+      break;
+    }
     if (++count % 64 == 0) {
-      esp_task_wdt_reset();
+      if (esp_task_wdt_status(nullptr) == ESP_OK) esp_task_wdt_reset();
       vTaskDelay(1);
     }
     ch = stream.next();
@@ -1565,22 +1722,52 @@ bool fetchViaStates(String& out, size_t& count, String& err) {
   }
   http.end();
   if (!valid) {
-    err = stream.timedOut ? "Home Assistant answered too slowly" : "bad answer from Home Assistant";
+    if (!err.length()) err = stream.timedOut ? "Home Assistant answered too slowly" : "bad answer from Home Assistant";
     return false;
   }
-  out += ']';
   return true;  // unsorted; the portal sorts
 }
 
+bool fetchViaStates(String& out, size_t& count, String& err) {
+  out = "[";
+  if (!fetchStateRecords([&](const String& line, bool comma) {
+    return (!comma || out.concat(',')) && out.concat(line);
+  }, count, err)) return false;
+  if (!out.concat(']')) {
+    err = "Not enough memory to complete the entity catalogue";
+    return false;
+  }
+  return true;
+}
+
+#if defined(BOARD_IS_JC8012P4A1C)
+constexpr const char* SD_LIST = "/touchdeck/ha_entities.json";
+constexpr const char* SD_LIST_TEMP = "/touchdeck/ha_entities.tmp";
+constexpr const char* SD_LIST_BACKUP = "/touchdeck/ha_entities.bak";
+
+bool writeCataloguePart(File& file, const char* data, size_t bytes) {
+  return file.write(reinterpret_cast<const uint8_t*>(data), bytes) == bytes;
+}
+#endif
+
 bool storeList(const String& listJson, size_t count, String& doc) {
   const time_t now = time(nullptr);
-  doc = "{\"updated\":";
-  doc += String((uint32_t)(now > 1609459200 ? now : 0));
-  doc += ",\"count\":";
-  doc += String((unsigned)count);
-  doc += ",\"entities\":";
-  doc += listJson;
-  doc += '}';
+  doc = "";
+  if (!doc.reserve(listJson.length() + 80) ||
+      !doc.concat("{\"updated\":") ||
+      !doc.concat(String((uint32_t)(now > 1609459200 ? now : 0))) ||
+      !doc.concat(",\"count\":") || !doc.concat(String((unsigned)count)) ||
+      !doc.concat(",\"entities\":") || !doc.concat(listJson) || !doc.concat('}')) {
+    doc = "";
+    return false;
+  }
+#if defined(BOARD_IS_JC8012P4A1C)
+  // Keep picker refreshes off internal flash while DSI scans from PSRAM.
+  // Reserve before assigning so a failed allocation cannot discard the old cache.
+  if (!s_entityListRam.reserve(doc.length())) return false;
+  s_entityListRam = doc;
+  return s_entityListRam.length() == doc.length();
+#else
   if (!deckFsReady()) return false;
   File f = LittleFS.open("/ha_entities.json.tmp", "w");
   if (!f) return false;
@@ -1592,6 +1779,7 @@ bool storeList(const String& listJson, size_t count, String& doc) {
   }
   LittleFS.remove(LIST_PATH);
   return LittleFS.rename("/ha_entities.json.tmp", LIST_PATH);
+#endif
 }
 
 }  // namespace
@@ -1661,6 +1849,130 @@ uint32_t haHistoryVersion() {
 
 const char* haEntityListPath() { return LIST_PATH; }
 
+#if defined(BOARD_IS_JC8012P4A1C)
+File haOpenSdEntityList() {
+  if (!wallOnSd()) return File();
+  auto& fs = wallFs();
+  File f = fs.open(SD_LIST, "r");
+  if (!f) f = fs.open(SD_LIST_BACKUP, "r"); // interrupted replacement
+  return f;
+}
+
+bool haRefreshSdEntityList(String& err) {
+  if (!wallOnSd()) { err = "SD card not mounted"; return false; }
+  auto& fs = wallFs();
+  fs.remove(SD_LIST_TEMP);
+  File file = fs.open(SD_LIST_TEMP, "w");
+  if (!file) { err = "Cannot create temporary entity catalogue on SD"; return false; }
+  const uint32_t started = millis();
+  size_t count = 0;
+  static const char prefix[] = "{\"entities\":[";
+  bool ok = writeCataloguePart(file, prefix, sizeof(prefix) - 1);
+  if (ok) {
+    ok = fetchStateRecords([&](const String& line, bool comma) {
+      return (!comma || writeCataloguePart(file, ",", 1)) &&
+             writeCataloguePart(file, line.c_str(), line.length());
+    }, count, err);
+  }
+  const time_t now = time(nullptr);
+  char suffix[100];
+  const int n = snprintf(suffix, sizeof(suffix), "],\"updated\":%lu,\"count\":%lu}",
+    (unsigned long)(now > 1609459200 ? now : 0), (unsigned long)count);
+  if (ok) ok = n > 0 && (size_t)n < sizeof(suffix) && writeCataloguePart(file, suffix, n);
+  const size_t bytes = file.position();
+  file.flush();
+  file.close();
+  if (ok) {
+    File check = fs.open(SD_LIST_TEMP, "r");
+    ok = check && check.size() == bytes && bytes >= sizeof(prefix) - 1 + (size_t)n;
+    if (check) check.close();
+  }
+  if (!ok) {
+    fs.remove(SD_LIST_TEMP);
+    if (!err.length()) err = "Could not write the complete entity catalogue to SD";
+    return false;
+  }
+  // Keep the last good catalogue until a fully written replacement exists.
+  // If power is lost between renames, the reader can still open the backup.
+  if (fs.exists(SD_LIST)) {
+    if (fs.exists(SD_LIST_BACKUP) && !fs.remove(SD_LIST_BACKUP)) {
+      fs.remove(SD_LIST_TEMP);
+      err = "Cannot remove previous catalogue backup";
+      return false;
+    }
+    if (!fs.rename(SD_LIST, SD_LIST_BACKUP)) {
+      fs.remove(SD_LIST_TEMP);
+      err = "Cannot preserve previous entity catalogue";
+      return false;
+    }
+  }
+  if (!fs.rename(SD_LIST_TEMP, SD_LIST)) {
+    if (fs.exists(SD_LIST_BACKUP)) fs.rename(SD_LIST_BACKUP, SD_LIST);
+    fs.remove(SD_LIST_TEMP);
+    err = "Cannot install refreshed entity catalogue";
+    return false;
+  }
+  fs.remove(SD_LIST_BACKUP);
+  debugSerial.printf("HA: entity list updated, %u entities, %u bytes, %u ms (SD streaming)\n",
+    (unsigned)count, (unsigned)bytes, (unsigned)(millis() - started));
+  return true;
+}
+#endif
+
+static bool readMediaJpeg(HTTPClient& http, uint8_t*& bytes, size_t& length) {
+  http.setConnectTimeout(3000);
+  http.setTimeout(5000);
+  constexpr size_t limit = 512 * 1024;
+  if (http.GET() != 200) { http.end(); return false; }
+  const int declared = http.getSize();
+  if (declared == 0 || declared > (int)limit) { http.end(); return false; }
+  const size_t cap = declared > 0 ? (size_t)declared : limit;
+  bytes = (uint8_t*)heap_caps_malloc(cap, MALLOC_CAP_SPIRAM);
+  if (!bytes) { http.end(); return false; }
+  auto* stream = http.getStreamPtr();
+  const uint32_t started = millis();
+  uint32_t last = started;
+  while (stream && length < cap && millis() - started < 15000 && millis() - last < 5000) {
+    int available = stream->available();
+    if (available > 0) {
+      const int got = stream->read(bytes + length, std::min((size_t)available, cap - length));
+      if (got > 0) { length += got; last = millis(); }
+    } else if (!stream->connected()) break;
+    else vTaskDelay(1);
+  }
+  http.end();
+  const bool ok = length >= 4 && (declared < 0 || length == (size_t)declared) &&
+    bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[length-2] == 0xFF && bytes[length-1] == 0xD9;
+  if (!ok) { free(bytes); bytes = nullptr; length = 0; }
+  return ok;
+}
+// Worker-only bounded camera download; never expose the bearer token.
+bool haCameraSnapshot(const String& entity, uint8_t*& bytes, size_t& length) {
+  bytes = nullptr; length = 0;
+  if (!entity.startsWith("camera.") || entity.length() <= 7 || entity.length() > 128) return false;
+  for (unsigned i = 7; i < entity.length(); ++i) {
+    const char c = entity[i];
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) return false;
+  }
+  HTTPClient http;
+  String token, error;
+  const String path = "/api/camera_proxy/" + entity;
+  if (!openHa(http, path.c_str(), token, error)) return false;
+  return readMediaJpeg(http, bytes, length);
+}
+bool haMediaArtwork(const String& url, uint8_t*& bytes, size_t& length) {
+  bytes = nullptr; length = 0;
+  HTTPClient http;
+  String token, error;
+  // Credentials are only attached to relative Home Assistant proxy paths.
+  if (url.startsWith("/api/") && !url.startsWith("//")) {
+    if (!openHa(http, url.c_str(), token, error)) return false;
+  } else if (url.startsWith("http://") || url.startsWith("https://")) {
+    if (!http.begin(url)) return false;
+  } else return false;
+  return readMediaJpeg(http, bytes, length);
+}
+
 bool haRenderTemplate(const String& tmpl, String& out, String& err) {
   char* text = nullptr;
   size_t len = 0;
@@ -1671,6 +1983,14 @@ bool haRenderTemplate(const String& tmpl, String& out, String& err) {
 }
 
 bool haFetchEntityList(String& outJson, bool refresh, String& err) {
+#if defined(BOARD_IS_JC8012P4A1C)
+  if (!refresh && s_entityListRam.length()) {
+    outJson = s_entityListRam;
+    if (outJson.length() == s_entityListRam.length()) return true;
+    err = "Not enough memory to return the cached entity list";
+    return false;
+  }
+#endif
   if (!refresh && deckFsReady() && LittleFS.exists(LIST_PATH)) {
     File f = LittleFS.open(LIST_PATH, "r");
     if (f) {
@@ -1689,11 +2009,21 @@ bool haFetchEntityList(String& outJson, bool refresh, String& err) {
   String list;
   size_t count = 0;
   String why;
+#if defined(BOARD_IS_JC8012P4A1C)
+  // Without SD retain the RAM path, but never silently lose records.
+  if (!fetchViaStates(list, count, err)) return false;
+#else
   if (!fetchViaTemplate(list, count, why)) {
     debugSerial.printf("HA: template list failed (%s), falling back to /api/states\n", why.c_str());
     if (!fetchViaStates(list, count, err)) return false;
   }
-  if (!storeList(list, count, outJson)) debugSerial.println("HA: could not cache the entity list");
+#endif
+  const bool cached = storeList(list, count, outJson);
+  if (!outJson.length()) {
+    err = "Not enough memory to assemble the complete entity catalogue";
+    return false;
+  }
+  if (!cached) debugSerial.println("HA: could not cache the entity list");
   debugSerial.printf("HA: entity list updated, %u entities, %u bytes, %u ms\n", (unsigned)count,
                 (unsigned)outJson.length(), (unsigned)(millis() - t0));
   return true;

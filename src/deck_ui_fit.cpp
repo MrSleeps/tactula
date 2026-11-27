@@ -54,7 +54,7 @@ bool iconOff(const TileRt& r) { return r.def->icon == "none"; }
 // margin. Few sizes: each is a TinyTTF font holding a file open.
 void fitChip(TileRt& r, int size) {
   lv_obj_set_size(r.chip, size, size);
-  const int px = r.def->iconPlain ? (size >= 28 ? 28 : size >= 20 ? 20 : 16) : size >= 28 ? 20 : 16;
+  const int px = themeUsesModernLayout(s_theme) && size >= 44 ? 40 : size >= 48 ? (r.def->iconPlain ? 40 : 28) : r.def->iconPlain ? (size >= 28 ? 28 : size >= 20 ? 20 : 16) : size >= 28 ? 20 : 16;
   if (px != r.iconPx) {
     r.iconPx = px;
     HaEntity e;
@@ -99,9 +99,16 @@ bool nameFits(const char* text, const lv_font_t* f, int w, int lines) {
 
 // The name font: the fitted one, or smaller until the name fits whole (12 px
 // truncates). Up to three lines where the tile is tall enough.
+void scaleArtworkGlyph(lv_obj_t* icon, int zoom) {
+  lv_obj_set_style_transform_pivot_x(icon, lv_pct(50), 0);
+  lv_obj_set_style_transform_pivot_y(icon, lv_pct(50), 0);
+  lv_obj_set_style_transform_scale_x(icon, zoom, 0);
+  lv_obj_set_style_transform_scale_y(icon, zoom, 0);
+}
+
 void fitNameText(TileRt& r) {
   if (!r.nameFont) return;
-  static const lv_font_t* const kSteps[] = {&deck_font_20, &deck_font_14, &deck_font_12};
+  static const lv_font_t* const kSteps[] = {&deck_font_28, &deck_font_20, &deck_font_14, &deck_font_12};
   const char* text = lv_label_get_text(r.name);
   const lv_font_t* f = r.nameFont;
   int lines = 1;
@@ -116,52 +123,10 @@ void fitNameText(TileRt& r) {
   fitName(r.name, f, lines);
 }
 
-// Midnight Studio: a compact Figma-style information card. A rounded-square
-// icon and label share the header; the state sits beneath as secondary text.
-// This only applies to normal labelled controls, keeping image and icon-only
-// tiles, special widgets and all legacy themes unchanged.
-void fitStudioButton(TileRt& r, int cw, int ch) {
-  const bool icon = !iconOff(r);
-  const int chipSize = ch >= 58 ? 30 : 22;
-  const bool row = icon && cw >= 70 && ch >= 46;
-  r.nameFont = nullptr;
-  showObj(r.chip, icon);
-  showObj(r.name, true);
-  if (icon) {
-    fitChip(r, chipSize);
-    lv_obj_align(r.chip, row ? LV_ALIGN_TOP_LEFT : LV_ALIGN_LEFT_MID, 0, 0);
-  }
-  const lv_font_t* nf = cw >= 85 ? &deck_font_14 : &deck_font_12;
-  fitName(r.name, nf, 1);
-  lv_obj_set_style_text_align(r.name, LV_TEXT_ALIGN_LEFT, 0);
-  lv_obj_set_style_text_opa(r.name, LV_OPA_COVER, 0);
-  if (row) {
-    const int nx = chipSize + 6;
-    lv_obj_set_size(r.name, std::max(1, cw - nx), lineH(nf));
-    lv_obj_align(r.name, LV_ALIGN_TOP_LEFT, nx, (chipSize - lineH(nf)) / 2);
-  } else if (icon) {
-    // Short tiles cannot fit two rows; use the remaining width.
-    lv_obj_set_size(r.name, std::max(1, cw - chipSize - 5), lineH(nf));
-    lv_obj_align(r.name, LV_ALIGN_LEFT_MID, chipSize + 5, 0);
-  } else {
-    lv_obj_set_width(r.name, cw);
-    lv_obj_align(r.name, LV_ALIGN_TOP_LEFT, 0, 0);
-  }
-  const bool state = ch >= chipSize + lineH(&deck_font_12) + 9;
-  showObj(r.sub, state);
-  if (state) {
-    setFont(r.sub, &deck_font_12);
-    lv_obj_set_style_text_opa(r.sub, LV_OPA_90, 0);
-    lv_obj_set_style_text_align(r.sub, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_set_style_pad_left(r.sub, 0, 0);
-    lv_obj_set_size(r.sub, cw, lineH(&deck_font_12));
-    lv_obj_align(r.sub, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-  }
-}
-
 // Action, toggle and slider: icon top left, state top right, name at the
 // bottom; a one-line row on short wide tiles; the icon alone on tiny ones.
 void fitButton(TileRt& r, int cw, int ch) {
+  const bool large = roomyWidget(cw, ch);
   // Custom PNG logos use the body of the tile instead of the usual tiny
   // top-left icon chip. Keep the label centred below the artwork.
   if (r.pngIcon && !lv_obj_has_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN)) {
@@ -170,7 +135,7 @@ void fitButton(TileRt& r, int cw, int ch) {
     showObj(r.chip, false);
     showObj(r.name, !r.def->noName);
     showObj(r.sub, false);
-    const lv_font_t* font = cw < 90 ? &deck_font_12 : &deck_font_14;
+    const lv_font_t* font = large ? &deck_font_28 : cw < 90 ? &deck_font_12 : &deck_font_14;
     fitName(r.name, font, 1);
     lv_obj_set_style_text_align(r.name, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(r.name, cw);
@@ -200,11 +165,43 @@ void fitButton(TileRt& r, int cw, int ch) {
     }
     lv_obj_center(r.chip);
     lv_obj_center(r.icon);
+    scaleArtworkGlyph(r.icon, large ? std::min(512, size * 256 / 64) : 256);
     return;
   }
-  if (s_theme == THEME_MIDNIGHT_STUDIO) {
-    fitStudioButton(r, cw, ch);
-    return;
+  if (themeUsesModernLayout(s_theme)) {
+    const bool icon = !iconOff(r);
+    const bool spacious = cw >= 272 && ch >= 100;
+    lv_obj_set_style_text_align(r.name, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_align(r.sub, LV_TEXT_ALIGN_RIGHT, 0);
+    if (cw >= 146 && ch >= 66) {
+      const int chip = spacious ? 66 : 52;
+      const int inset = 8;
+      const int textX = icon ? inset + chip + 12 : inset;
+      const int textWidth = cw - textX - inset;
+      const auto* labelFont = spacious ? &deck_font_28 : &deck_font_20;
+      const auto* stateFont = spacious ? &deck_font_20 : &deck_font_14;
+      const int gap = 4;
+      const int top = (ch - lineH(labelFont) - lineH(stateFont) - gap) / 2;
+      showObj(r.chip, icon);
+      if (icon) {
+        fitChip(r, chip);
+        lv_obj_align(r.chip, LV_ALIGN_LEFT_MID, inset, 0);
+      }
+      r.nameFont = labelFont;
+      r.nameArea = lineH(labelFont);
+      r.nameW = textWidth;
+      fitNameText(r);
+      lv_obj_set_width(r.name, textWidth);
+      lv_obj_align(r.name, LV_ALIGN_TOP_LEFT, textX, top);
+      setFont(r.sub, stateFont);
+      lv_obj_set_style_text_align(r.sub, LV_TEXT_ALIGN_LEFT, 0);
+      lv_obj_set_style_pad_left(r.sub, 0, 0);
+      lv_obj_set_size(r.sub, textWidth, lineH(stateFont));
+      lv_obj_align(r.sub, LV_ALIGN_TOP_LEFT, textX, top + lineH(labelFont) + gap);
+      showObj(r.name, true);
+      showObj(r.sub, true);
+      return;
+    }
   }
   struct Opt {
     int chip;
@@ -213,14 +210,14 @@ void fitButton(TileRt& r, int cw, int ch) {
     bool wideOnly;
   };
   static const Opt kOpts[] = {
-      {30, &deck_font_20, 2, true}, {30, &deck_font_20, 1, true}, {30, &deck_font_14, 2, false},
+      {48, &deck_font_28, 2, true}, {30, &deck_font_20, 2, true}, {30, &deck_font_20, 1, true}, {30, &deck_font_14, 2, false},
       {22, &deck_font_12, 2, false}, {30, &deck_font_14, 1, false}, {22, &deck_font_12, 1, false},
   };
   // "icon": "none" keeps the layout and leaves the icon's corner empty.
   const bool icon = !iconOff(r);
   showObj(r.chip, icon);
   for (const Opt& o : kOpts) {
-    if (cw < 40 || (o.wideOnly && cw < WIDE_W) || o.chip + textH(o.font, o.lines) > ch) continue;
+    if ((o.chip == 48 && !large) || cw < 40 || (o.wideOnly && cw < WIDE_W) || o.chip + textH(o.font, o.lines) > ch) continue;
     fitChip(r, o.chip);
     lv_obj_align(r.chip, LV_ALIGN_TOP_LEFT, 0, 0);
     r.nameFont = o.font;
@@ -230,7 +227,7 @@ void fitButton(TileRt& r, int cw, int ch) {
     lv_obj_align(r.name, LV_ALIGN_BOTTOM_LEFT, 0, 0);
     // The state beside the icon, smaller or gone when "Off" would not fit.
     const int room = cw - o.chip - 6;
-    const lv_font_t* sf = o.chip >= 30 && textW("Off", &deck_font_14) <= room ? &deck_font_14 : &deck_font_12;
+    const lv_font_t* sf = o.chip == 48 ? &deck_font_20 : o.chip >= 30 && textW("Off", &deck_font_14) <= room ? &deck_font_14 : &deck_font_12;
     setFont(r.sub, sf);
     lv_obj_set_size(r.sub, lv_pct(100), lineH(sf));
     lv_obj_set_style_pad_left(r.sub, icon ? o.chip + 6 : 0, 0);  // clear of the icon
@@ -331,13 +328,13 @@ void fitRows(TileRt& r, int cw, int ch) {
     const lv_font_t* name;
     const lv_font_t* row;
   };
-  static const Opt kOpts[] = {{&deck_font_20, &deck_font_20}, {&deck_font_14, &deck_font_20},
+  static const Opt kOpts[] = {{&deck_font_28, &deck_font_28}, {&deck_font_20, &deck_font_20}, {&deck_font_14, &deck_font_20},
                               {&deck_font_14, &deck_font_14}, {&deck_font_14, &deck_font_12},
                               {&deck_font_12, &deck_font_12}};
   const int n = lv_obj_get_child_count(r.rows);
-  const Opt* o = &kOpts[4];
+  const Opt* o = &kOpts[5];
   for (const Opt& k : kOpts)
-    if (lineH(k.name) + n * lineH(k.row) <= ch) { o = &k; break; }
+    if ((k.name != &deck_font_28 || roomyWidget(cw, ch)) && lineH(k.name) + n * lineH(k.row) <= ch) { o = &k; break; }
   showObj(r.sub, false);
   showObj(r.detail, false);
   const int chip = iconOff(r) ? 0 : lineH(o->name) >= 22 ? 22 : 18;
@@ -365,6 +362,7 @@ void fitRows(TileRt& r, int cw, int ch) {
 // not a theme: colours, wallpaper and existing entity/tap behaviour remain
 // controlled by the selected theme. Short/small cards fall back to fitSensor.
 void fitSensorCard(TileRt& r, int cw, int ch) {
+  const bool large = roomyWidget(cw, ch);
   const bool icon = !iconOff(r);
   const bool hasName = !r.def->noName;
   // Small cells use a simple row rather than letting the label and value
@@ -397,14 +395,14 @@ void fitSensorCard(TileRt& r, int cw, int ch) {
     return;
   }
 
-  const int chip = icon ? 30 : 0;
+  const int chip = icon ? (large ? 48 : 30) : 0;
   if (icon) {
     fitChip(r, chip);
     lv_obj_align(r.chip, LV_ALIGN_TOP_LEFT, 0, 0);
   }
   showObj(r.chip, icon);
   r.nameFont = nullptr;
-  const lv_font_t* nameFont = cw >= 145 ? &deck_font_14 : &deck_font_12;
+  const lv_font_t* nameFont = large ? &deck_font_28 : cw >= 145 ? &deck_font_14 : &deck_font_12;
   fitName(r.name, nameFont, 1);
   lv_obj_set_style_text_opa(r.name, LV_OPA_90, 0);
   lv_obj_set_style_text_align(r.name, LV_TEXT_ALIGN_LEFT, 0);
@@ -415,7 +413,7 @@ void fitSensorCard(TileRt& r, int cw, int ch) {
 
   const bool detail = r.detail && ch >= 95;
   const int bottom = detail ? lineH(&deck_font_12) + 3 : 0;
-  r.valFont = cw >= 115 && ch >= 88 ? &deck_font_28 : &deck_font_20;
+  r.valFont = large ? &lv_font_montserrat_40 : cw >= 115 && ch >= 88 ? &deck_font_28 : &deck_font_20;
   r.valW = cw;
   r.chipRoom = 0;
   r.unitFont = nullptr;
@@ -446,6 +444,7 @@ void fitSensor(TileRt& r, int cw, int ch) {
     bool wideOnly;
   };
   static const Opt kOpts[] = {
+      {&lv_font_montserrat_40, &deck_font_28, 2, true},
       {&deck_font_28, &deck_font_20, 2, true},  {&deck_font_28, &deck_font_20, 1, true},
       {&deck_font_28, &deck_font_14, 1, true},  {&deck_font_20, &deck_font_14, 2, false},
       {&deck_font_20, &deck_font_12, 2, false}, {&deck_font_20, &deck_font_14, 1, false},
@@ -455,8 +454,8 @@ void fitSensor(TileRt& r, int cw, int ch) {
   for (const Opt& o : kOpts) {
     const lv_font_t* df = o.val == &deck_font_28 ? &deck_font_14 : &deck_font_12;
     const int dh = pass ? 0 : lineH(df);
-    if ((o.wideOnly && cw < WIDE_W) || lineH(o.val) + (r.def->noName ? 0 : textH(o.name, o.lines)) + dh > ch) continue;
-    const int chip = iconOff(r) ? 0 : o.val == &deck_font_14 ? 18 : 22;
+    if ((o.val == &lv_font_montserrat_40 && !roomyWidget(cw, ch)) || (o.wideOnly && cw < WIDE_W) || lineH(o.val) + (r.def->noName ? 0 : textH(o.name, o.lines)) + dh > ch) continue;
+    const int chip = iconOff(r) ? 0 : o.val == &lv_font_montserrat_40 ? 36 : o.val == &deck_font_14 ? 18 : 22;
     if (chip) {
       fitChip(r, chip);
       lv_obj_align(r.chip, LV_ALIGN_TOP_RIGHT, 2, -2);
@@ -501,27 +500,56 @@ void fitSensor(TileRt& r, int cw, int ch) {
 
 // Keep Clock tiles untouched. Weather/temperature need decimal dots and
 // minus signs, which the compact Clock font glyph subsets don't contain.
-// Lightweight font descriptors share the existing glyph data; no new bitmaps.
-const lv_font_t* temperatureFont72() {
+// The digit fonts lack the dashes in the unsynced clock placeholder and
+// some temperature glyphs. Use the existing Montserrat fallback for them.
+const lv_font_t* clockFont72() {
   static lv_font_t f = deck_font_clock_72;
   f.fallback = &lv_font_montserrat_40;
   return &f;
 }
-const lv_font_t* temperatureFont56() {
+const lv_font_t* clockFont56() {
   static lv_font_t f = deck_font_clock_56;
   f.fallback = &lv_font_montserrat_40;
   return &f;
 }
 
+#if defined(BOARD_IS_JC8012P4A1C)
+extern "C" const lv_font_t deck_font_weather_clock_144;
+extern "C" const lv_font_t deck_font_weather_clock_104;
+extern "C" const lv_font_t deck_font_temperature_marks_144;
+extern "C" const lv_font_t deck_font_temperature_marks_104;
+
+static const lv_font_t* temperatureFont144() {
+  static lv_font_t f = deck_font_weather_clock_144;
+  f.fallback = &deck_font_temperature_marks_144;
+  return &f;
+}
+
+static const lv_font_t* temperatureFont104() {
+  static lv_font_t f = deck_font_weather_clock_104;
+  f.fallback = &deck_font_temperature_marks_104;
+  return &f;
+}
+#endif
+
 // The largest font from `from` down that fits text in room, null if none.
 const lv_font_t* valueFont(const lv_font_t* from, const char* text, int room) {
-  static const lv_font_t* const kSteps[] = {temperatureFont72(), temperatureFont56(),
-                                            &lv_font_montserrat_40, &deck_font_28, &deck_font_20,
-                                            &deck_font_14, &deck_font_12};
+  static const lv_font_t* const kSteps[] = {
+#if defined(BOARD_IS_JC8012P4A1C)
+      temperatureFont144(), temperatureFont104(),
+#endif
+      clockFont72(), clockFont56(), &lv_font_montserrat_40,
+      &deck_font_28, &deck_font_20, &deck_font_14, &deck_font_12,
+  };
   bool on = false;
   for (const lv_font_t* s : kSteps) {
     on = on || s == from;
-    if (on && textW(text, s) <= room) return s;
+    if (!on) continue;
+#if defined(BOARD_IS_JC8012P4A1C)
+    if ((s == temperatureFont144() || s == temperatureFont104()) &&
+        text[strspn(text, "-.0123456789")] != '\0') continue;
+#endif
+    if (textW(text, s) <= room) return s;
   }
   return nullptr;
 }
@@ -591,8 +619,46 @@ void fitValue(TileRt& r) {
     if (!chip) room += r.chipRoom;
   }
   const lv_font_t* uf = r.unitFont;
-  const int unitW = r.unit && uf ? 4 + textW(lv_label_get_text(r.unit), uf) : 0;
-  const lv_font_t* f = valueFont(r.valFont, text, room - unitW);
+  const int unitGap = r.def->type == TILE_SENSOR && r.def->style == METRIC_HEADLINE ? 0 : 4;
+  // For headline readings choose a readable suffix together with the
+  // numeral. A narrow tile must not force a 144px number beside a 14px unit.
+  const lv_font_t* f = nullptr;
+  int unitW = r.unit && uf ? unitGap + textW(lv_label_get_text(r.unit), uf) : 0;
+  if (r.unit && uf && r.def->type == TILE_SENSOR && r.def->style == METRIC_HEADLINE) {
+    const char* suffix = lv_label_get_text(r.unit);
+    if (suffix[0]) {
+      const lv_font_t* const readings[] = {
+#if defined(BOARD_IS_JC8012P4A1C)
+        temperatureFont144(), temperatureFont104(),
+#endif
+        clockFont72(), clockFont56(), &lv_font_montserrat_40,
+        &deck_font_28, &deck_font_20, &deck_font_14, &deck_font_12
+      };
+      const lv_font_t* const units[] = {
+        &lv_font_montserrat_40, &deck_font_28, &deck_font_20, &deck_font_14, &deck_font_12
+      };
+      bool allowed = false;
+      for (const lv_font_t* reading : readings) {
+        allowed = allowed || reading == r.valFont;
+        if (!allowed) continue;
+        const lv_font_t* preferred = &deck_font_12;
+        for (const lv_font_t* candidate : units) {
+          if (lineH(candidate) * 2 <= lineH(reading)) {
+            preferred = candidate;
+            break;
+          }
+        }
+        const int width = unitGap + textW(suffix, preferred);
+        // valueFont also checks glyph coverage of the large numeric fonts.
+        if (valueFont(reading, text, room - width) != reading) continue;
+        f = reading;
+        uf = preferred;
+        unitW = width;
+        break;
+      }
+    }
+  }
+  if (!f) f = valueFont(r.valFont, text, room - unitW);
   bool unit = unitW > 0;
   if (!f && unit) {
     unit = false;
@@ -620,7 +686,8 @@ void fitMetric(TileRt& r, int cw, int ch) {
   const TileDef& d = *r.def;
   lv_obj_t* row = lv_obj_get_parent(r.sub);
   // Bar: name, number and the 8 px bar stacked; chart: the line under the number.
-  const lv_font_t* nf = ch >= 64 ? &deck_font_20 : &deck_font_14;
+  const bool large = roomyWidget(cw, ch);
+  const lv_font_t* nf = large ? &deck_font_28 : ch >= 64 ? &deck_font_20 : &deck_font_14;
   const bool wideViz = r.viz && cw >= WIDE_W;
   const bool viz = wideViz &&
                    (d.style == METRIC_BAR ? ch >= lineH(nf) + lineH(&deck_font_28) * 3 / 4 + 10 : ch >= 44);
@@ -632,13 +699,13 @@ void fitMetric(TileRt& r, int cw, int ch) {
     lv_obj_set_size(r.name, d.style == METRIC_BAR ? lv_pct(100) : lv_pct(55), lineH(nf));
     lv_obj_align(r.name, LV_ALIGN_TOP_LEFT, 0, -2);
     r.unitFont = &deck_font_14;
-    r.valFont = &deck_font_28;
+    r.valFont = large ? &lv_font_montserrat_40 : &deck_font_28;
     lv_obj_set_width(r.viz, lv_pct(100));
     lv_obj_align(r.viz, LV_ALIGN_BOTTOM_MID, 0, 0);
     if (d.style == METRIC_BAR) {
-      lv_obj_set_height(r.viz, 8);
+      lv_obj_set_height(r.viz, large ? 12 : 8);
       r.valW = cw;
-      lv_obj_align(row, LV_ALIGN_BOTTOM_LEFT, 0, -10);
+      lv_obj_align(row, LV_ALIGN_BOTTOM_LEFT, 0, large ? -16 : -10);
     } else {
       r.valW = cw;
       lv_obj_align(row, LV_ALIGN_TOP_RIGHT, 0, -6);
@@ -735,7 +802,7 @@ void fitHeadline(TileRt& r, int cw, int ch) {
   const bool paired = ch >= 68 && headlineBesideClock(r);
   const lv_font_t* labelFont = paired
       ? (ch >= 120 ? &deck_font_20 : &deck_font_14)
-      : (cw >= 145 ? &deck_font_20 : &deck_font_14);
+      : (roomyWidget(cw, ch) ? &deck_font_28 : cw >= 145 ? &deck_font_20 : &deck_font_14);
   const bool label = paired || (ch >= 48 && !r.def->noName);
 
   // The Clock has its date AFTER the time. Put the sensor label after the
@@ -758,11 +825,17 @@ void fitHeadline(TileRt& r, int cw, int ch) {
   const int available = ch - (label ? lineH(labelFont) : 0);
   const lv_font_t* maxFont = &deck_font_14;
   static const lv_font_t* const kReadingFonts[] = {
-      temperatureFont72(), temperatureFont56(), &lv_font_montserrat_40,
+#if defined(BOARD_IS_JC8012P4A1C)
+      temperatureFont144(), temperatureFont104(),
+#endif
+      clockFont72(), clockFont56(), &lv_font_montserrat_40,
       &deck_font_28, &deck_font_20, &deck_font_14
   };
   for (const lv_font_t* font : kReadingFonts) {
-    if (lineH(font) * 3 / 4 <= available) { maxFont = font; break; }
+#if defined(BOARD_IS_JC8012P4A1C)
+    if (paired && (font == temperatureFont144() || font == temperatureFont104())) continue;
+#endif
+    if ((paired ? lineH(font) * 3 / 4 : lineH(font)) <= available) { maxFont = font; break; }
   }
   r.valFont = maxFont;
   r.valW = cw;
@@ -784,10 +857,11 @@ void fitWeather(TileRt& r, int cw, int ch) {
   if (cw <= 0 || ch <= 0) return;
   lv_obj_t* valueRow = lv_obj_get_parent(r.sub);
   const bool compact = ch < 108;
+  const bool large = roomyWidget(cw, ch) && ch >= 145;
   const bool tiny = ch < 42;
-  const lv_font_t* nameFont = &deck_font_14;
-  const lv_font_t* conditionFont = compact ? &deck_font_12 : &deck_font_14;
-  const int iconSize = tiny ? 0 : compact ? (ch < 68 ? 16 : 20) : 30;
+  const lv_font_t* nameFont = large ? &deck_font_28 : &deck_font_14;
+  const lv_font_t* conditionFont = large ? &deck_font_20 : compact ? &deck_font_12 : &deck_font_14;
+  const int iconSize = large ? 48 : tiny ? 0 : compact ? (ch < 68 ? 16 : 20) : 30;
 
   // Compact: one top row = condition + weather icon, with no duplicate
   // "Weather" title. Tall: title/icon above and condition below the value.
@@ -820,7 +894,7 @@ void fitWeather(TileRt& r, int cw, int ch) {
   if (!tiny) {
     lv_obj_set_size(r.chip, iconSize, iconSize);
     lv_obj_align(r.chip, LV_ALIGN_TOP_RIGHT, 0, 0);
-    const int iconPx = iconSize >= 30 ? 28 : 16;
+    const int iconPx = large ? 40 : iconSize >= 30 ? 28 : 16;
     if (r.iconPx != iconPx) {
       r.iconPx = iconPx;
       HaEntity e;
@@ -832,12 +906,12 @@ void fitWeather(TileRt& r, int cw, int ch) {
     }
   }
 
-  const lv_font_t* unitFont = cw >= 140 ? &deck_font_14 : &deck_font_12;
+  const lv_font_t* unitFont = large ? &deck_font_20 : cw >= 140 ? &deck_font_14 : &deck_font_12;
   const char* value = lv_label_get_text(r.sub);
   const char* unit = lv_label_get_text(r.unit);
   const int unitW = unit[0] ? 4 + textW(unit, unitFont) : 0;
   static const lv_font_t* const kFonts[] = {
-      temperatureFont72(), temperatureFont56(), &lv_font_montserrat_40,
+      clockFont72(), clockFont56(), &lv_font_montserrat_40,
       &deck_font_28, &deck_font_20, &deck_font_14, &deck_font_12
   };
   const lv_font_t* chosen = &deck_font_12;
@@ -898,10 +972,29 @@ static void dateInk(const lv_font_t* f, int& top, int& h) {
 // a tighter gap first, then any smaller time. Fit and centring go by the ink,
 // not by the line boxes.
 void fitClock(TileRt& r, int cw, int ch) {
-  static const lv_font_t* const kTime[] = {&deck_font_clock_72, &deck_font_clock_56, &lv_font_montserrat_40,
+  lv_obj_t* row = lv_obj_get_parent(r.unit);
+  lv_obj_set_style_transform_scale_x(row, 256, 0);
+  lv_obj_set_style_transform_scale_y(row, 256, 0);
+  lv_obj_set_style_margin_top(row, 0, 0);
+  lv_obj_set_style_margin_bottom(row, 0, 0);
+  if (strcmp(lv_label_get_text(r.sub), CLOCK_SYNC_TEXT) == 0) {
+    const lv_font_t* font = &deck_font_12;
+    for (const lv_font_t* candidate : {&deck_font_28, &deck_font_20, &deck_font_14}) {
+      if (textW(CLOCK_SYNC_TEXT, candidate) <= cw && lineH(candidate) <= ch) {
+        font = candidate;
+        break;
+      }
+    }
+    setFont(r.sub, font);
+    lv_obj_set_style_translate_y(lv_obj_get_parent(r.unit), 0, 0);
+    showObj(r.name, false);
+    return;
+  }
+  static const lv_font_t* const kTime[] = {clockFont72(), clockFont56(), &lv_font_montserrat_40,
                                            &deck_font_28, &deck_font_20, &deck_font_14};
   constexpr int N = sizeof(kTime) / sizeof(kTime[0]);
-  const lv_font_t* df = ch >= 120 ? &deck_font_20 : &deck_font_14;
+  const bool large = roomyWidget(cw, ch);
+  const lv_font_t* df = large && ch >= 145 ? &deck_font_28 : ch >= 120 ? &deck_font_20 : &deck_font_14;
   const bool ampm = !netSettings.use24h;
   auto unitFont = [](const lv_font_t* f) { return lineH(f) >= 48 ? &deck_font_20 : &deck_font_14; };
   int dTop, dH;
@@ -964,17 +1057,95 @@ void fitClock(TileRt& r, int cw, int ch) {
   setFont(r.name, df);
   lv_obj_set_style_margin_top(r.name, -lineH(f) / 8 - cut, 0);
   showObj(r.name, date);
+  if (large) {
+    const int widest = textW("88:88", f) + (ampm ? 4 + textW("PM", unitFont(f)) : 0);
+    const int clockRoom = ch - (date ? gap + lineH(df) : 0);
+    const int zoom = std::max(256, std::min({384, cw * 256 / std::max(1, widest),
+                                          clockRoom * 256 / lineH(f)}));
+    const int extra = (zoom - 256) * lineH(f) / 256;
+    lv_obj_set_style_transform_pivot_x(row, lv_pct(50), 0);
+    lv_obj_set_style_transform_pivot_y(row, lv_pct(50), 0);
+    lv_obj_set_style_transform_scale_x(row, zoom, 0);
+    lv_obj_set_style_transform_scale_y(row, zoom, 0);
+    lv_obj_set_style_margin_top(row, extra / 2, 0);
+    lv_obj_set_style_margin_bottom(row, extra - extra / 2, 0);
+  }
 }
 
 
-// Navigation has no state, label or secondary line on the display. Give the
-// full inner rectangle to the chosen MDI/brand icon or uploaded PNG.
+// Centre navigation's icon and label as a single group, on both S3 and P4.
+// Icon-only legacy buttons still use the full-size centred artwork layout.
 void fitNav(TileRt& r, int cw, int ch) {
+  showObj(r.sub, false);  // Navigation has no Home Assistant status.
+  if (r.navFace) {
+    const int h = std::min(ch, logicalW() >= 800 ? 66 : 52);
+    const int y = (ch - h) / 2;
+    const int pad = std::min(14, cw / 12);
+    lv_obj_set_pos(r.navFace, 0, y);
+    lv_obj_set_size(r.navFace, cw, h);
+    const bool png = r.pngIcon && !lv_obj_has_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN);
+    const bool hasIcon = png || (r.def->icon != "none" && cw >= 62 && h >= 24);
+    const int iconSize = hasIcon ? std::max(1, std::min({h - 6, cw / 4, 34})) : 0;
+    showObj(r.chip, hasIcon && !png);
+    if (hasIcon) {
+      if (png && r.pngWidth && r.pngHeight) {
+        const int natural = std::max(r.pngWidth, r.pngHeight);
+        lv_image_set_scale(r.pngIcon, std::max(1, iconSize * LV_SCALE_NONE / natural));
+        lv_obj_align(r.pngIcon, LV_ALIGN_LEFT_MID, pad + (iconSize - r.pngWidth) / 2, 0);
+      } else {
+        fitChip(r, iconSize);
+        lv_obj_set_pos(r.chip, pad, (ch - iconSize) / 2);
+      }
+    }
+    const auto* font = cw >= 134 && h >= 32 ? &deck_font_20 : &deck_font_14;
+    setFont(r.name, font);
+    lv_obj_set_style_text_align(r.name, LV_TEXT_ALIGN_LEFT, 0);
+    const bool arrow = cw >= 54 && h >= lineH(LV_FONT_DEFAULT);
+    showObj(r.navChevron, arrow);
+    if (arrow) lv_obj_align(r.navChevron, LV_ALIGN_RIGHT_MID, -pad, 0);
+    const int x = pad + (hasIcon ? iconSize + 7 : 0);
+    showObj(r.name, h >= lineH(font));
+    lv_obj_set_pos(r.name, x, (ch - lineH(font)) / 2);
+    lv_obj_set_size(r.name, std::max(1, cw - x - pad - (arrow ? 19 : 0)), lineH(font));
+    return;
+  }
+  const bool labelled = r.def->label.length() && !r.def->noName;
+  if (labelled) {
+    showObj(r.name, true);
+    if (r.pngIcon && !lv_obj_has_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN)) {
+      // Keep PNG navigation usable; its artwork shares the standard action
+      // arrangement until an image-aware centred row is available.
+      fitButton(r, cw, ch);
+      showObj(r.sub, false);
+      return;
+    }
+    const bool hasIcon = r.def->icon != "none";
+    showObj(r.chip, hasIcon);
+    const lv_font_t* font = logicalW() >= 800 ? &deck_font_20 : &deck_font_14;
+    const int gap = hasIcon ? (cw >= 100 ? 8 : 4) : 0;
+    const bool largerIcon = themeUsesModernLayout(s_theme) && cw >= 104 && ch >= 44;
+    const int iconSize = hasIcon ? (largerIcon ? 44 : logicalW() >= 800 ? 32 : 24) : 0;
+    const int textRoom = std::max(1, cw - iconSize - gap);
+    // Do not stretch fonts to fill a large P4 grid cell.
+    setFont(r.name, font);
+    lv_label_set_long_mode(r.name, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_style_max_height(r.name, lineH(font), 0);
+    lv_obj_set_style_text_align(r.name, LV_TEXT_ALIGN_CENTER, 0);
+    const int labelWidth = std::min(textRoom, std::max(1, textW(lv_label_get_text(r.name), font)));
+    lv_obj_set_size(r.name, labelWidth, lineH(font));
+    const int total = iconSize + gap + labelWidth;
+    const int start = (cw - total) / 2;
+    if (hasIcon) {
+      fitChip(r, iconSize);
+      lv_obj_align(r.chip, LV_ALIGN_TOP_LEFT, start, (ch - iconSize) / 2);
+    }
+    lv_obj_align(r.name, LV_ALIGN_TOP_LEFT, start + iconSize + gap, (ch - lineH(font)) / 2);
+    return;
+  }
   showObj(r.name, false);
-  showObj(r.sub, false);
   if (r.pngIcon && !lv_obj_has_flag(r.pngIcon, LV_OBJ_FLAG_HIDDEN)) {
     showObj(r.chip, false);
-    fitPngIcon(r);  // centred, with no label reservation for navigation
+    fitPngIcon(r);
     return;
   }
   if (r.def->icon == "none") {
@@ -992,14 +1163,127 @@ void fitNav(TileRt& r, int cw, int ch) {
     r.iconCp = showIcon(r.icon, *r.def, nullptr, false, px, 0);
   }
   lv_obj_center(r.icon);
+  scaleArtworkGlyph(r.icon, roomyWidget(cw, ch) ? std::min(512, size * 256 / 64) : 256);
+}
+
+#if defined(BOARD_IS_JC8012P4A1C)
+extern "C" const lv_font_t deck_font_cinematic_clock;
+#endif
+
+static const lv_font_t* weatherTimeFont(const char* time, int w, int h) {
+  const bool syncing = strcmp(time, CLOCK_SYNC_TEXT) == 0;
+  static const lv_font_t* const numbers[] = {
+#if defined(BOARD_IS_JC8012P4A1C)
+      &deck_font_cinematic_clock, &deck_font_weather_clock_144, &deck_font_weather_clock_104,
+#endif
+      clockFont72(), clockFont56(), &lv_font_montserrat_40,
+  };
+  if (!syncing)
+    for (const auto* font : numbers)
+      if (lineH(font) <= h && std::max(textW("88:88", font), textW(time, font)) <= w)
+        return font;
+  for (const auto* font : {&deck_font_28, &deck_font_20, &deck_font_14})
+    if (lineH(font) <= h && textW(time, font) <= w) return font;
+  return &deck_font_14;
+}
+
+static int glyphCentreY(const lv_font_t* font, uint32_t codepoint, int* inkHeight = nullptr) {
+  lv_font_glyph_dsc_t glyph = {};
+  if (!codepoint || !lv_font_get_glyph_dsc(font, &glyph, codepoint, 0) || !glyph.box_h) {
+    if (inkHeight) *inkHeight = lineH(font);
+    return lineH(font) / 2;
+  }
+  if (inkHeight) *inkHeight = glyph.box_h;
+  return lineH(font) - font->base_line - glyph.ofs_y - (glyph.box_h + 1) / 2;
+}
+
+static int weatherTimeCentreOffset(const lv_font_t* font, const char* time, int width) {
+  const size_t len = strlen(time);
+  if (!len || time[0] < '0' || time[0] > '9') return 0;
+  lv_font_glyph_dsc_t first = {}, last = {};
+  if (!lv_font_get_glyph_dsc(font, &first, time[0], 0) ||
+      !lv_font_get_glyph_dsc(font, &last, time[len - 1], 0)) return 0;
+  // LVGL centres the advance widths. Balance the visible outer edges too.
+  const int offset = (int(last.adv_w) - last.ofs_x - last.box_w - first.ofs_x) / 2;
+  const int room = std::max(0, (width - textW(time, font)) / 2);
+  return std::max(-room, std::min(room, offset));
+}
+
+static void fitWeatherHeaderArtwork(TileRt& r, int x, int w, int h, int centreY) {
+  const auto* font = lv_obj_get_style_text_font(r.icon, LV_PART_MAIN);
+  lv_obj_set_style_text_align(r.icon, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_pos(r.icon, x, centreY - glyphCentreY(font, r.iconCp));
+  lv_obj_set_size(r.icon, w, lineH(font));
+  fitWeatherClockImage(r, x, centreY - h / 2, w, h);
+}
+
+#if defined(BOARD_IS_JC8012P4A1C)
+static void fitCinematicWeatherClock(TileRt& r, int cw, int ch) {
+  const int gutter = std::min(28, cw / 30);
+  const int weatherW = cw * 40 / 100;
+  const int weatherX = cw - gutter - weatherW;
+  const int timeW = weatherX - gutter * 2;
+  const bool date = !r.def->clockDateNever;
+  const auto* dateFont = ch >= 200 ? &deck_font_28 : &deck_font_20;
+  const int dateH = date ? lineH(dateFont) + 6 : 0;
+  const auto* time = weatherTimeFont(lv_label_get_text(r.sub), timeW, ch - dateH - 8);
+  const int timeH = lineH(time);
+  const int timeY = std::max(0, (ch - timeH - dateH) / 2);
+  setFont(r.sub, time);
+  lv_obj_set_style_text_align(r.sub, LV_TEXT_ALIGN_LEFT, 0);
+  lv_obj_set_style_transform_scale_x(r.sub, LV_SCALE_NONE, 0);
+  lv_obj_set_style_transform_scale_y(r.sub, LV_SCALE_NONE, 0);
+  lv_obj_set_pos(r.sub, gutter, timeY);
+  lv_obj_set_size(r.sub, timeW, timeH);
+  setFont(r.name, dateFont);
+  lv_obj_set_style_text_align(r.name, LV_TEXT_ALIGN_LEFT, 0);
+  lv_obj_set_style_text_color(r.name, lv_color_hex(C_DIM), 0);
+  lv_obj_set_pos(r.name, gutter, timeY + timeH + 6);
+  lv_obj_set_size(r.name, timeW, lineH(dateFont));
+  showObj(r.name, date);
+
+  const auto* tempFont = &lv_font_montserrat_40;
+  const auto* conditionFont = ch >= 200 ? &deck_font_28 : &deck_font_20;
+  const int iconSize = std::max(36, std::min({ch * 55 / 100, weatherW / 3, 100}));
+  const int gap = 12;
+  const int tx = weatherX + iconSize + gap;
+  const int tw = std::max(1, weatherW - iconSize - gap);
+  const int conditionH = lineH(conditionFont);
+  const int tempH = lineH(tempFont);
+  const int stackH = tempH + conditionH + 4;
+  const int centreY = ch / 2;
+  fitWeatherHeaderArtwork(r, weatherX, iconSize, iconSize, centreY);
+  setFont(r.unit, tempFont);
+  lv_obj_set_pos(r.unit, tx, std::max(0, centreY - stackH / 2));
+  lv_obj_set_size(r.unit, tw, tempH);
+  setFont(r.detail, conditionFont);
+  lv_obj_set_style_text_color(r.detail, lv_color_hex(C_DIM), 0);
+  lv_obj_set_pos(r.detail, tx, std::max(0, centreY - stackH / 2) + tempH + 4);
+  lv_obj_set_size(r.detail, tw, conditionH);
+  showObj(r.detail, true);
+}
+#endif
+
+static void setWeatherClockDateSeparator(lv_obj_t* label, bool show) {
+  const char* date = lv_label_get_text(label);
+  constexpr size_t separatorLen = sizeof(WEATHER_DATE_SEPARATOR) - 1;
+  const bool prefixed = strncmp(date, WEATHER_DATE_SEPARATOR, separatorLen) == 0;
+  if (!*date || show == prefixed) return;
+  // Copy the date before changing the label that owns the text.
+  char text[40];
+  snprintf(text, sizeof(text), "%s%s", show ? WEATHER_DATE_SEPARATOR : "",
+           prefixed ? date + separatorLen : date);
+  setText(label, text);
 }
 
 void fitWeatherClock(TileRt& r, int cw, int ch) {
   // The header is short and light; the time gets all remaining vertical space.
-  const int headerH = ch >= 90 ? 25 : 18;
-  const int iconW = ch >= 85 ? 27 : 19;
-  const lv_font_t* small = cw >= 330 && ch >= 110 ? &deck_font_20 : &deck_font_14;
-  const int iconPx = iconW >= 27 ? 28 : 20;
+  const bool large = std::min(logicalW(), logicalH()) >= 800 && cw >= 420 && ch >= 145;
+  const int headerH = large ? 36 : ch >= 90 ? 25 : 18;
+  const int minIconW = large ? 36 : ch >= 85 ? 27 : 19;
+  const lv_font_t* small = large ? &deck_font_28 : cw >= 330 && ch >= 110 ? &deck_font_20 : &deck_font_14;
+  const bool cinematic = r.detail && cw >= 650 && ch >= 145;
+  const int iconPx = cinematic || large ? 40 : minIconW >= 27 ? 28 : 20;
   if (r.iconPx != iconPx) {
     r.iconPx = iconPx;
     HaEntity e;
@@ -1008,59 +1292,76 @@ void fitWeatherClock(TileRt& r, int cw, int ch) {
     visual.icon = String("mdi:") + weatherIcon(known ? e.state : String(""));
     r.iconCp = showIcon(r.icon, visual, nullptr, false, iconPx, 0);
   }
+#if defined(BOARD_IS_JC8012P4A1C)
+  if (cinematic) {
+    setWeatherClockDateSeparator(r.name, false);
+    fitCinematicWeatherClock(r, cw, ch);
+    return;
+  }
+#endif
+  setWeatherClockDateSeparator(r.name, true);
+  if (r.detail) showObj(r.detail, false);
+  lv_obj_set_style_text_align(r.sub, LV_TEXT_ALIGN_CENTER, 0);
   // Treat the weather icon, temperature and date as one centred header.
   // Measuring their actual text widths keeps the elements tightly grouped
   // even when the temperature changes (e.g. 4° -> -12.5°).
-  const int iconGap = 2, dateGap = 6;
+  const int iconGap = large ? 12 : 6, dateGap = large ? 8 : 6;
+  const auto* iconFont = lv_obj_get_style_text_font(r.icon, LV_PART_MAIN);
+  const int iconW = std::max(minIconW, textW(lv_label_get_text(r.icon), iconFont));
   const char* tempText = lv_label_get_text(r.unit);
   const char* dateText = lv_label_get_text(r.name);
   const lv_font_t* headerFont = small;
   int tempW = std::max(1, textW(tempText, headerFont));
   int dateW = std::max(1, textW(dateText, headerFont));
-  if (iconW + iconGap + tempW + dateGap + dateW > cw) {
-    headerFont = &deck_font_12;
+  while (iconW + iconGap + tempW + dateGap + dateW > cw && headerFont != &deck_font_12) {
+    if (headerFont == &deck_font_28) headerFont = &deck_font_20;
+    else if (headerFont == &deck_font_20) headerFont = &deck_font_14;
+    else headerFont = &deck_font_12;
     tempW = std::max(1, textW(tempText, headerFont));
     dateW = std::max(1, textW(dateText, headerFont));
   }
   const int groupW = iconW + iconGap + tempW + dateGap + dateW;
   const int startX = std::max(0, (cw - groupW) / 2);
-  lv_obj_set_pos(r.icon, startX, 0);
-  lv_obj_set_size(r.icon, iconW, headerH);
-  if (r.pngIcon) lv_obj_set_pos(r.pngIcon, startX, 0);
+  const int headerGap = large ? 14 : ch >= 105 ? 8 : ch >= 75 ? 6 : 3;
+  int iconInkH;
+  glyphCentreY(iconFont, r.iconCp, &iconInkH);
+  const bool hasArtwork = r.pngIcon && lv_obj_has_flag(r.icon, LV_OBJ_FLAG_HIDDEN);
+  const int artworkH = hasArtwork ? std::min(iconW, headerH) : iconInkH;
+  int headerInkTop, headerInkH;
+  dateInk(headerFont, headerInkTop, headerInkH);
+  const int textCentre = glyphCentreY(headerFont, '0');
+  const int rowAbove = std::max(textCentre - headerInkTop, artworkH / 2);
+  const int rowBelow = std::max(headerInkTop + headerInkH - textCentre, (artworkH + 1) / 2);
+  const int roomH = std::max(1, ch - rowAbove - rowBelow - headerGap);
+  const int timeH = large ? std::min(roomH, std::max(lineH(clockFont72()), ch * 48 / 100)) : roomH;
+  const char* timeText = lv_label_get_text(r.sub);
+  const auto* chosen = weatherTimeFont(timeText, cw, timeH);
+  int timeInkTop = 0, timeInkH = lineH(chosen);
+  if (strcmp(timeText, CLOCK_SYNC_TEXT) != 0) digitInk(chosen, timeInkTop, timeInkH);
+  // Centre the visible header and digits together, including the gap.
+  const int stackH = rowAbove + rowBelow + headerGap + timeInkH;
+  const int centreY = std::max(0, (ch - stackH) / 2) + rowAbove;
+  const int textY = centreY - textCentre;
+  fitWeatherHeaderArtwork(r, startX, iconW, headerH, centreY);
   setFont(r.unit, headerFont);
   const int tempX = startX + iconW + iconGap;
-  lv_obj_set_pos(r.unit, tempX, 0);
-  lv_obj_set_size(r.unit, std::min(tempW, std::max(1, cw - tempX)), headerH);
+  lv_obj_set_pos(r.unit, tempX, textY);
+  lv_obj_set_size(r.unit, std::min(tempW, std::max(1, cw - tempX)), lineH(headerFont));
   setFont(r.name, headerFont);
   lv_obj_set_style_text_align(r.name, LV_TEXT_ALIGN_LEFT, 0);
   const int dateX = tempX + tempW + dateGap;
-  lv_obj_set_pos(r.name, dateX, 0);
-  lv_obj_set_size(r.name, std::max(1, std::min(dateW, cw - dateX)), headerH);
-  static const lv_font_t* const fonts[] = {
-    &deck_font_clock_72, &deck_font_clock_56, &lv_font_montserrat_40,
-    &deck_font_28, &deck_font_20, &deck_font_14
-  };
-  // A little breathing room between the compact weather/date header and
-  // the large clock, without making very short tiles lose their time digits.
-  const int headerGap = ch >= 105 ? 8 : ch >= 75 ? 6 : 3;
-  const int roomH = std::max(1, ch - headerH - headerGap);
-  const char* timeText = lv_label_get_text(r.sub);
-  const lv_font_t* chosen = fonts[5];
-  for (const lv_font_t* font : fonts) {
-    if (textW(timeText, font) <= cw && lineH(font) <= roomH) {
-      chosen = font;
-      break;
-    }
-  }
+  lv_obj_set_pos(r.name, dateX, textY);
+  lv_obj_set_size(r.name, std::max(1, std::min(dateW, cw - dateX)), lineH(headerFont));
   setFont(r.sub, chosen);
-  lv_obj_set_pos(r.sub, 0, headerH + headerGap);
-  lv_obj_set_size(r.sub, cw, roomH);
+  lv_obj_set_pos(r.sub, weatherTimeCentreOffset(chosen, timeText, cw),
+                 centreY + rowBelow + headerGap - timeInkTop);
+  lv_obj_set_size(r.sub, cw, lineH(chosen));
 }
 
 int tilePadding(int width, int height) {
   const int side = std::min(width, height);
   // Leave at least half the tile for content when the tile is very small.
-  if (s_theme == THEME_TACTULA || s_theme == THEME_MIDNIGHT_STUDIO)
+  if (s_theme == THEME_TACTULA)
     return std::min<int>(dispSettings.tactulaPadding, side / 4);
   return side >= 80 ? 9 : side >= 56 ? 7 : 5;
 }
@@ -1070,10 +1371,26 @@ void fitTile(TileRt& r) {
   if (w <= 0 || h <= 0 || (w == r.fitW && h == r.fitH)) return;
   r.fitW = w;
   r.fitH = h;
+  if (r.def->type == TILE_TEXT) {
+    const int pad = tilePadding(w, h);
+    lv_obj_set_style_pad_all(r.obj, pad, 0);
+    const lv_font_t* fonts[] = { &deck_font_14, &deck_font_20, &deck_font_28, &lv_font_montserrat_40 };
+    const auto* font = fonts[r.def->textSize];
+    lv_obj_set_style_text_font(r.name, font, 0);
+    lv_obj_set_style_text_align(r.name, r.def->textAlign == 0 ? LV_TEXT_ALIGN_LEFT :
+      r.def->textAlign == 2 ? LV_TEXT_ALIGN_RIGHT : LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(r.name, std::max(1, w - 2 * pad));
+    lv_obj_align(r.name, r.def->textVAlign == 0 ? LV_ALIGN_TOP_MID :
+      r.def->textVAlign == 2 ? LV_ALIGN_BOTTOM_MID : LV_ALIGN_CENTER, 0, 0);
+    markPageStale(r.page);
+    return;
+  }
   if (r.def->type == TILE_GROUP) {
     const int pad = std::min<int>(r.def->groupPadding, std::max(0, (std::min(w, h) - 1) / 2));
     const bool heading = r.def->label.length() && !r.def->noName;
-    const int titleH = heading ? 22 : 0;
+    const bool large = roomyWidget(w, h);
+    const int titleH = heading ? (large ? 36 : 22) : 0;
+    setFont(r.name, large ? &deck_font_28 : &deck_font_20);
     lv_obj_set_style_pad_all(r.obj, pad, 0);
     showObj(r.name, heading);
     lv_obj_set_pos(r.name, 0, 0);
@@ -1089,7 +1406,7 @@ void fitTile(TileRt& r) {
   if (r.def->type == TILE_BAMBU) fitBambu(r, cw, ch);
   else
 #endif
-  if (r.def->type == TILE_NAV) fitNav(r, cw, ch);
+  if (r.def->type == TILE_NAV || r.navFace) fitNav(r, cw, ch);
   else if (r.def->type == TILE_HA_MEDIA) fitHaMedia(r, cw, ch);
   else if (r.def->type == TILE_CLIMATE) fitInlineClimate(r, cw, ch);
   else if (r.def->type == TILE_SENSOR && r.def->style == METRIC_CHART) fitMetric(r, cw, ch);

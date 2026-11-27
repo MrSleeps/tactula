@@ -60,7 +60,7 @@ void crashLogBegin() {
       prefs.end();
     }
   } else if (prefs.begin(NVS_NAMESPACE, true)) {
-    s_last = prefs.getString("crash", "");
+    if (prefs.isKey("crash")) s_last = prefs.getString("crash", "");
     prefs.end();
   }
   s_rec.magic = 0;

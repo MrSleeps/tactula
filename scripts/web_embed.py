@@ -13,6 +13,7 @@ import re
 
 ASSETS = [  # (file in web/, C name)
     ("index.html", "WEB_INDEX_HTML"),
+    ("wifi-setup.html", "WEB_WIFI_SETUP_HTML"),
     ("tactula-mark.svg", "WEB_TACTULA_MARK_SVG"),
     ("portal.css", "WEB_PORTAL_CSS"),
     ("portal-layout.css", "WEB_PORTAL_LAYOUT_CSS"),
@@ -39,6 +40,14 @@ def build(root):
     ]
     for name, cname in ASSETS:
         data = read(root, name)
+        if name in ("index.html", "wifi-setup.html"):
+            # Build the shared Network form markup into each entrypoint.
+            # Keep this in web/ so all display editions use the same fields.
+            data = re.sub(
+                rb"\{\{include:([\w.-]+)\}\}",
+                lambda m: read(root, m.group(1).decode()),
+                data,
+            )
         if name == "index.html":
             data = re.sub(rb"\{\{v:([\w.-]+)\}\}", lambda m: version(root, m.group(1).decode()).encode(), data)
         gz = gzip.compress(data, compresslevel=9, mtime=0)

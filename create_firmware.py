@@ -5,15 +5,15 @@ Build and package Tactula firmware for all supported boards and variants.
 Usage:
     python create_firmware.py               # version from FW_VERSION in include/config.h
     python create_firmware.py v1.0.0        # explicit version
-    python create_firmware.py --board p4-7b # one board only (fails if unsupported)
+    python create_firmware.py --board jc8012p4a1c # Guition 10.1-inch P4
     python create_firmware.py --variant with_bambu # one variant only
-    # default: both S3 variants; P4 variants added automatically when supported
+    # Guition JC8012P4A1C builds are opt-in
     python create_firmware.py --no-build    # package what .pio/build already has
     python create_firmware.py --flasher     # also publish the full images to the web flasher
 
-Output (release/<version>/), <board> is empty for the S3 deck and "-p4-7b" for the 7B:
-    tactula-<version>-<board>-<variant>-full.bin   bootloader + partitions + app, flash at 0x0
-    tactula-<version>-<board>-<variant>-ota.bin    app only, for the portal's firmware update
+Output (release/<version>/):
+    tactula-<version>-<family>-<board>-<edition>-full.bin   bootloader + partitions + app
+    tactula-<version>-<family>-<board>-<edition>-ota.bin    app only, for the portal's firmware update
 
 With --flasher, docs/firmware/latest/ gets the full images, VERSION and SHA256SUMS.txt
 (optional deployment target for the Tactula browser flasher).
@@ -36,17 +36,32 @@ BOARDS = {
         "without_bambu": "without_bambu",
         "with_bambu": "with_bambu",
     }},
+    "jc8012p4a1c": {"opt_in": True, "factory": "firmware.factory.bin", "env": {
+        "with_bambu": "jc8012p4a1c_bambu",
+    }},
     "p4-7b": {"bootloader": 0x2000, "env": {
         "without_bambu": "ws_p4_7b_without_bambu",
         "with_bambu": "ws_p4_7b_with_bambu",
     }},
 }
 VARIANTS = ("without_bambu", "with_bambu")
+S3_RELEASE_TARGETS = (("jc3248w535", "without_bambu"), ("jc3248w535", "with_bambu"))
+RELEASE_TARGETS = (*S3_RELEASE_TARGETS, ("jc8012p4a1c", "with_bambu"))
+ARTIFACT_HARDWARE = {"jc3248w535": "s3", "jc8012p4a1c": "p4"}
+ARTIFACT_EDITIONS = {"without_bambu": "standard", "with_bambu": "bambu"}
+P4_BUILD_INPUTS = {"scripts/p4_fix_jd9365.py", "scripts/p4_pin_hosted_wifi.py"}
 PARTITIONS_OFFSET = 0x8000
 FIRMWARE_OFFSET = 0x10000
 
 ROOT = Path(__file__).resolve().parent
 FLASHER = ROOT / "docs" / "firmware" / "latest"
+
+
+def artifact_name(version, board, variant, kind, *, legacy=False):
+    suffix = f"{board}-{variant}"
+    if not legacy and board in ARTIFACT_HARDWARE:
+        suffix = f"{ARTIFACT_HARDWARE[board]}-{board}-{ARTIFACT_EDITIONS[variant]}"
+    return f"tactula-{version}-{suffix}-{kind}.bin"
 
 
 def read_version():
@@ -115,38 +130,36 @@ def apply_build_version(version):
     if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", version):
         sys.exit(f"error: invalid release tag {version!r} (expected v1.2.3)")
     path = ROOT / "include" / "config.h"
-    data = path.read_text(encoding="utf-8")
+    original = path.read_text(encoding="utf-8")
     data, count = re.subn(r'(#define\s+FW_VERSION\s+)"[^"]+"',
-                          lambda m: m.group(1) + '"' + version[1:] + '"', data, count=1)
+                          lambda m: m.group(1) + '"' + version[1:] + '"', original, count=1)
     if count != 1:
         sys.exit("error: FW_VERSION not found in include/config.h")
     data = re.sub(r'(#define\s+PRODUCT_NAME\s+)"[^"]+"',
                   lambda m: m.group(1) + '"tactula"', data, count=1)
-    path.write_text(data, encoding="utf-8")
+    if data != original:
+        path.write_text(data, encoding="utf-8")
 
 
 def select_builds(requested_boards, requested_variants):
-    """Only ship boards whose BOTH Bambu variants are implemented.
-
-    Missing one environment is an error, never a reason to silently ship
-    half a hardware target. Explicitly requested unsupported boards fail.
-    """
+    """Require every declared environment for an explicitly requested board."""
     config = (ROOT / "platformio.ini").read_text(encoding="utf-8")
     available = set(re.findall(r"(?m)^\[env:([^]]+)\]", config))
-    boards = requested_boards or list(BOARDS)
-    variants = requested_variants or list(VARIANTS)
+    boards = requested_boards or [name for name, board in BOARDS.items() if not board.get("opt_in")]
     selected = []
     for name in boards:
         environments = BOARDS[name]["env"]
-        missing = [v for v in VARIANTS if environments[v] not in available]
+        missing = [env for env in environments.values() if env not in available]
         if missing:
             if requested_boards:
-                sys.exit("error: board " + name + " is not release-ready; missing " +
-                         ", ".join(environments[v] for v in missing))
-            print("Skipping unsupported board " + name + ": " +
-                  ", ".join(environments[v] for v in missing))
+                sys.exit("error: board " + name + " is missing " + ", ".join(missing))
+            print("Skipping unsupported board " + name + ": " + ", ".join(missing))
             continue
-        selected.extend((name, variant, environments[variant]) for variant in variants)
+        variants = requested_variants or list(environments)
+        for variant in variants:
+            if variant not in environments:
+                sys.exit(f"error: {name} does not support variant {variant}")
+            selected.append((name, variant, environments[variant]))
     if not selected:
         sys.exit("error: no complete board variants found in platformio.ini")
     return selected
@@ -171,25 +184,33 @@ def main():
         version = "v" + version
     selected = select_builds(args.board, args.variant)
     apply_build_version(version)
-    if args.flasher and args.variant and set(args.variant) != set(VARIANTS):
-        sys.exit("error: --flasher requires both printer variants per board")
+    if args.flasher and any(
+        {variant for board, variant, _ in selected if board == name} != set(BOARDS[name]["env"])
+        for name in {board for board, _, _ in selected}
+    ):
+        sys.exit("error: --flasher requires every supported edition of each selected board")
 
     out_dir = ROOT / "release" / version
     out_dir.mkdir(parents=True, exist_ok=True)
     fulls = []
+    images = []
     for name, variant, env in selected:
         board = BOARDS[name]
         # One build at a time: parallel PlatformIO builds race on the shared cache.
         if not args.no_build:
             build(env)
         build_dir = ROOT / ".pio" / "build" / env
-        full = out_dir / f"tactula-{version}-{name}-{variant}-full.bin"
-        ota = out_dir / f"tactula-{version}-{name}-{variant}-ota.bin"
-        merge_full(build_dir, board["bootloader"], full)
+        full = out_dir / artifact_name(version, name, variant, "full")
+        ota = out_dir / artifact_name(version, name, variant, "ota")
+        if board.get("factory"):
+            shutil.copy2(build_dir / board["factory"], full)
+        else:
+            merge_full(build_dir, board["bootloader"], full)
         shutil.copy2(build_dir / "firmware.bin", ota)
         for p in (full, ota):
             print(f"  {p.relative_to(ROOT)}  ({p.stat().st_size / 1024:.1f} KB)")
         fulls.append(full)
+        images.extend((full, ota))
     manifest = {
         "version": version,
         "builds": [
@@ -200,7 +221,7 @@ def main():
     (out_dir / "MANIFEST.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     (out_dir / "SHA256SUMS.txt").write_text(
         "".join(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n"
-                for p in sorted(out_dir.glob("*.bin"))),
+                for p in sorted(images)),
         encoding="utf-8")
     if args.flasher:
         publish_flasher(fulls, version)

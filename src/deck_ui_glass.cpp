@@ -91,14 +91,11 @@ struct AutoPick {
 // Light text if it reads, else dark text, else glass darkened until light
 // text reads. Tiles with their own text colour stay light.
 AutoPick autoPick(const TileRt* r, const lv_area_t& a) {
-  const int base = r ? tileTint(*r->def) :
-                   s_theme == THEME_MIDNIGHT_STUDIO ? 90 : dispSettings.glassTint;
+  const int base = r ? tileTint(*r->def) : dispSettings.glassTint;
   AutoPick pk = {(lv_opa_t)(base * 255 / 100), C_TEXT, false};
   const lv_image_dsc_t* sharp = wallSharp();
-  // Midnight surfaces are deliberately dark, so never switch their captions to
-  // black based on the wallpaper behind them.
-  if (s_theme == THEME_MIDNIGHT_STUDIO || !dispSettings.glassAutoText || !r ||
-      r->def->hasTextColor || !sharp) return pk;
+  if (!dispSettings.glassAutoText || !r || r->def->hasTextColor || !sharp ||
+      themeUsesModernLayout(s_theme)) return pk;
   int lo, hi;
   // Tactula tint is composited over the sharp wallpaper.
   lumaRange(sharp, frostTiles(), a, lo, hi);
@@ -131,7 +128,7 @@ TileRt* tileOf(lv_obj_t* o) {
 void applyAutoPick(TileRt& r, const AutoPick& pk) {
   // For toggles, the OFF tint is applied by LVGL (not baked into the page).
   // Match its opacity to the glass auto-text adjustment for this tile.
-  if (r.def->type == TILE_TOGGLE) {
+  if (r.def->type == TILE_TOGGLE && !themeUsesModernLayout(s_theme)) {
     lv_obj_set_style_bg_opa(r.obj, pk.opa, 0);
     lv_obj_set_style_bg_opa(r.obj, pk.opa, LV_STATE_PRESSED);
   }
@@ -194,6 +191,7 @@ void autoTextPage(Page& p) {
 // rect with the tint and a hairline. A page render is then one image copy
 // instead of per-tile blending.
 bool bakeGlass(Page& p, const lv_area_t* only) {
+  if (themeUsesModernLayout(s_theme)) return false;
   const bool part = only && p.glass && !p.glassKey.empty();
   p.glassKey.clear();  // a partial bake must never be reused
   const lv_image_dsc_t* sharp = wallSharp();

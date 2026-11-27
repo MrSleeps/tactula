@@ -11,6 +11,9 @@ namespace deck {
 // Show the screen for this state (SCREEN_DECK hides it). Cheap when nothing
 // changed; called from every deckTick().
 void sysScreenSync(ScreenState state);
+#if defined(BOARD_IS_JC8012P4A1C)
+void sysSplashStatus(const char* status);
+#endif
 // Rebuild the screen that is up (new logical size, or a fresh OTA attempt).
 void sysScreenRelayout();
 // Firmware update screen. total 0 = size unknown.

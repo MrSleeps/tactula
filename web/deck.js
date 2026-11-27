@@ -5,6 +5,8 @@
 (function () {
   "use strict";
   const CSS = `
+.dk-gt.dk-multi-selected{outline:2px solid var(--accent);outline-offset:-2px;background:var(--accent-soft)}
+.dk-group-toolbar .btn:disabled{opacity:.5;cursor:not-allowed}
 .dk-group-membership{grid-column:1/-1;display:block;font-size:12px;color:var(--mute)}
 .dk-group-membership select{min-width:0;max-width:100%}
 .dk-gt.dk-gt-group{display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;gap:6px;overflow:hidden}
@@ -12,6 +14,7 @@
 .dk-gt-group.theme{background:color-mix(in srgb,var(--card-2) 82%,#000 18%);border:1px solid var(--line)}
 .dk-gt-group.drop-ok{outline:2px solid var(--accent);outline-offset:-2px;background:color-mix(in srgb,var(--accent-soft) 55%,var(--card-2) 45%)}
 .dk-gt-group.drop-bad{outline:2px solid var(--warn);outline-offset:-2px}
+.dk-group-move{position:absolute;top:2px;left:50%;transform:translateX(-50%);z-index:3;display:grid;place-items:center;width:30px;height:18px;border:1px solid var(--line-2);border-radius:6px;background:var(--card);color:var(--ink);font-size:16px;line-height:1;cursor:grab;touch-action:none;user-select:none}
 .dk-gt-group .dk-group-heading{font-size:12px;flex:none;text-align:left}
 .dk-group-preview{display:grid;flex:1;min-height:0;overflow:hidden;pointer-events:none}
 .dk-group-preview{pointer-events:auto}
@@ -365,14 +368,14 @@
       ) + lookOff(t, i);
     return grp("Colours", h, true) + (canOn(t) ? grp("When on", lookOn(t, i), true) : "");
   }
-  /* Tile look: background, on state and Glass opacity; Auto = the theme and Glass look settings. */
+  const cinematicTheme = () => ["6", "7", "10", "11", "12"].includes(document.getElementById("theme")?.value);
   const glassPct = (id, def) => {
     const e = document.getElementById(id);
     return e && e.value !== "" ? +e.value : def;
   };
   function opRow(t, i, k, label, gid, def, hint) {
     const set = t[k] != null,
-      v = set ? t[k] : glassPct(gid, def);
+      v = set ? t[k] : cinematicTheme() ? 100 : glassPct(gid, def);
     return (
       '<div class="field wide">' +
       lbl(label, hint) +
@@ -396,7 +399,7 @@
   }
   const themeBg = () => {
     const th = (document.getElementById("theme") || {}).value;
-    return th === "1" ? "#FFFFFF" : th === "2" ? "#101622" : "#171E2C";
+    return ({1:"#FFFFFF",2:"#101622",6:"#111D36",8:"#111D36",7:"#292B2E",9:"#292B2E",10:"#30213F",13:"#30213F",11:"#1C342D",14:"#1C342D",12:"#292D32",15:"#292D32"})[th] || "#171E2C";
   };
   function lookOff(t, i) {
     const group = t.type === "group";
@@ -420,7 +423,7 @@
         group ? "Group opacity" : canOn(t) ? "Off opacity" : "Opacity",
         "glassTint",
         10,
-        group
+        cinematicTheme() ? "How much of the tile background covers the wallpaper. 0% is transparent. Auto = 100%." : group
           ? "In Glass, controls how strongly the group background tint covers the wallpaper. Auto uses the theme's Glass setting."
           : "Glass only: how much of the background colour covers the picture. Auto text may still darken it. Auto = Glass look.",
       )
@@ -462,7 +465,8 @@
         "On opacity",
         "glassOn",
         80,
-        "Glass only: the On background fill. Below 50% the tile also gets an outline. Auto = Glass look.",
+        cinematicTheme() ? "How much of the active background covers the wallpaper. 0% is transparent. Auto = 100%." :
+          "Glass only: the On background fill. Below 50% the tile also gets an outline. Auto = Glass look.",
       )
     );
   }
@@ -480,6 +484,12 @@
       opt("icon", "Icon only", mode === "icon") +
       opt("background", "Background only", mode === "background") +
       opt("both", "Icon and background", mode === "both") +
+      "</select></div>" +
+      '<div class="field wide">' +
+      lbl("Light popup colour control", "Choose the control shown when you open the details for a colour-capable light.") +
+      '<select data-light-popup="' + i + '">' +
+      opt("hue", "Hue slider", t.lightPopup !== "presets") +
+      opt("presets", "Preset colours", t.lightPopup === "presets") +
       "</select></div>";
   }
   let bedroomIcons = [];
@@ -616,43 +626,50 @@
   // Popup heading is independent of the main tile label. Shared by Weather
   // sensors and Weather Clock, in every display theme.
   function weatherPopupTitleFields(t, i) {
-    return '<div class="field wide">' +
-      lbl('Weather popup title', 'Leave empty to use the Home Assistant friendly name. This does not rename the tile.') +
-      '<input type="text" maxlength="64" data-weather-popup-title="' + i + '" value="' +
-      esc(t.weatherPopupTitle || '') + '" placeholder="Use Home Assistant name"></div>' +
+    const hidden = t.hideWeatherPopupTitle === true;
+    return '<div class="field wide"><span class="dk-sec">Weather popup</span></div>' +
       '<div class="field">' +
-      lbl('Show title in popup', 'Hide the weather heading entirely, while leaving the weather readings and close button visible.') +
+      lbl('Popup heading', 'Choose a custom title or hide the heading completely. The close button remains visible.') +
       '<select data-weather-popup-show="' + i + '">' +
-      opt('1', 'Show', t.hideWeatherPopupTitle !== true) +
-      opt('0', 'Hide', t.hideWeatherPopupTitle === true) +
-      '</select></div>';
+      opt('1', 'Show title', !hidden) +
+      opt('0', 'No title', hidden) +
+      '</select></div>' +
+      (hidden ? '' : '<div class="field">' +
+      lbl('Popup title', 'Leave blank to use the existing tile or Home Assistant name. Does not rename the tile.') +
+      '<input type="text" maxlength="64" data-weather-popup-title="' + i + '" value="' +
+      esc(t.weatherPopupTitle || '') + '" placeholder="e.g. Hove weather"></div>');
   }
   function weatherClockRow(t, i) {
     const weatherSources = Object.keys(entMap || {}).filter(id=>domainOf(id)==='weather').sort();
     const choices = weatherSources.map(id=>'<option value="' + esc(id) + '"></option>').join('');
     return '<div class="dk-tile' + (i === sel ? ' sel' : '') +
       '"><div class="dk-ic" style="background:' + (t.color || '#EDF0F8') +
-      '">12</div><div class="dk-tmain"><b>Weather Clock</b><div class="dk-tsub">Weather · short date · large time</div></div>' +
+      '">12</div><div class="dk-tmain"><b>Weather Clock</b><div class="dk-tsub">Weather · date · large time</div></div>' +
       '<div class="dk-tact">' + sizeSel(t, i) +
       '<button type="button" class="btn' + (i === more ? ' on' : '') +
       '" data-mo="' + i + '" title="More options">&#8943;</button>' +
       '<button type="button" class="btn" data-u="' + i + '" title="Move up">&#8593;</button>' +
       '<button type="button" class="btn" data-x="' + i + '" title="Remove">&#215;</button></div>' +
       (i === more ? '<div class="dk-more">' +
-      '<div class="field wide">' + lbl('Weather source', 'Select a Home Assistant weather.* entity. Its current condition and temperature appear beside the short date.') +
+      '<div class="field wide">' + lbl('Weather source', 'Select a Home Assistant weather.* entity. The Weather Clock shows the current conditions and temperature.') +
       '<input type="text" list="dk-weather-clock-' + i + '" data-wclock-entity="' + i + '" value="' + esc(t.entity || '') +
       '" placeholder="weather.forecast_home"><datalist id="dk-weather-clock-' + i + '">' + choices + '</datalist></div>' +
+      '<div class="field wide">' + lbl('Temperature', 'Feels like uses the apparent temperature from the weather entity. The clock shows a dash if that reading is unavailable.') +
+      '<select data-wclock-temperature="' + i + '">' +
+      opt('actual','Actual temperature',t.weatherTemperature!=='apparent') +
+      opt('apparent','Feels like (apparent temperature)',t.weatherTemperature==='apparent') +
+      '</select></div>' +
+      (landscapeWidth >= 1280 ? '<div class="field wide">' +
+        lbl('Location label', 'Optional label by the weather condition on a wide Cinematic Weather Clock.') +
+        '<input type="text" data-wclock-location="' + i + '" maxlength="48" value="' +
+        esc(t.label || '') + '" placeholder="Hove"></div>' : '') +
       weatherPopupTitleFields(t, i) +
       '<div class="field wide">' + lbl('Weather icon style', 'MDI always works. Meteocons Fill and Flat use PNG packs installed on the microSD card.') +
       '<select data-wclock-pack="' + i + '">' + opt('mdi','Built-in MDI',!t.weatherIcons || t.weatherIcons==='mdi') +
       opt('meteocons-fill','Meteocons Fill',t.weatherIcons==='meteocons-fill') +
       opt('meteocons-flat','Meteocons Flat',t.weatherIcons==='meteocons-flat') +
-      opt('skycons','Skycons (animated)',t.weatherIcons==='skycons') + '</select>' +
-      '<div class="dk-row" style="margin-top:8px">' +
-      '<button type="button" class="btn" data-wclock-install="fill">Install / update Fill</button>' +
-      '<button type="button" class="btn" data-wclock-install="flat">Install / update Flat</button>' +
-      '<button type="button" class="btn" data-skycons-install>Install / update Skycons</button></div>' +
-      '<p class="field-hint" data-wclock-status>Requires microSD. Meteocons install as small PNGs; Skycons install as animated eight-frame PNG atlases.</p></div>' +
+      opt('skycons','Tactula Outline (animated)',t.weatherIcons==='skycons') + '</select>' +
+      '<p class="field-hint">Install or update weather artwork packs on the Icons page.</p></div>' +
       '<div class="field wide">' + lbl('Background', 'Standalone is transparent; Boxed uses the tile background.') +
       '<select data-clock-box="' + i + '">' + opt('0','Standalone (no box)',t.box===false) +
       opt('1','Boxed',t.box!==false) + '</select></div>' +
@@ -661,8 +678,15 @@
         colRow(t,i,'textColor','Header text colour','#EDF0F8','Colour of the weather temperature and date.') +
         lookOff(t,i),true) + whenField(t,i) + '</div>' : '') + '</div>';
   }
-  // Dedicated icon-only page navigation: no entity, label or status on
-  // the physical tile. Reuses the installed icon picker and uploaded PNGs.
+  function navLinkStyle(t, i) {
+    return '<div class="field wide">' + lbl("Link style") +
+      '<select data-nav-style="' + i + '">' +
+      opt("auto", "Theme default", !t.navStyle) +
+      opt("glass", "Glass link with chevron", t.navStyle === "glass") +
+      opt("classic", "Classic tile", t.navStyle === "classic") +
+      '</select></div>';
+  }
+  // Page navigation reuses the installed icon picker and uploaded PNGs.
   function navRow(t, i) {
     const target = (deck.pages || []).find((p) => p.id === (t.tap && t.tap.page));
     const cp = tileCp(t);
@@ -682,12 +706,15 @@
       '<button type="button" class="btn" data-x="' + i + '" title="Remove">&#215;</button></div>' +
       (i === more ?
         '<div class="dk-more"><div class="field wide">' +
+        lbl("Button label", "Leave blank for the original centred icon-only navigation tile.") +
+        '<input type="text" data-nav-label="' + i + '" value="' + esc(t.label || "") +
+        '" placeholder="Icon only"></div><div class="field wide">' +
         lbl("Destination page", "Tap this tile to navigate straight to the selected page.") +
         '<select data-nav-page="' + i + '">' +
         (deck.pages || []).filter((p) => p.type !== "metrics" && !p.printer)
           .map((p) => opt(p.id, p.name || p.id, !!t.tap && p.id === t.tap.page)).join("") +
         '</select></div>' +
-        iconFields(t, i) + whenField(t, i) + colorField(t, i) + '</div>' : "") +
+        navLinkStyle(t, i) + iconFields(t, i) + whenField(t, i) + colorField(t, i) + '</div>' : "") +
       '</div>'
     );
   }
@@ -709,7 +736,6 @@
         '<div class="field wide">' + lbl("Name (optional)") +
         '<input data-ham-label="' + i + '" value="' + esc(t.label || "") +
         '" placeholder="' + esc(en.name || "Media controls") + '"></div>' +
-        '<p class="field-hint wide">Uses the selected Home Assistant media player: Previous, Play/Pause, Next, Volume down, Stop and Volume up. At least 2×2 is recommended.</p>' +
         colorField(t, i) + whenField(t, i) + '</div>' : '') +
       '</div>';
   }
@@ -730,7 +756,12 @@
   /* A tile's "more options": sensor, action, icon, colours, on state, visibility. */
   function moreRow(t, i) {
     if (t.type === "climate")
-      return '<div class="dk-more"><p class="field-hint wide">Inline thermostat: the setpoint, plus/minus and supported HVAC modes appear directly on the page. Use a 2x2 tile (or larger) for comfortable controls. The tile uses the selected Home Assistant climate entity.</p>' +
+      return '<div class="dk-more"><div class="field wide">' +
+        lbl("Layout", "The circular dial needs room for the setpoint and controls. A tile that is too small uses the horizontal layout.") +
+        '<select data-climate-layout="' + i + '">' +
+        opt("horizontal", "Horizontal", t.climateLayout !== "circular") +
+        opt("circular", "Circular dial", t.climateLayout === "circular") +
+        '</select></div>' +
         whenField(t, i) + colorField(t, i) + "</div>";
     let h = "";
     if (t.type === "toggle") {
@@ -762,7 +793,14 @@
           opt("0", "Standalone (no box or border)", t.box === false) +
           opt("1", "Boxed (background and border)", t.box !== false) +
           '</select></div>' : "") +
-        (t.style === "weather" ? weatherPopupTitleFields(t, i) : "") +
+        (t.style === "weather" ? weatherPopupTitleFields(t, i) +
+          '<div class="field wide">' + lbl('Popup weather artwork', 'Install artwork packs from the Icons page.') +
+          '<select data-wclock-pack="' + i + '">' +
+          opt('skycons','Tactula Outline (animated)',!t.weatherIcons || t.weatherIcons==='skycons') +
+          opt('mdi','Built-in MDI',t.weatherIcons==='mdi') +
+          opt('meteocons-fill','Meteocons Fill',t.weatherIcons==='meteocons-fill') +
+          opt('meteocons-flat','Meteocons Flat',t.weatherIcons==='meteocons-flat') +
+          '</select></div>' : "") +
         '<div class="field">' +
         lbl("Show entity ID in popup", "Display the Home Assistant entity ID beneath the sensor name in its details popup.") +
         '<select data-sensor-entity="' + i + '">' +
@@ -777,6 +815,13 @@
           '">' +
           opt("", "Value", t.format !== "duration") +
           opt("duration", "Duration (s, min, h, d)", t.format === "duration") +
+          "</select></div>") +
+        (t.style === "weather" ? "" :
+          '<div class="field">' +
+          lbl("Decimals", "Auto: up to one decimal, or two for values below 1. Choose 0–3 to always show that many places.") +
+          '<select data-dp="' + i + '">' +
+          opt("", "Auto", t.decimals == null) +
+          [0, 1, 2, 3].map((n) => opt(String(n), String(n), t.decimals === n)).join("") +
           "</select></div>");
       if (t.style === "chart" && !isHttpSensor(t))
         h +=
@@ -838,7 +883,7 @@
       const holdScript = t.hold && t.hold.action === "call-service" &&
         t.hold.domain === "script" && t.hold.service === "turn_on"
           ? (t.hold.data && t.hold.data.entity_id) || "" : "";
-      const k = isHttp(t) ? "http" : isScript ? "script" : t.tap ? "keep" : "";
+      const k = isHttp(t) ? "http" : isScript ? "script" : tp.action === "page" ? "page" : t.tap ? "keep" : "";
       const kk = k;
       h +=
         '<div class="field">' +
@@ -848,9 +893,18 @@
         '">' +
         opt("", isHttpSensor(t) ? "None" : "Home Assistant entity", kk === "") +
         opt("script", "Run Home Assistant script", kk === "script") +
+        opt("page", "Open page", kk === "page") +
         opt("http", "HTTP request", kk === "http") +
         (kk === "keep" ? opt("keep", tapName(tp), true) : "") +
         "</select></div>";
+      if (kk === "page") {
+        h += '<div class="field wide">' + lbl("Destination page") +
+          '<select data-action-page="' + i + '">' +
+          (deck.pages || []).filter((p) => p.type !== "metrics" && !p.printer)
+            .map((p) => opt(p.id, p.name || p.id, p.id === tp.page)).join("") +
+          "</select></div>";
+        if (t.type === "action") h += navLinkStyle(t, i);
+      }
       if (kk === "script") {
         h += '<div class="field wide">' +
           lbl("Script on tap", "The script entity, e.g. script.turn_on_tv_and_start_netflix.") +
@@ -1161,8 +1215,8 @@
   /* "when" tiles: k names an entity condition, neg = shown while it is not met.
    pv holds the preview's answer per condition (default met); a tile it hides is laid out like an off one. */
   let pv = {};
-  const whenOf = (t) => {
-    const w = t.when;
+  const layerPreview = new WeakMap();
+  const conditionOf = (w) => {
     if (w && typeof w === "object") {
       const s = String(w.state || ""),
         n = s[0] === "!";
@@ -1170,15 +1224,21 @@
     }
     return null;
   };
+  const whenOf = (t) => conditionOf(t.when);
+  const conditionsOf = (t) => [whenOf(t), conditionOf(pages()[cur]?.layers?.find(l => l.id === t.layer)?.when)].filter(Boolean);
   const hidT = (t) => {
-    const c = whenOf(t);
-    return !!c && (pv[c.k] !== false) === c.neg;
+    const p = pages()[cur], selected = p && layerPreview.get(p);
+    if (selected && (p.layers || []).some(l=>l.id===selected)) {
+      if (t.layer && t.layer !== selected) return true;
+      const own = whenOf(t);
+      return !!own && (pv[own.k] !== false) === own.neg;
+    }
+    return conditionsOf(t).some(c => (pv[c.k] !== false) === c.neg);
   };
   function whenBar(p) {
     const ks = [];
     p.tiles.forEach((t) => {
-      const c = whenOf(t);
-      if (c && !ks.includes(c.k)) ks.push(c.k);
+      conditionsOf(t).forEach(c => { if (!ks.includes(c.k)) ks.push(c.k); });
     });
     if (!ks.length) return "";
     return (
@@ -1315,14 +1375,16 @@
   /* Grid and positions are per orientation (ori is the one being edited).
    The editor counts positions and spans in half cells (deck.json: 1.5). */
   const DEF = { landscape: [4, 3], portrait: [3, 4] };
+  let maxGridCols = 6, maxGridRows = 6;
+  let landscapeWidth = 480, landscapeHeight = 320;
   const grid = (p) => {
     const l = (p.layouts && p.layouts[ori]) || {};
     return [gi(l.cols, DEF[ori][0]), gi(l.rows, DEF[ori][1])];
   };
   const tpos = (t) => (t.pos && t.pos[ori]) || {};
   const cl = (v, a, b) => Math.min(b, Math.max(a, v == null ? a : Math.round(v)));
-  /* Like the firmware's parser: a non-integer takes the default, an integer is clamped to 1..6. */
-  const gi = (v, d) => (Number.isInteger(v) ? Math.min(6, Math.max(1, v)) : d);
+  /* Mirror firmware limits for the connected device, not the browser window. */
+  const gi = (v, d) => (Number.isInteger(v) ? Math.max(1, Math.min(Math.max(maxGridCols, maxGridRows), v)) : d);
   /* Like the firmware: a number rounds to the nearest half cell and is clamped, anything else takes the default. */
   const hv = (v, d, a, b) =>
     typeof v === "number" && isFinite(v) ? Math.min(b, Math.max(a, Math.round(v * 2))) : d;
@@ -1484,11 +1546,79 @@
       "</i></span>"
     );
   }
+  // Selection is editor-only; never persisted in the deck configuration.
+  let groupingPage = null, groupingOrientation = null, groupingMode = false;
+  const groupingSelection = new Set();
+  function resetGrouping() {
+    groupingSelection.clear();
+    groupingMode = false;
+  }
+  function toggleGroupSelection(p, k) {
+    const t = p.tiles[k];
+    if (!t || t.parent || t.type === 'group' || !layout(p)[k]) return;
+    groupingMode = true;
+    if (groupingSelection.has(t)) groupingSelection.delete(t);
+    else groupingSelection.add(t);
+    renderPage();
+  }
+  function selectedGroupPlan(p, at) {
+    const items = p.tiles.map((t,k)=>({t,a:at[k]})).filter(o=>groupingSelection.has(o.t));
+    if (items.length < 2 || items.some(o=>!o.a || o.t.parent || o.t.type === 'group')) return null;
+    const x = Math.min(...items.map(o=>o.a.x)), y = Math.min(...items.map(o=>o.a.y));
+    const w = Math.max(...items.map(o=>o.a.x+o.a.w))-x;
+    const h = Math.max(...items.map(o=>o.a.y+o.a.h))-y;
+    const bounds = {x,y,w,h};
+    if (w > 12 || h > 12 || p.tiles.some((t,k)=>at[k] && !groupingSelection.has(t) && ovl(at[k],bounds))) return null;
+    // The existing firmware uses a 6x6 inner grid. Refuse lossy conversion.
+    const slots = items.map(({t,a})=>({t,slot:{x:(a.x-x)*6/w,y:(a.y-y)*6/h,w:a.w*6/w,h:a.h*6/h}}));
+    if (slots.some(o=>Object.values(o.slot).some(n=>!Number.isInteger(n)))) return null;
+    return {bounds,slots};
+  }
+  function createSelectedGroup(p) {
+    if (p.tiles.length >= 24) { alert('The page already has the maximum of 24 tiles.'); return; }
+    const at = layout(p), plan = selectedGroupPlan(p,at);
+    if (!plan) { alert('Select at least two placed tiles in a clear rectangle with positions that fit the 6 × 6 group grid.'); return; }
+    const {x,y,w,h} = plan.bounds;
+    pinAll(p,at);
+    let id = 'group_' + Date.now().toString(36);
+    while (p.tiles.some(t=>t.id===id)) id += '_';
+    const group = {id,type:'group',flow:'custom',padding:8,gap:6,plainChildren:true};
+    setPos(group,cell(x,y,w,h));
+    plan.slots.forEach(({t,slot})=>{t.parent=id;t.slot=slot;});
+    p.tiles.push(group);
+    sel=p.tiles.length-1;
+    more=-1;
+    resetGrouping();
+    setDirty(true);
+    renderPage();
+  }
   function groupMembers(p, group) {
     return p.tiles.filter((t) => t.parent === group.id);
   }
   function releaseGroup(p, id) {
     p.tiles.forEach((t) => { if (t.parent === id) delete t.parent; });
+  }
+  function textRow(t, i) {
+    const choice = (key, name, labels, fallback) => '<label class="field"><span class="field-label">'+name+'</span><select data-text-key="'+key+'" data-text-i="'+i+'">'+labels.map((s,n)=>opt(String(n),s,Number(t[key] ?? fallback)===n)).join('')+'</select></label>';
+    return '<div class="dk-tile"><span class="dk-ic">T</span><div class="dk-tmain"><b>Text / Heading</b><div class="dk-tsub">'+esc(t.text || "")+'</div></div><div class="dk-tact">'+sizeSel(t,i)+'<button type="button" class="btn" data-x="'+i+'">×</button></div><div class="dk-more">'+
+      '<label class="field wide"><span class="field-label">Text (up to 1024 bytes)</span><textarea data-text-key="text" data-text-i="'+i+'" maxlength="1024">'+esc(t.text || "")+'</textarea></label>'+
+      choice("textSize","Size",["Small","Normal","Large","Heading"],1)+choice("textAlign","Horizontal alignment",["Left","Centre","Right"],1)+choice("textVAlign","Vertical alignment",["Top","Middle","Bottom"],1)+
+      '<label class="field"><span class="field-label">Background</span><select data-text-key="box" data-text-i="'+i+'">'+opt("true","Themed",t.box!==false)+opt("false","Transparent",t.box===false)+'</select></label>'+
+      '<label class="field"><span class="field-label">HA entity (optional)</span><input data-text-key="entity" data-text-i="'+i+'" value="'+esc(t.entity || "")+'" placeholder="sensor.example"></label>'+
+      '<p class="field-hint wide">Use {{state}} and {{unit}} to insert a Home Assistant reading. Line breaks are preserved.</p>'+whenField(t,i)+grp("Colours",lookOff(t,i),true)+'</div></div>';
+  }
+  function layerPanel(p) {
+    const ls = p.layers || [];
+    const active = layerPreview.get(p) || "";
+    return '<div class="dk-row" style="margin:8px 0"><strong>Visibility layers</strong><button type="button" class="btn" id="dkAddLayer">+ Add layer</button></div>'+
+      (ls.length ? '<div class="dk-row" style="margin:8px 0"><span class="field-label">Edit layout</span>'+
+      [['','Conditions preview'], ...ls.map(l=>[l.id,l.id])].map(([id,name])=>'<button type="button" class="chip page-tab'+(active===id?' on':'')+'" data-layer-preview="'+esc(id)+'">'+esc(name)+'</button>').join('')+'</div>' : '')+
+      ls.map((l,i)=>'<div class="dk-row" style="margin:6px 0"><b>'+esc(l.id)+'</b><input data-layer-key="entity" data-layer-i="'+i+'" placeholder="binary_sensor.printing" value="'+esc(l.when?.entity || "")+'"><input data-layer-key="state" data-layer-i="'+i+'" placeholder="on or !on" value="'+esc(l.when?.state || "")+'"><button type="button" class="btn" data-layer-delete="'+i+'">Remove</button></div>').join("")+
+      '<p class="field-hint">Assign tiles to a layer below. Opposite conditions on the same entity can share grid cells. Choose an Edit layout tab to position that layer alongside shared widgets. Conditions preview simulates actual visibility. Remove redundant individual conditions.</p>';
+  }
+  function layerMembership(p,t,i) {
+    if (!(p.layers || []).length) return "";
+    return '<label class="dk-group-membership">Visibility layer <select data-layer-member="'+i+'">'+opt("","No layer (individual conditions)",!t.layer)+p.layers.map(l=>opt(l.id,l.id,t.layer===l.id)).join("")+'</select></label>';
   }
   function groupRow(t, i) {
     const field = (label, input) => '<label class="field"><span class="field-label">' + label + '</span>' + input + '</label>';
@@ -1507,7 +1637,7 @@
       field('Spacing (pixels)', number('gap', t.gap == null ? 6 : t.gap, 24)) +
       field('Child backgrounds', select('plainChildren', [['true','Shared group background'],['false','Keep individual backgrounds']], t.plainChildren !== false)) +
       grp('Colours', lookOff(t, i), true) +
-      '<p class="field-hint" style="grid-column:1/-1">Choose this group in each tile’s “Container” field. Automatic layouts share space equally. Custom lets you position and resize each child with its Container controls. Groups cannot contain other groups. Ungroup keeps every item.</p></div></div>';
+      '<p class="field-hint" style="grid-column:1/-1">Drag tiles into this group or use their Container field. Automatic layouts share space equally. Custom lets you drag and resize each child inside the group. Groups cannot contain other groups. Ungroup keeps every item.</p></div></div>';
   }
   function groupMembership(t, i) {
     if (t.type === 'group') return '';
@@ -1540,6 +1670,7 @@
     return '<div class="dk-gt dk-gt-group ' + surface + (k === sel ? ' sel' : '') + '" data-g="' + k + '"' +
       (a ? ' style="grid-area:' + garea(a) + ';padding:' + cl(t.padding == null ? 8 : t.padding,0,24) +
         'px' + (previewColor && surface !== 'transparent' ? ';background:color-mix(in srgb,' + previewColor + ' 80%,#000 20%)' : '') + '"' : '') + '>' +
+      '<span class="dk-group-move" title="Drag to move entire group" aria-label="Drag to move entire group">⠿</span>' +
       (t.label ? '<b class="dk-group-heading">' + esc(t.label) + '</b>' : '') +
       '<div class="dk-group-preview' + (custom ? ' custom' : '') + '" style="grid-template-columns:repeat(' + cols + ',minmax(0,1fr));grid-template-rows:repeat(' + rows + ',minmax(0,1fr));gap:' + cl(t.gap == null ? 6 : t.gap,0,24) + 'px">' +
       members.map((child,index)=>{
@@ -1555,11 +1686,12 @@
           esc(child.label || (child.type === 'weather-clock' ? 'Weather Clock' : child.type === 'clock' ? 'Clock' : (entMap[child.entity] || {}).name || child.entity || child.type)) +
           (custom ? '<span class="dk-child-rs" data-child-rs="' + i + '"></span>' : '') + '</span>';
       }).join('') +
-      (!members.length ? '<span class="dk-group-item">Assign tiles using Container</span>' : '') + '</div>' +
+      (!members.length ? '<span class="dk-group-item">Drag tiles here</span>' : '') + '</div>' +
       (a ? '<span class="dk-rs" data-rs="' + k + '"></span>' : '') + '</div>';
   }
   function gtile(t, k, a) {
     if (t.type === 'group') return groupPreview(t, k, a);
+    if (t.type === 'text') return '<div class="dk-gt'+(k===sel?' sel':'')+'" data-g="'+k+'"'+(a?' style="grid-area:'+garea(a)+';white-space:pre-wrap;justify-content:center;text-align:'+['left','center','right'][t.textAlign ?? 1]+'"':'')+'>'+esc(t.text || 'Text')+(a?'<span class="dk-rs" data-rs="'+k+'"></span>':'')+'</div>';
     const en = entMap[t.entity], d = domainOf(t.entity);
     const ck = t.type === "clock" || t.type === "weather-clock";
     const col = t.color || (ck ? "#EDF0F8" : COL[d] || "#48A5FF");
@@ -1579,7 +1711,7 @@
         (a ? '<span class="dk-rs" data-rs="' + k + '"></span>' : '') +
         '</div>';
     }
-    if (t.type === "nav") {
+    if (t.type === "nav" && (!t.label || t.hideName)) {
       return '<div class="dk-gt dk-gt-nav' + (k === sel ? " sel" : "") +
         '" data-g="' + k + '"' +
         (a ? ' style="grid-area:' + (a.y + 1) + "/" + (a.x + 1) +
@@ -1775,6 +1907,13 @@
    tile's old place (swapPlan, shown live); the corner handle resizes. A press without movement selects the tile. */
   function gdrag(e, p, at, k, size) {
     if (e.button > 0) return;
+    if (!size && (groupingMode || e.ctrlKey || e.metaKey || e.shiftKey)) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleGroupSelection(p,k);
+      return;
+    }
+    if (groupingMode) return;
     e.preventDefault();
     e.stopPropagation();
     const n = e.currentTarget,
@@ -1813,7 +1952,7 @@
       clearHover();
       // The group owns its outer grid cells. Accepting a child there is not
       // an outer-grid collision; show group-specific feedback instead.
-      if (!size) {
+      if (!size && p.tiles[k].type !== 'group') {
         const groupNode = [...g.querySelectorAll('.dk-gt-group')].find(node =>
           insideRect(ev,node.getBoundingClientRect()));
         if (groupNode) {
@@ -1877,7 +2016,7 @@
         selectTile(k);
         return;
       }
-      if (ev.type === "pointerup" && !size) {
+      if (ev.type === "pointerup" && !size && p.tiles[k].type !== 'group') {
         const drop = groupDropSlot(ev,p,k,at);
         if (drop) {
           pinAll(p,at);
@@ -1998,6 +2137,12 @@
       return;
     }
     const p = ps[cur];
+    if (groupingPage !== p || groupingOrientation !== ori) {
+      resetGrouping();
+      groupingPage = p;
+      groupingOrientation = ori;
+    }
+    for (const t of groupingSelection) if (!p.tiles.includes(t) || t.parent) groupingSelection.delete(t);
     const [c, r] = grid(p),
       land = ori === "landscape",
       at = layout(p),
@@ -2024,16 +2169,16 @@
         )
         .join("") +
       "</div>" +
-      whenBar(p);
+      whenBar(p) + layerPanel(p);
     h +=
       '<div class="grid-2 dk-phead"><div class="field"><label class="field-label">Page name</label><input type="text" id="dkPName" value="' +
       esc(p.name || "") +
       '"></div><div class="field"><label class="field-label">Grid (columns x rows)</label><div class="dk-row"><select id="dkPCols" style="width:auto">' +
-      (land ? [2, 3, 4, 5, 6] : [2, 3, 4])
+      Array.from({length: land ? maxGridCols - 1 : Math.min(4, maxGridRows) - 1}, (_, i) => i + 2)
         .map((n) => "<option" + (n === c ? " selected" : "") + ">" + n + "</option>")
         .join("") +
       '</select><span>x</span><select id="dkPRows" style="width:auto">' +
-      (land ? [2, 3, 4] : [2, 3, 4, 5, 6])
+      Array.from({length: land ? (maxGridCols > 6 ? maxGridRows : 4) - 1 : maxGridRows - 1}, (_, i) => i + 2)
         .map((n) => "<option" + (n === r ? " selected" : "") + ">" + n + "</option>")
         .join("") +
       '</select><button type="button" class="btn" id="dkPLeft" style="margin-left:auto">Move left</button><button type="button" class="btn" id="dkPRight">Move right</button><button type="button" class="btn" id="dkPDup">Duplicate</button><button type="button" class="btn btn-danger" id="dkPDel">Delete page</button></div></div></div>';
@@ -2048,6 +2193,13 @@
     // Large screens keep the page preview alongside the editable tile list.
     // At smaller widths the same sections stack in their original order.
     h += '<div class="dk-split"><div class="dk-left">';
+    h += '<div class="dk-row dk-group-toolbar" style="margin-bottom:8px">' +
+      '<button type="button" class="btn' + (groupingMode ? ' btn-accent' : '') + '" id="dkGroupSelect" aria-pressed="' + groupingMode + '">' +
+      (groupingMode ? 'Cancel selection' : 'Select tiles') + '</button>' +
+      (groupingMode ? '<span class="dk-tsub">' + groupingSelection.size + ' selected</span><button type="button" class="btn btn-accent" id="dkGroupCreate"' +
+      (selectedGroupPlan(p,at) && p.tiles.length < 24 ? '' : ' disabled') + '>Create group</button><button type="button" class="btn" id="dkGroupClear">Clear</button>' : '') +
+      '</div>';
+    if (groupingMode) h += '<p class="field-hint">Tap tiles to select them. Choose a clear rectangle that fits the internal 6 × 6 grid. Ctrl/Shift-click also selects tiles.</p>';
     let g = "";
     for (let y = 0; y < r; y++)
       for (let x = 0; x < c; x++)
@@ -2066,9 +2218,9 @@
       ",minmax(0,1fr));grid-template-rows:repeat(" +
       2 * r +
       ",minmax(0,1fr));aspect-ratio:" +
-      (land ? 480 : 320) +
+      (land ? landscapeWidth : landscapeHeight) +
       "/" +
-      ((land ? 320 : 480) - hd) +
+      ((land ? landscapeHeight : landscapeWidth) - hd) +
       '">' +
       g +
       p.tiles.map((t, k) => (at[k] ? gtile(t, k, at[k]) : "")).join("") +
@@ -2089,6 +2241,7 @@
       '</div><div class="dk-right"><div class="dk-tiles">' +
       p.tiles
         .map((t, i) => {
+          if (t.type === "text") return textRow(t, i);
           if (t.type === "group") return groupRow(t, i);
           if (t.type === "bambu") return bambuRow(t, i);
           if (t.type === "clock") return clockRow(t, i);
@@ -2168,7 +2321,7 @@
         .map((html, i) => {
           html = html.replace('<div class="dk-tile', '<div data-tile-row="' + i + '" class="dk-tile');
           const end = html.lastIndexOf('</div>');
-          return html.slice(0, end) + groupMembership(p.tiles[i], i) + html.slice(end);
+          return html.slice(0, end) + groupMembership(p.tiles[i], i) + layerMembership(p,p.tiles[i],i) + html.slice(end);
         })
         .join("") +
       "</div>";
@@ -2177,11 +2330,68 @@
       +cells.toFixed(2) +
       " of " +
       c * r +
-      ' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddClimate">+ Add climate controls</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddHaMedia">+ Add media controls</button><button type="button" class="btn" id="dkAddClock">+ Add clock</button><button type="button" class="btn" id="dkAddWeatherClock">+ Weather clock</button><button type="button" class="btn" id="dkAddGroup">+ Add group</button><button type="button" class="btn" id="dkAddNav">+ Add navigation</button><button type="button" class="btn" id="dkAddTemperature">+ Add temperature</button><button type="button" class="btn" id="dkAddWeather">+ Add weather</button><button type="button" class="btn" id="dkAddHttpSensor">+ Add HTTP sensor</button>' +
+      ' cells used</p><div class="dk-row" style="margin-top:12px"><button type="button" class="btn btn-accent" id="dkAddTile">+ Add tile from Home Assistant</button><button type="button" class="btn" id="dkAddClimate">+ Add climate controls</button><button type="button" class="btn" id="dkAddHttp">+ Add HTTP button</button><button type="button" class="btn" id="dkAddHaMedia">+ Add media controls</button><button type="button" class="btn" id="dkAddClock">+ Add clock</button><button type="button" class="btn" id="dkAddWeatherClock">+ Weather clock</button><button type="button" class="btn" id="dkAddGroup">+ Add group</button><button type="button" class="btn" id="dkAddText">+ Add text / heading</button><button type="button" class="btn" id="dkAddAction">+ Add action</button><button type="button" class="btn" id="dkAddNav">+ Add navigation</button><button type="button" class="btn" id="dkAddTemperature">+ Add temperature</button><button type="button" class="btn" id="dkAddWeather">+ Add weather</button><button type="button" class="btn" id="dkAddHttpSensor">+ Add HTTP sensor</button>' +
       (bambuAvailable ? '<button type="button" class="btn" id="dkAddBambu">+ Add Bambu widget</button>' : '') +
       "</div>" +
       '<p class="field-hint">Chart and Bar need a wide tile (2x1 on most grids, a 2x0.5 one fits them in a row between the name and the number, a narrower one shows the number), so picking one makes a 1x1 tile 2x1.</p></div></div>';
     el.innerHTML = h;
+    el.querySelectorAll("[data-layer-preview]").forEach(x=>x.onclick=()=>{
+      const id=x.dataset.layerPreview;
+      if(id) {
+        layerPreview.set(p,id);
+        const l=(p.layers || []).find(l=>l.id===id), cond=conditionOf(l?.when);
+        if(cond) pv[cond.k]=!cond.neg;
+      } else layerPreview.delete(p);
+      renderPage();
+    });
+    $("dkAddText").onclick = () => {
+      if (p.tiles.length >= 24) return alert("Maximum 24 tiles per page.");
+      const t = {id:"text_"+Date.now().toString(36),type:"text",text:"No active print",textSize:2,textAlign:1,textVAlign:1};
+      const layer=layerPreview.get(p); if(layer && (p.layers || []).some(l=>l.id===layer)) t.layer=layer;
+      setSize(t,"2x1"); p.tiles.push(t); sel=p.tiles.length-1; setDirty(true); renderPage();
+    };
+    $("dkAddLayer").onclick = () => {
+      const id = prompt("Visibility layer name");
+      if (!id || !id.trim() || id.trim().length > 48) return;
+      p.layers ||= [];
+      if (p.layers.length >= 12 || p.layers.some(l=>l.id===id.trim())) return alert("Duplicate name or maximum 12 layers.");
+      p.layers.push({id:id.trim(),when:{entity:"",state:"on"}}); setDirty(true); renderPage();
+    };
+    el.querySelectorAll("[data-layer-key]").forEach(x=>x.onchange=()=>{
+      p.layers[+x.dataset.layerI].when[x.dataset.layerKey]=x.value.trim();setDirty(true);renderPage();
+    });
+    el.querySelectorAll("[data-layer-delete]").forEach(x=>x.onclick=()=>{
+      const l=p.layers[+x.dataset.layerDelete];
+      if (!confirm("Remove layer "+l.id+"? Its widgets will remain.")) return;
+      p.tiles.forEach(t=>{if(t.layer===l.id) delete t.layer;});
+      if(layerPreview.get(p)===l.id) layerPreview.delete(p);
+      p.layers.splice(+x.dataset.layerDelete,1);setDirty(true);renderPage();
+    });
+    el.querySelectorAll("[data-layer-member]").forEach(x=>x.onchange=()=>{
+      const t=p.tiles[+x.dataset.layerMember]; if(x.value)t.layer=x.value;else delete t.layer;
+      setDirty(true);renderPage();
+    });
+    el.querySelectorAll("[data-text-key]").forEach(x=>x.onchange=()=>{
+      const t=p.tiles[+x.dataset.textI],k=x.dataset.textKey;
+      t[k]=k==="box"?x.value==="true":k==="text"||k==="entity"?x.value:Number(x.value);
+      setDirty(true);renderPage();
+    });
+    $("dkGroupSelect").onclick = () => {
+      if (groupingMode) resetGrouping(); else groupingMode = true;
+      renderPage();
+    };
+    if ($("dkGroupCreate")) $("dkGroupCreate").onclick = () => createSelectedGroup(p);
+    if ($("dkGroupClear")) $("dkGroupClear").onclick = () => { groupingSelection.clear(); renderPage(); };
+    el.querySelectorAll('#dkGrid [data-g]').forEach(node=>{
+      const t=p.tiles[+node.dataset.g];
+      if (groupingSelection.has(t)) node.classList.add('dk-multi-selected');
+      if (groupingMode && !t.parent && t.type !== 'group') {
+        node.setAttribute('role','button');
+        node.setAttribute('tabindex','0');
+        node.setAttribute('aria-pressed',String(groupingSelection.has(t)));
+        node.onkeydown = e=>{if(e.key===' ' || e.key==='Enter'){e.preventDefault();toggleGroupSelection(p,+node.dataset.g);}};
+      }
+    });
     // Upstream TouchDeck: clicking unused space in a tile's editor row
     // selects that tile in the preview, without stealing input/control clicks.
     el.querySelectorAll("[data-tile-row]").forEach((row) => {
@@ -2412,6 +2622,14 @@
         setDirty(true);
       };
     });
+    el.querySelectorAll("[data-climate-layout]").forEach((x) => {
+      x.onchange = () => {
+        const tile = p.tiles[+x.dataset.climateLayout];
+        if (x.value === "circular") tile.climateLayout = x.value;
+        else delete tile.climateLayout;
+        setDirty(true);
+      };
+    });
     el.querySelectorAll("[data-clock-box]").forEach((x) => {
       x.onchange = () => {
         p.tiles[+x.dataset.clockBox].box = x.value === "1";
@@ -2511,6 +2729,14 @@
         renderPage();
       };
     });
+    el.querySelectorAll("[data-light-popup]").forEach((select) => {
+      select.onchange = () => {
+        const tile = p.tiles[+select.dataset.lightPopup];
+        if (select.value === "presets") tile.lightPopup = "presets";
+        else delete tile.lightPopup;
+        setDirty(true);
+      };
+    });
     el.querySelectorAll("[data-is]").forEach(
       (x) =>
         (x.onchange = (e) => {
@@ -2527,6 +2753,15 @@
           const t = p.tiles[+x.dataset.fm];
           if (e.target.value) t.format = e.target.value;
           else delete t.format;
+          setDirty(true);
+        }),
+    );
+    el.querySelectorAll("[data-dp]").forEach(
+      (x) =>
+        (x.onchange = (e) => {
+          const t = p.tiles[+x.dataset.dp];
+          if (e.target.value !== "") t.decimals = +e.target.value;
+          else delete t.decimals;
           setDirty(true);
         }),
     );
@@ -2716,6 +2951,15 @@
       setDirty(true);
       renderPage();
     };
+    el.querySelectorAll('[data-wclock-location]').forEach((x) => {
+      x.onchange = () => {
+        const tile = p.tiles[+x.dataset.wclockLocation];
+        const label = x.value.trim();
+        if (label) tile.label = label;
+        else delete tile.label;
+        setDirty(true);
+      };
+    });
     el.querySelectorAll('[data-wclock-entity]').forEach(x=>{
       x.onchange = () => {
         const value=x.value.trim();
@@ -2729,29 +2973,6 @@
         renderPage();
       };
     });
-    // Install weather icon packs through the existing validated microSD PNG API.
-    // Browser-side conversion keeps SVG parsing and animation off the ESP32.
-    const WEATHER_SVGS = ['clear-day','clear-night','partly-cloudy-day','partly-cloudy-night',
-      'cloudy','fog','hail','rain','thunderstorms','snow','wind'];
-    async function weatherPng(style, slug) {
-      const url='https://cdn.meteocons.com/latest/svg-static/'+style+'/'+slug+'.svg';
-      const response=await fetch(url);
-      if (!response.ok) throw new Error('Meteocons '+slug+': HTTP '+response.status);
-      const svg=await response.blob();
-      if (svg.size>250000 || !((svg.type||'').includes('svg') || svg.type==='text/plain'))
-        throw new Error('Unexpected Meteocons SVG '+slug);
-      const objectUrl=URL.createObjectURL(svg);
-      try {
-        const img=new Image();
-        await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(new Error('Could not decode '+slug));img.src=objectUrl;});
-        const canvas=document.createElement('canvas');
-        canvas.width=canvas.height=64;
-        const ctx=canvas.getContext('2d');
-        if (!ctx) throw new Error('Canvas unavailable');
-        ctx.drawImage(img,0,0,64,64);
-        return await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('Could not convert '+slug)),'image/png'));
-      } finally { URL.revokeObjectURL(objectUrl); }
-    }
     el.querySelectorAll('[data-bambu-ams-unit]').forEach(x=>{
       x.onchange=()=>{
         const tile=p.tiles[+x.dataset.bambuAmsUnit];
@@ -2770,92 +2991,30 @@
         renderPage();
       };
     });
+    el.querySelectorAll('[data-wclock-temperature]').forEach(x=>{
+      x.onchange=()=>{
+        const tile=p.tiles[+x.dataset.wclockTemperature];
+        if (x.value==='apparent') tile.weatherTemperature=x.value;
+        else delete tile.weatherTemperature;
+        setDirty(true);
+      };
+    });
     el.querySelectorAll('[data-wclock-pack]').forEach(x=>{
       x.onchange=()=>{p.tiles[+x.dataset.wclockPack].weatherIcons=x.value;setDirty(true);renderPage();};
-    });
-    el.querySelectorAll('[data-wclock-install]').forEach(x=>{
-      x.onclick=async()=>{
-        const style=x.dataset.wclockInstall;
-        const status=x.closest('.field').querySelector('[data-wclock-status]');
-        const buttons=[...el.querySelectorAll('[data-wclock-install]')];
-        buttons.forEach(b=>b.disabled=true);
-        try {
-          const check=await api('/api/bedroom/icons');
-          if (!check.mounted) throw new Error('Insert or mount the microSD card first.');
-          for(let i=0;i<WEATHER_SVGS.length;i++){
-            const slug=WEATHER_SVGS[i];
-            status.textContent='Installing '+style+' '+(i+1)+'/'+WEATHER_SVGS.length+': '+slug;
-            const png=await weatherPng(style,slug);
-            const name='wc_'+style+'_'+slug.replace(/-/g,'_')+'_off.png';
-            const fd=new FormData();
-            fd.append('icon',png,name);
-            await api('/api/bedroom/icons/upload?n='+encodeURIComponent(name),{method:'POST',body:fd});
-          }
-          status.textContent='Meteocons '+style+' installed ('+WEATHER_SVGS.length+' icons).';
-        }catch(e){status.textContent='Install failed: '+e.message;}
-        finally {buttons.forEach(b=>b.disabled=false);}
-      };
-    });
-    const SKYCONS_STATES = ['clear-day','clear-night','partly-cloudy-day','partly-cloudy-night',
-      'cloudy','rain','sleet','snow','wind','fog'];
-    // Load the original public-domain Skycons source only at install time.
-    let skyconsLoader = null;
-    function loadSkycons() {
-      if (window.Skycons) return Promise.resolve(window.Skycons);
-      if (!skyconsLoader) skyconsLoader = new Promise((resolve,reject)=>{
-        const script=document.createElement('script');
-        script.src='https://cdn.jsdelivr.net/gh/darkskyapp/skycons@a869a208b16ee8e9d54eb8daf0ea6a6a235df201/skycons.js';
-        script.onload=()=>window.Skycons ? resolve(window.Skycons) : reject(new Error('Skycons script did not load'));
-        script.onerror=()=>reject(new Error('Could not download Skycons'));
-        document.head.appendChild(script);
-      });
-      return skyconsLoader;
-    }
-    async function skyconsAtlas(Skycons,slug) {
-      const key=slug.toUpperCase().replace(/-/g,'_');
-      const draw=Skycons[key];
-      if (typeof draw!=='function') throw new Error('Unknown Skycons condition '+slug);
-      const frame=document.createElement('canvas');frame.width=frame.height=64;
-      const ctx=frame.getContext('2d');
-      const atlas=document.createElement('canvas');atlas.width=512;atlas.height=64;
-      const output=atlas.getContext('2d');
-      if(!ctx||!output) throw new Error('Canvas unavailable');
-      for(let i=0;i<8;i++){
-        ctx.clearRect(0,0,64,64);
-        draw(ctx,i*1500,'#FFFFFF');
-        output.drawImage(frame,i*64,0);
-      }
-      const blob=await new Promise((resolve,reject)=>
-        atlas.toBlob(x=>x?resolve(x):reject(new Error('PNG conversion failed')),'image/png'));
-      if (blob.size>512*1024) throw new Error('Sprite PNG exceeds 512 KB');
-      return blob;
-    }
-    el.querySelectorAll('[data-skycons-install]').forEach(button=>{
-      button.onclick=async()=>{
-        const status=button.closest('.field').querySelector('[data-wclock-status]');
-        button.disabled=true;
-        try {
-          const check=await api('/api/bedroom/icons');
-          if(!check.mounted) throw new Error('Insert or mount the microSD card first.');
-          const Skycons=await loadSkycons();
-          for(let i=0;i<SKYCONS_STATES.length;i++){
-            const slug=SKYCONS_STATES[i];
-            status.textContent='Installing animated Skycons '+(i+1)+'/'+SKYCONS_STATES.length+': '+slug;
-            const png=await skyconsAtlas(Skycons,slug);
-            const name='wc_sky_'+slug.replace(/-/g,'_')+'_off.png';
-            const form=new FormData();
-            form.append('icon',png,name);
-            await api('/api/bedroom/icons/upload?n='+encodeURIComponent(name),{method:'POST',body:form});
-          }
-          status.textContent='Animated Skycons installed ('+SKYCONS_STATES.length+' icons).';
-        }catch(e){status.textContent='Skycons installation failed: '+e.message;}
-        finally {button.disabled=false;}
-      };
     });
     $("dkAddClock").onclick = () => {
       const t = { id: "k" + Date.now().toString(36), type: "clock", box: false };
       setSize(t, "2x1");
       p.tiles.push(t);
+      setDirty(true);
+      renderPage();
+    };
+    $("dkAddAction").onclick = () => {
+      const t = { id: "a" + Date.now().toString(36), type: "action",
+                  label: "Action", icon: "mdi:gesture-tap-button", iconStyle: "plain" };
+      setSize(t, "1x1");
+      p.tiles.push(t);
+      more = p.tiles.length - 1;
       setDirty(true);
       renderPage();
     };
@@ -2866,7 +3025,8 @@
         return;
       }
       const t = { id: "nav" + Date.now().toString(36),
-                  type: "nav", icon: "mdi:arrow-right-circle-outline", iconStyle: "plain",
+                  type: "nav", label: target.name || target.id,
+                  icon: "mdi:arrow-right-circle-outline", iconStyle: "plain",
                   tap: { action: "page", page: target.id } };
       setSize(t, "1x1");
       p.tiles.push(t);
@@ -2950,6 +3110,27 @@
         setDirty(true);
       };
     });
+    el.querySelectorAll("[data-action-page]").forEach((x) => {
+      x.onchange = () => {
+        p.tiles[+x.dataset.actionPage].tap = { action: "page", page: x.value };
+        setDirty(true);
+      };
+    });
+    el.querySelectorAll("[data-nav-style]").forEach((x) => {
+      x.onchange = () => {
+        const tile = p.tiles[+x.dataset.navStyle];
+        if (x.value === "auto") delete tile.navStyle;
+        else tile.navStyle = x.value;
+        setDirty(true);
+      };
+    });
+    el.querySelectorAll("[data-nav-label]").forEach((x) => {
+      x.onchange = () => {
+        p.tiles[+x.dataset.navLabel].label = x.value.trim();
+        setDirty(true);
+        renderPage();
+      };
+    });
     el.querySelectorAll("[data-nav-page]").forEach((x) => {
       x.onchange = () => {
         p.tiles[+x.dataset.navPage].tap = { action: "page", page: x.value };
@@ -2998,6 +3179,11 @@
           if (v === "script") t.tap = { action: "call-service", domain: "script", service: "turn_on",
                                           data: { entity_id: "" } };
           else if (v === "http") t.tap = { action: "http", method: "GET", url: "http://" };
+          else if (v === "page") {
+            const dest = (deck.pages || []).find((pg) => pg.type !== "metrics" && !pg.printer && pg.id !== p.id);
+            if (dest) t.tap = { action: "page", page: dest.id };
+            else { alert("Add a second page before using page navigation."); return; }
+          }
           else delete t.tap;
           setDirty(true);
           renderPage();
@@ -3112,7 +3298,11 @@
   /* entity picker */
   let mediaEditIndex = -1;
   function setList(r) {
-    ents = (r.entities || []).slice().sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    if (!r || !Array.isArray(r.entities) ||
+        (typeof r.count === "number" && r.count !== r.entities.length) ||
+        r.entities.some(e => !e || typeof e.id !== "string" || !e.id))
+      throw new Error("The device returned an incomplete or invalid entity catalogue");
+    ents = r.entities.slice().sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     entMap = {};
     ents.forEach((e) => (entMap[e.id] = e));
     $("dkListInfo").textContent = r.updated
@@ -3132,8 +3322,14 @@
         renderPage();
       }
     } catch (e) {
-      $("dkEnts").innerHTML =
-        '<p class="dk-empty">' + esc(e.message) + "<br>Check the Home Assistant settings above.</p>";
+      if (ents) {
+        renderEnts();
+        $("dkEnts").insertAdjacentHTML("afterbegin",
+          '<p class="dk-empty">' + esc(e.message) + "<br>Showing the previous entity list.</p>");
+      } else {
+        $("dkEnts").innerHTML =
+          '<p class="dk-empty">' + esc(e.message) + "<br>Try Update from HA again.</p>";
+      }
       throw e;
     } finally {
       $("dkListUpdate").disabled = false;
@@ -4127,26 +4323,14 @@
   });
 
   (async function init() {
-    haStatus();
-    icRefresh();
-    brRefresh();
-    try {
-      const listing = await api("/api/bedroom/icons");
-      if (!bedroomIconsFromGallery) {
-        bedroomIcons = [...new Set((listing.files || []).map((f) => f.name).filter(Boolean))].sort();
-        bedroomIconsMounted = !!listing.mounted;
-      }
-    } catch (e) {}
-    setInterval(() => {
-      if (visible()) {
-        haStatus();
-      }
-    }, 3000);
-    try { const cfg = await api("/api/config"); bambuAvailable = cfg.bambu_available === true; if (cfg.display) ori = cfg.display.rotation % 2 ? "landscape" : "portrait"; } catch (e) {}
-
-    ori = ori || "landscape";
     try {
       const r = await api("/api/deck");
+      maxGridCols = Number(r.grid_max_cols) || 6;
+      maxGridRows = Number(r.grid_max_rows) || 6;
+      landscapeWidth = Number(r.display_landscape_width) || 480;
+      landscapeHeight = Number(r.display_landscape_height) || 320;
+      bambuAvailable = r.bambu_available === true;
+      ori = r.rotation != null && r.rotation % 2 === 0 ? "portrait" : "landscape";
       deck = r.deck;
       // The GET endpoint reads the saved file, which may differ from what the
       // firmware loaded at boot. Make that discrepancy obvious before editing.
@@ -4171,9 +4355,21 @@
     } catch (e) {
       $("dkPage").innerHTML = '<p class="dk-empty">' + esc(e.message) + "</p>";
     }
+    haStatus();
+    icRefresh();
+    brRefresh();
     try {
-      await loadEnts();
+      const listing = await api("/api/bedroom/icons");
+      if (!bedroomIconsFromGallery) {
+        bedroomIcons = [...new Set((listing.files || []).map((f) => f.name).filter(Boolean))].sort();
+        bedroomIconsMounted = !!listing.mounted;
+      }
     } catch (e) {}
+    setInterval(() => {
+      if (visible()) haStatus();
+    }, 3000);
+    // Do not download the full entity catalogue on portal startup.
+    // openPicker() loads it on demand; Update from HA explicitly refreshes it.
   })();
 })();
 

@@ -10,9 +10,24 @@ namespace deckui {
 // tile (that one moves to its old place, edCheck), resize it from the corner,
 // remove it with x. Done writes the page's positions into the stored
 // deck.json; Cancel drops them.
-constexpr int ED_BAR_H = 48;
-constexpr int ED_PAD = 8;
-constexpr int ED_GAP = 7;
+int ED_BAR_H = 48;
+int ED_PAD = 8;
+int ED_GAP = 7;
+bool edLarge() { return std::min(logicalW(), logicalH()) >= 800; }
+const lv_font_t* edFont() { return edLarge() ? &deck_font_20 : &deck_font_14; }
+lv_obj_t* edButton(lv_obj_t* parent, int x, int y, int w, const char* text, bool primary = false) {
+  auto* b = qpButton(parent, x, y, w, text, false);
+  lv_obj_set_height(b, edLarge() ? 48 : 36);
+  lv_obj_set_style_pad_all(b, 0, 0);
+  lv_obj_set_style_radius(b, edLarge() ? 12 : 9, 0);
+  lv_obj_set_style_text_font(b, edFont(), 0);
+  lv_obj_set_style_text_font(lv_obj_get_child(b, 0), edFont(), 0);
+  if (primary) {
+    lv_obj_set_style_bg_color(b, lv_color_hex(C_OK), 0);
+    lv_obj_set_style_text_color(b, lv_color_hex(C_TEXT_ON), 0);
+  }
+  return b;
+}
 constexpr int ED_SLOP = 6;
 constexpr uint32_t C_ED_OK = 0x927DFF;
 constexpr uint32_t C_ED_BAD = 0xE5534B;
@@ -541,9 +556,10 @@ void pickOpen(int dom) {
   s_pickInfo = lv_label_create(s_pick);
   lv_obj_set_style_text_color(s_pickInfo, lv_color_hex(C_DIM), 0);
   lv_label_set_long_mode(s_pickInfo, LV_LABEL_LONG_MODE_DOTS);
-  lv_obj_set_width(s_pickInfo, w - 140 - 96);
+  lv_obj_set_width(s_pickInfo, w - 140 - 120);
   lv_obj_set_pos(s_pickInfo, 140, 17);
-  lv_obj_t* close = qpButton(s_pick, w - 84 - 8, 4, 84, "Close", false);
+  lv_obj_set_style_text_font(s_pick, edFont(), 0);
+  lv_obj_t* close = edButton(s_pick, w - 100 - 8, 4, 100, "Close");
   lv_obj_add_event_cb(close, pickCloseEvent, LV_EVENT_CLICKED, nullptr);
 
   // Domain chips: one row that scrolls sideways.
@@ -558,6 +574,8 @@ void pickOpen(int dom) {
   lv_obj_set_scrollbar_mode(chips, LV_SCROLLBAR_MODE_OFF);
   for (int i = 0; i < PICK_DOMAINS; i++) {
     lv_obj_t* c = qpButton(chips, 0, 0, LV_SIZE_CONTENT, kPickDomains[i].label, false);
+    lv_obj_set_style_text_font(c, &deck_font_14, 0);
+    lv_obj_set_style_text_font(lv_obj_get_child(c, 0), &deck_font_14, 0);
     lv_obj_set_height(c, 34);
     lv_obj_set_style_pad_hor(c, 12, 0);
     lv_obj_add_event_cb(c, pickChipEvent, LV_EVENT_CLICKED, (void*)(uintptr_t)i);
@@ -608,21 +626,23 @@ void edMakeBox(int k, const TileDef& d) {
   edPlace(b, c);
   // Half-cell boxes: a smaller x and grip, so part of the box is left to drag.
   const bool small = c.w * s_ed.cw < 70 || c.h * s_ed.ch < 50;
-  const int xs = small ? 20 : 30, gs = small ? 22 : 34;
+  const int xs = small ? 20 : edLarge() ? 36 : 26, gs = small ? 22 : edLarge() ? 44 : 30;
 
   lv_obj_t* name = lv_label_create(b);
   lv_label_set_text(name, edTileName(d).c_str());
   lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
   // Full width, mid height: below the x and above the grip.
   lv_obj_set_width(name, lv_pct(100));
-  if (small) lv_obj_set_style_text_font(name, &deck_font_12, 0);
-  lv_obj_set_style_max_height(name, small ? lineH(&deck_font_12) : 2 * lineH(&deck_font_14), 0);
+  const lv_font_t* nameFont = small ? &deck_font_12 : edFont();
+  lv_obj_set_style_text_font(name, nameFont, 0);
+  lv_obj_set_style_max_height(name, lineH(nameFont), 0);
   lv_obj_align(name, LV_ALIGN_LEFT_MID, 0, small ? 0 : 6);
 
   lv_obj_t* x = lv_obj_create(b);
   lv_obj_remove_style_all(x);
   lv_obj_set_size(x, xs, xs);
-  lv_obj_align(x, LV_ALIGN_TOP_RIGHT, 8, -8);
+  lv_obj_align(x, LV_ALIGN_TOP_RIGHT, 3, -3);
+  lv_obj_add_flag(x, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_style_radius(x, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_style_bg_color(x, lv_color_hex(0x3A2226), 0);
   lv_obj_set_style_bg_opa(x, LV_OPA_COVER, 0);
@@ -630,14 +650,18 @@ void edMakeBox(int k, const TileDef& d) {
   lv_obj_t* xl = lv_label_create(x);
   lv_label_set_text(xl, LV_SYMBOL_CLOSE);
   lv_obj_set_style_text_color(xl, lv_color_hex(C_ED_BAD), 0);
+  lv_obj_set_style_text_font(xl, small ? &deck_font_12 : &deck_font_14, 0);
   lv_obj_center(xl);
 
   // Resize grip: an L-shaped corner mark with a finger-sized hit area.
   lv_obj_t* g = lv_obj_create(b);
   lv_obj_remove_style_all(g);
   lv_obj_set_size(g, gs, gs);
-  lv_obj_align(g, LV_ALIGN_BOTTOM_RIGHT, 8, 8);
-  lv_obj_add_flag(g, LV_OBJ_FLAG_PRESS_LOCK);
+  lv_obj_align(g, LV_ALIGN_BOTTOM_RIGHT, 3, 3);
+  lv_obj_add_flag(g, (lv_obj_flag_t)(LV_OBJ_FLAG_PRESS_LOCK | LV_OBJ_FLAG_CLICKABLE));
+  lv_obj_set_style_bg_color(g, lv_color_hex(C_CHIP), 0);
+  lv_obj_set_style_bg_opa(g, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(g, 8, 0);
   for (int i = 0; i < 2; i++) {
     lv_obj_t* bar = lv_obj_create(g);
     lv_obj_remove_style_all(bar);
@@ -660,6 +684,9 @@ void edOpen(int page) {
   closeModal();
   const PageDef& def = *s_pages[page].def;
   const int w = logicalW(), h = logicalH();
+  ED_BAR_H = edLarge() ? 82 : 54;
+  ED_PAD = edLarge() ? 16 : 8;
+  ED_GAP = edLarge() ? 10 : 5;
   s_ed = EditState();
   s_ed.cfgPage = (int)(&def - &s_cfg.pages[0]);
   s_ed.name = def.name.length() ? def.name : def.id;
@@ -676,22 +703,43 @@ void edOpen(int page) {
   lv_obj_set_style_bg_color(root, lv_color_hex(C_BG), 0);
   lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
   lv_obj_set_style_text_color(root, lv_color_hex(C_TEXT), 0);
+  lv_obj_set_style_text_font(root, edFont(), 0);
   lv_obj_remove_flag(root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(root, LV_OBJ_FLAG_CLICKABLE);  // taps never reach the page
 
-  constexpr int BW = 84, AW = 48;
+  const bool large = edLarge();
+  const bool wide = w >= 480;
+  const int BW = large ? 118 : wide ? 82 : 58;
+  const int AW = large ? 146 : wide ? 96 : 40;
+  const int gap = large ? 12 : 6;
+  const int right = w - ED_PAD;
+  const int buttonY = large ? 12 : 7;
+  const int doneX = right - BW, cancelX = doneX - gap - BW, addX = cancelX - gap - AW;
+  auto* header = lv_obj_create(root);
+  lv_obj_remove_style_all(header);
+  lv_obj_set_size(header, w, ED_BAR_H - 8);
+  lv_obj_set_style_bg_color(header, lv_color_hex(C_PANEL), 0);
+  lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
+  lv_obj_remove_flag(header, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
   s_ed.title = lv_label_create(root);
-  lv_obj_set_style_text_font(s_ed.title, &deck_font_20, 0);
+  lv_obj_set_style_text_font(s_ed.title, large ? &deck_font_28 : &deck_font_14, 0);
   lv_label_set_long_mode(s_ed.title, LV_LABEL_LONG_MODE_DOTS);
-  lv_obj_set_width(s_ed.title, w - 2 * BW - AW - 48);
-  lv_obj_set_pos(s_ed.title, 12, 13);
-  lv_obj_t* add = qpButton(root, w - 2 * BW - AW - 24, 4, AW, LV_SYMBOL_PLUS, false);
+  lv_obj_set_width(s_ed.title, addX - ED_PAD - gap);
+  lv_obj_set_pos(s_ed.title, ED_PAD, large ? 9 : 17);
+  if (large) {
+    auto* hint = lv_label_create(root);
+    lv_label_set_text(hint, "Drag to move  |  Corner handle to resize  |  X to remove");
+    lv_obj_set_style_text_font(hint, &deck_font_14, 0);
+    lv_obj_set_style_text_color(hint, lv_color_hex(C_DIM), 0);
+    lv_obj_set_width(hint, addX - ED_PAD - gap);
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_pos(hint, ED_PAD, 43);
+  }
+  lv_obj_t* add = edButton(root, addX, buttonY, AW, wide ? LV_SYMBOL_PLUS " Add tile" : LV_SYMBOL_PLUS);
   lv_obj_add_event_cb(add, edAddEvent, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* cancel = qpButton(root, w - 2 * BW - 16, 4, BW, "Cancel", false);
+  lv_obj_t* cancel = edButton(root, cancelX, buttonY, BW, "Cancel");
   lv_obj_add_event_cb(cancel, edCancelEvent, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* done = qpButton(root, w - BW - 8, 4, BW, LV_SYMBOL_OK " Done", false);
-  lv_obj_set_style_bg_color(done, lv_color_hex(C_OK), 0);
-  lv_obj_set_style_text_color(done, lv_color_hex(C_TEXT_ON), 0);
+  lv_obj_t* done = edButton(root, doneX, buttonY, BW, wide ? LV_SYMBOL_OK " Done" : "Done", true);
   lv_obj_add_event_cb(done, edDoneEvent, LV_EVENT_CLICKED, nullptr);
 
   for (int y = 0; y < s_ed.rows; y += 2)
@@ -702,6 +750,8 @@ void edOpen(int page) {
       lv_obj_set_style_radius(o, 12, 0);
       lv_obj_set_style_border_width(o, 1, 0);
       lv_obj_set_style_border_color(o, lv_color_hex(C_TRACK), 0);
+      lv_obj_set_style_bg_color(o, lv_color_hex(C_PANEL), 0);
+      lv_obj_set_style_bg_opa(o, LV_OPA_30, 0);
       edPlace(o, Cell{true, x, y, 2, 2});
     }
 

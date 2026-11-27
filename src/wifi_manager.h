@@ -10,6 +10,7 @@ bool isWiFiConnected();
 bool isAPMode();
 String getAPSSID();
 uint32_t wifiDisconnectCount();
+uint32_t wifiWeakReconnectCount();
 uint8_t  wifiLastDisconnectReason();
 
 #endif // WIFI_MANAGER_H

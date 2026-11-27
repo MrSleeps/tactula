@@ -1,4 +1,7 @@
 #include "debug_log.h"
+#if defined(BOARD_IS_JC8012P4A1C)
+#include <driver/usb_serial_jtag.h>
+#endif
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -68,7 +71,12 @@ size_t DebugSerial::write(uint8_t value) {
 
 size_t DebugSerial::write(const uint8_t* data, size_t length) {
   append(data, length);
+#if defined(BOARD_IS_JC8012P4A1C)
+  const int written = usb_serial_jtag_write_bytes(data, length, pdMS_TO_TICKS(10));
+  return written > 0 ? static_cast<size_t>(written) : 0;
+#else
   return Serial.write(data, length);
+#endif
 }
 
 // Arduino core logs use log_printf rather than the ESP-IDF callback.

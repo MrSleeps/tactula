@@ -1,3 +1,4 @@
+#include "optional_preferences.h"
 // Firmware update discovery (no unattended flashing). The HTTPS manifest is
 // authenticated with a trusted root; board/variant, size, version and digest
 // are checked before an update can be advertised. Installing firmware needs a
@@ -24,10 +25,21 @@
 namespace firmwareUpdate {
 namespace {
 constexpr const char* ROOT_CA = FIRMWARE_MIRROR_CA;
+// The mirror has independent, verified release feeds for S3 and P4.
+// Never attempt to install a binary for another processor.
+#if defined(BOARD_IS_JC8012P4A1C)
+constexpr const char* STABLE_MANIFEST_URL =
+    "https://firmware.mrsleeps.uk/tactula/releases/jc8012p4a1c/current.json";
+constexpr const char* BETA_MANIFEST_URL =
+    "https://firmware.mrsleeps.uk/tactula/releases/jc8012p4a1c/beta.json";
+constexpr const char* MIRROR_BOARD = "p4";
+#else
 constexpr const char* STABLE_MANIFEST_URL =
     "https://firmware.mrsleeps.uk/tactula/releases/current.json";
 constexpr const char* BETA_MANIFEST_URL =
     "https://firmware.mrsleeps.uk/tactula/releases/beta.json";
+constexpr const char* MIRROR_BOARD = "s3";
+#endif
 constexpr uint32_t INTERVAL_MS = 6UL * 60 * 60 * 1000;
 constexpr uint32_t RETRY_MS = 30UL * 60 * 1000;
 constexpr uint32_t START_DELAY_MS = 45000;
@@ -42,7 +54,7 @@ bool downloadRunning = false;
 bool installRequested = false;
 bool touchConfirmationRequested = false;
 char approvedDigest[65] = {};
-char approvedPath[160] = {};
+char approvedPath[224] = {};
 uint32_t approvedSize = 0;
 const esp_partition_t* stagedPartition = nullptr;
 
@@ -269,18 +281,28 @@ void checkForUpdate(CheckTiming& timing) {
   constexpr const char* edition = "standard";
   constexpr const char* firmwareVariant = "without_bambu";
 #endif
-  char expectedName[115];
+  char expectedName[140];
+  char expectedPath[200];
+#if defined(BOARD_IS_JC8012P4A1C)
+  // P4 files have hardware-specific names and a dedicated mirror directory.
+  snprintf(expectedName, sizeof(expectedName),
+           "tactula-%s-p4-jc8012p4a1c-%s-ota.bin", version, edition);
+  snprintf(expectedPath, sizeof(expectedPath),
+           "releases/jc8012p4a1c/%s/%s", version, expectedName);
+#else
+  // The S3 mirror intentionally keeps legacy filenames as hardlink aliases,
+  // so existing S3 installations continue to update without migration.
   snprintf(expectedName, sizeof(expectedName),
            "tactula-%s-jc3248w535-%s-ota.bin", version, firmwareVariant);
-  char expectedPath[160];
   snprintf(expectedPath, sizeof(expectedPath),
            "releases/%s/%s", version, expectedName);
+#endif
   char assetDigest[65] = {};
   uint32_t assetSize = 0;
   bool matched = false;
   const esp_partition_t* partition = esp_ota_get_next_update_partition(nullptr);
   for (JsonObjectConst variant : doc["variants"].as<JsonArrayConst>()) {
-    if (strcmp(variant["board"] | "", "s3") != 0 ||
+    if (strcmp(variant["board"] | "", MIRROR_BOARD) != 0 ||
         strcmp(variant["edition"] | "", edition) != 0) continue;
     JsonObjectConst asset = variant["ota"].as<JsonObjectConst>();
     const char* digest = asset["sha256"] | "";
@@ -364,12 +386,13 @@ void checkTask(void*) {
 
 void begin() {
   Preferences prefs;
-  prefs.begin("tactula_upd", true);
-  status.checksEnabled = prefs.getBool("checks", true);
-  status.showBadge = prefs.getBool("badge", true);
-  status.autoDownload = prefs.getBool("autodl", false);
-  status.allowBeta = prefs.getBool("beta", false);
-  prefs.end();
+  if (openOptionalPreferences(prefs, "tactula_upd")) {
+    status.checksEnabled = prefs.getBool("checks", true);
+    status.showBadge = prefs.getBool("badge", true);
+    status.autoDownload = prefs.getBool("autodl", false);
+    status.allowBeta = prefs.getBool("beta", false);
+    prefs.end();
+  }
 #if defined(TACTULA_DEV_UPDATE_SIMULATION) && TACTULA_DEV_UPDATE_SIMULATION
   // Development-only visual fixture. Honour persisted badge/check toggles.
   // No URL, digest, OTA download, or boot partition activation is possible.
@@ -476,7 +499,7 @@ bool installStagedFromTouch() {
 }
 
 void downloadUpdate() {
-  char digest[65], path[160];
+  char digest[65], path[224];
   uint32_t expected = 0;
   portENTER_CRITICAL(&mux);
   snprintf(digest, sizeof(digest), "%s", approvedDigest);

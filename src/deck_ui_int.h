@@ -11,7 +11,7 @@
 #include "deck_wall.h"
 #include <src/misc/cache/instance/lv_image_cache.h>
 #include "display_ui.h"
-#include "settings.h"
+#include "tactula_settings.h"
 #include "led.h"
 #include "haptic.h"
 #include "audio.h"
@@ -74,6 +74,8 @@ struct TileRt {
   uint8_t pngFailures = 0;
   uint16_t pngWidth = 0, pngHeight = 0;  // native PNG size for fitting
   lv_obj_t* chip;
+  lv_obj_t* navFace;
+  lv_obj_t* navChevron;
   int iconPx;
   uint32_t iconCp;        // MDI codepoint shown, 0 = LVGL symbol
   bool on;
@@ -120,6 +122,8 @@ struct TileRt {
   lv_obj_t* climMinus = nullptr;
   lv_obj_t* climPlus = nullptr;
   lv_obj_t* climModeRow = nullptr;
+  lv_obj_t* climDial = nullptr;
+  bool climDialDragging = false, climDialSync = false;
   lv_obj_t* climModeBtns[6] = {};
   String climModeIds[6];
   uint8_t climModeCount = 0;
@@ -131,6 +135,22 @@ struct TileRt {
   // Home Assistant media remote: six independent clickable controls.
   lv_obj_t* haMediaButtons[6] = {};
   lv_obj_t* haMediaIcons[6] = {};
+  lv_obj_t* haMediaArtwork = nullptr;
+  lv_obj_t* haMediaAlbum = nullptr;
+  lv_obj_t* haMediaVolumePanel = nullptr;
+  lv_obj_t* haMediaExtra[3] = {};
+  lv_obj_t* haMediaExtraGlyph[3] = {};
+  uint8_t haMediaExtraMask = 0;
+  lv_obj_t* haMediaProgress = nullptr;
+  lv_obj_t* haMediaTime = nullptr;
+  bool haMediaHasProgress = false;
+  lv_obj_t* haMediaVolume = nullptr;
+  lv_obj_t* haMediaVolumeText = nullptr;
+  lv_obj_t* haMediaVolumeIcon = nullptr;
+  bool haMediaUnavailable = false;
+  bool haMediaCanSetVolume = false;
+  uint8_t haMediaControlMask = 0x3f;
+  String haMediaPausedApp;
   // Original TouchDeck-inspired printer renderer: LVGL references for
   // hero badges/time/ETA, temperature targets and filament swatches.
   lv_obj_t* bambuParts[8] = {};
@@ -262,8 +282,9 @@ uint32_t sensorColour(const TileRt& r, bool onTile = false);
 uint32_t sensorLine(const TileRt& r);
 bool copyHistoryChart(const TileDef& d, uint8_t hours, uint32_t& version, lv_obj_t* chart, int32_t* points, float& lo, float& hi);
 void applySensorHistory(TileRt& r);
-String prettyState(const String& domain, const HaEntity& e);
+String prettyState(const String& domain, const HaEntity& e, int8_t decimals = -1);
 void formatReading(float v, char* out, size_t n);
+void formatValue(float v, int8_t decimals, char* out, size_t n);
 String formatTemp(float v);
 String climateWord(const String& s);
 bool climateRange(const HaEntity& e);
@@ -293,6 +314,8 @@ void httpSync();
 std::vector<String> entityIds();
 void collectEntities();
 void stopGestures();
+const lv_font_t* clockFont72();
+const lv_font_t* clockFont56();
 bool frameActive();
 void frameAbort();
 bool frameSleep(bool sleep);
@@ -312,6 +335,7 @@ void sliderEvent(lv_event_t* e);
 extern bool s_header;
 extern QuickPanel s_qp;
 void qpMarkStale();
+void qpServiceShortcut();
 uint8_t& screenLevelRef();
 void qpSyncValues();
 void qpUpdateStatus(bool force);
@@ -349,6 +373,10 @@ int textH(const lv_font_t* f, int lines);
 void showObj(lv_obj_t* o, bool on);
 void setFont(lv_obj_t* o, const lv_font_t* f);
 int textW(const char* text, const lv_font_t* f);
+// Enable larger content only when the display and the cell both have room.
+inline bool roomyWidget(int width, int height) {
+  return logicalW() >= 800 && logicalH() >= 800 && width >= 200 && height >= 100;
+}
 void fitNameText(TileRt& r);
 void layoutRows(TileRt& r);
 void fitValue(TileRt& r);
@@ -366,14 +394,23 @@ lv_obj_t* makeDetail(lv_obj_t* t, const TileDef& d);
 void makeMetricContent(TileRt& r, lv_obj_t* t);
 void makeWeatherContent(TileRt& r, lv_obj_t* t);
 const char* weatherIcon(const String& state);
+String outlineWeatherSlug(const String& state);
 String weatherCondition(const String& state);
-String weatherTempText(const HaEntity& e, bool withUnit);
+String weatherTempText(const HaEntity& e, bool withUnit, bool apparent = false);
 String climateCurrentUnit(const HaEntity& e);
 String climateCurrentText(const HaEntity& e, bool withUnit);
+inline constexpr char CLOCK_SYNC_TEXT[] = "Syncing";
+inline constexpr char WEATHER_DATE_SEPARATOR[] = "|  ";
 void applyClock(TileRt& r);
-void applyWeatherClock(TileRt& r);
+void applyWeatherClock(TileRt& r, bool reloadSkycons = false);
 void animateWeatherClocks();
+void resetModalWeatherArtwork();
+void updateModalWeatherArtwork(lv_obj_t* parent, lv_obj_t* fallback, const TileDef& source, const String& state, int size);
 void fitWeatherClock(TileRt& r, int cw, int ch);
+void fitWeatherClockImage(TileRt& r, int x, int y, int iconW, int iconH, int maxFrameSize = 64);
+lv_draw_buf_t* loadTilePng(const String& path, bool explicitImage, bool& opened);
+void recordTilePngFailure(TileRt& r);
+bool tilePngRetryDue(const TileRt& r, uint32_t now);
 
 #if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
 // deck_ui_bambu.cpp
@@ -387,10 +424,16 @@ void bambuSync();
 void makeHaMedia(TileRt& r, lv_obj_t* parent, size_t index);
 void fitHaMedia(TileRt& r, int cw, int ch);
 void applyHaMedia(TileRt& r, const HaEntity* e);
+void buildHaMediaSheet(lv_obj_t* card, int width, int height, int headerHeight,
+                       int tile, uint32_t accent, bool large);
+void refreshHaMediaSheet(const TileRt& r, const HaEntity* entity);
+void resetHaMediaSheet();
+void tickHaMediaSheet();
 
 // deck_ui_climate.cpp
 void makeInlineClimate(TileRt& r, lv_obj_t* tile, size_t index);
 void fitInlineClimate(TileRt& r, int cw, int ch);
+void invalidateSwipeZones();
 void applyInlineClimate(TileRt& r, const HaEntity* entity);
 void inlineClimateTick();
 void inlineClimateFlush();
@@ -398,6 +441,10 @@ void inlineClimateFlush();
 // deck_ui_tile.cpp
 String entityDomain(const String& entity);
 uint32_t domainColor(const String& domain);
+uint32_t tileAccent(const TileDef& def);
+void cinematicSurface(lv_obj_t* obj, int palette);
+void cinematicInsetStyle(lv_obj_t* obj);
+void cinematicMediaButtonGradient(lv_obj_t* button, uint32_t accent);
 uint32_t showIcon(lv_obj_t* label, const TileDef& d, const HaEntity* e, bool on, int px, uint32_t shown);
 void tileIconColor(TileRt& r, const HaEntity* e = nullptr);
 void updatePngIcon(TileRt& r, bool on);
@@ -450,6 +497,7 @@ void edFinish();
 
 // deck_ui.cpp
 extern uint8_t s_theme;
+uint32_t modernColour(uint32_t ocean);
 extern uint32_t C_BG, C_TILE, C_TILE_PRESSED, C_TILE_LINE, C_CHIP, C_TEXT, C_TEXT_ON, C_TITLE, C_CLOCK, C_OK, C_DIM, C_PANEL, C_TRACK, C_BUTTON;
 extern lv_display_t* s_disp;
 extern DeckConfig s_cfg;

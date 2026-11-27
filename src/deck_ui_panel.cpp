@@ -9,7 +9,8 @@ namespace deckui {
 // never include it. The container is QP_LIP rows taller than what shows and
 // sits that much above the screen edge when open, which hides its top
 // rounded corners; the compositor skips those rows.
-constexpr int QP_H = 196;
+static int s_qpHeight = 196;
+static bool s_frameShortcut = false;
 constexpr int QP_LIP = 20;
 constexpr int QP_CHIP_INSET = 12;
 constexpr int QP_CHIP_GAP = 4;
@@ -22,7 +23,7 @@ bool s_header = true;
 
 QuickPanel s_qp = {};
 
-void qpMarkStale() { s_qp.stale = true; }
+void qpMarkStale() { s_qp.stale = s_qp.snap != nullptr; }
 
 uint8_t& screenLevelRef() {
   if (nightWakeActive()) return presenceSettings.nightWakeLevel;
@@ -38,10 +39,10 @@ uint8_t& lightLevelRef() {
 void qpSyncValues() {
   if (!s_qp.box) return;
   const bool night = nightBrightnessActive();
-  lv_label_set_text(s_qp.screenLbl, nightWakeActive() ? "Screen (night wake)" : night ? "Screen (night)" : "Screen");
+  lv_label_set_text(s_qp.screenLbl, nightWakeActive() ? "Screen (wake)" : night ? "Screen (night)" : (logicalW() < 400 ? "Screen" : "Screen brightness"));
   lv_slider_set_value(s_qp.screenSlider, screenLevelRef(), LV_ANIM_OFF);
   lv_label_set_text_fmt(s_qp.screenVal, "%d%%", (screenLevelRef() * 100 + 127) / 255);
-  lv_label_set_text(s_qp.lightLbl, ledNightActive() ? "Light (night)" : "Light");
+  lv_label_set_text(s_qp.lightLbl, ledNightActive() ? "LED (night)" : (logicalW() < 400 ? "LED" : "LED brightness"));
   if (ledUsable()) {
     lv_obj_remove_state(s_qp.lightSlider, LV_STATE_DISABLED);
     const uint8_t lv = ledNightActive() ? ledSettings.nightBrightness : ledDayLevel();
@@ -61,7 +62,7 @@ void setChip(lv_obj_t* chip, const String& text, bool good) {
   lv_obj_t* lbl = lv_obj_get_child(chip, 0);
   if (strcmp(lv_label_get_text(lbl), text.c_str()) == 0) return;
   lv_label_set_text(lbl, text.c_str());
-  lv_obj_set_style_text_color(lbl, lv_color_hex(good ? C_OK : C_CLOCK), 0);
+  lv_obj_set_style_text_color(lbl, lv_color_hex(good ? (themeUsesModernLayout(s_theme) ? 0x69D7AE : C_OK) : (themeUsesModernLayout(s_theme) ? 0xF2B58A : C_CLOCK)), 0);
   qpMarkStale();
 }
 
@@ -165,6 +166,22 @@ void onScrim(lv_event_t*) { closePanelAnimated(); }
 
 void onHeaderBtn(lv_event_t*) { setHeader(lv_obj_has_state(s_qp.headerBtn, LV_STATE_CHECKED)); }
 void onEditBtn(lv_event_t*) { edOpen(sh.active); }
+void onHomeBtn(lv_event_t*) {
+  hidePanelNow();
+  if (s_count && s_pages[0].def) goToPage(s_pages[0].def->id);
+}
+void onFrameBtn(lv_event_t*) {
+  hidePanelNow();
+  s_frameShortcut = true;  // wait until release is observed by the touch task
+}
+void qpServiceShortcut() {
+  if (!s_frameShortcut || touchIsDown()) return;
+  s_frameShortcut = false;
+  if (getScreenState() == SCREEN_DECK && !frameActive() && !s_ed.root &&
+      !s_modalCard && !s_qp.open && compMode() == COMP_NONE) {
+    if (!deckFrameCommand("enter")) deckToastShow("Photo frame unavailable", 1800);
+  }
+}
 
 lv_obj_t* qpButton(lv_obj_t* parent, int x, int y, int w, const char* text, bool checkable) {
   lv_obj_t* b = lv_button_create(parent);
@@ -318,8 +335,8 @@ void frostStyle(lv_obj_t* o, lv_draw_buf_t* glass) {
 // Frost the panel from the page under its open place. Only while the page
 // alone is on screen; it is re-frosted when the panel goes stale.
 void qpFrost() {
-  if (!themeUsesWallpaper(s_theme) || !s_qp.box || s_qp.open || modalShown()) return;
-  lv_draw_buf_t* g = frostedCopy(0, -QP_LIP, logicalW(), QP_H + QP_LIP, 20);
+  if (!themeUsesWallpaper(s_theme) || themeUsesModernLayout(s_theme) || !s_qp.box || s_qp.open || modalShown()) return;
+  lv_draw_buf_t* g = frostedCopy(0, -QP_LIP, logicalW(), s_qpHeight + QP_LIP, 20);
   if (!g) return;
   frostStyle(s_qp.box, g);
   if (s_qp.glass) lv_draw_buf_destroy(s_qp.glass);
@@ -328,6 +345,11 @@ void qpFrost() {
 
 void buildQuickPanel() {
   const int w = logicalW(), h = logicalH();
+  const bool cinematic = themeUsesModernLayout(s_theme);
+  const bool large = std::min(w, h) >= 800;
+  const bool wide = large && w >= 1000;
+  s_qpHeight = cinematic ? (large ? (wide ? 332 : 400) : (w >= 400 ? 276 : 320)) : 196;
+  s_qpHeight = std::min(s_qpHeight, h - 12);
   lv_obj_t* top = lv_layer_top();
 
   s_qp.scrim = lv_obj_create(top);
@@ -341,8 +363,8 @@ void buildQuickPanel() {
   lv_obj_t* box = lv_obj_create(top);
   s_qp.box = box;
   lv_obj_remove_style_all(box);
-  lv_obj_set_size(box, w, QP_H + QP_LIP);
-  lv_obj_set_pos(box, 0, -(QP_H + QP_LIP + 8));  // parked above the screen
+  lv_obj_set_size(box, w, s_qpHeight + QP_LIP);
+  lv_obj_set_pos(box, 0, -(s_qpHeight + QP_LIP + 8));  // parked above the screen
   lv_obj_set_style_bg_color(box, lv_color_hex(C_PANEL), 0);
   lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
   lv_obj_set_style_radius(box, 20, 0);
@@ -351,12 +373,127 @@ void buildQuickPanel() {
   // Taps on the panel background must not fall through to the scrim.
   lv_obj_add_flag(box, LV_OBJ_FLAG_CLICKABLE);
 
+  const lv_font_t* panelFont = large ? &deck_font_20 : &deck_font_14;
+  const int lineHeight = lv_font_get_line_height(panelFont);
+  lv_obj_set_style_text_font(box, panelFont, 0);
   const int y0 = QP_LIP;
+  if (cinematic) {
+    if (large && themeUsesGlassMode(s_theme)) lv_obj_set_style_bg_opa(box, LV_OPA_80, 0);
+    const int pad = large ? 22 : 12, gap = large ? 12 : 7;
+    const int titleH = large ? 40 : 26;
+    const int statusY = y0 + pad + titleH;
+    const int statusH = large ? 76 : 48;
+    const int statusCols = wide || w >= 400 ? 4 : 2;
+    const int statusRows = 4 / statusCols;
+    const int statusW = (w - 2 * pad - (statusCols - 1) * gap) / statusCols;
+    const int controlsY = statusY + statusRows * (statusH + gap) + gap;
+    const int controlsH = wide ? 78 : large ? 102 : 66;
+    const int buttonY = controlsY + controlsH + gap;
+    const int buttonCols = large && w >= 400 ? 6 : 3;
+    const int buttonRows = 6 / buttonCols;
+    const int buttonH = std::min(large ? 64 : 38,
+        (s_qpHeight + QP_LIP - buttonY - 14 - (buttonRows - 1) * gap) / buttonRows);
+    auto label = [&](lv_obj_t* p, const char* str, int x, int y, int width,
+                     const lv_font_t* font, uint32_t color) {
+      auto* l = lv_label_create(p);
+      lv_label_set_text(l, str);
+      lv_obj_set_style_text_font(l, font, 0);
+      lv_obj_set_style_text_color(l, lv_color_hex(color), 0);
+      lv_obj_set_pos(l, x, y);
+      lv_obj_set_width(l, width);
+      lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_DOTS);
+      return l;
+    };
+    auto surface = [&](int x, int y, int width, int height) {
+      auto* c = lv_obj_create(box);
+      lv_obj_remove_style_all(c);
+      lv_obj_set_pos(c, x, y);
+      lv_obj_set_size(c, width, height);
+      lv_obj_remove_flag(c, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+      lv_obj_set_style_bg_color(c, lv_color_hex(modernColour(0x192E50)), 0);
+      lv_obj_set_style_bg_opa(c, themeUsesGlassMode(s_theme) ? LV_OPA_70 : LV_OPA_COVER, 0);
+      lv_obj_set_style_radius(c, large ? 15 : 9, 0);
+      return c;
+    };
+    label(box, "Quick settings", pad, y0 + pad, w / 2,
+          large ? &deck_font_28 : &deck_font_20, C_TEXT);
+    auto* close = qpButton(box, w - pad - (large ? 44 : 30), y0 + pad - 4,
+                           large ? 44 : 30, LV_SYMBOL_CLOSE, false);
+    lv_obj_set_height(close, large ? 36 : 26);
+    lv_obj_set_style_bg_opa(close, LV_OPA_TRANSP, 0);
+    lv_obj_add_event_cb(close, onScrim, LV_EVENT_CLICKED, nullptr);
+    const char* captions[] = {"Wi-Fi", "Home Assistant", "IP address", "Firmware"};
+    lv_obj_t* cards[4];
+    for (int i = 0; i < 4; ++i) {
+      auto* c = surface(pad + (i % statusCols) * (statusW + gap),
+                        statusY + (i / statusCols) * (statusH + gap), statusW, statusH);
+      cards[i] = c;
+      const int inset = large ? 12 : 7;
+      // Status value must be child zero: setChip updates it in place.
+      label(c, "", inset, large ? 34 : 23, statusW - 2 * inset,
+            large ? &deck_font_20 : &deck_font_12, C_TEXT);
+      auto* caption = label(c, !large && statusCols == 4 && i == 1 ? "HA" : captions[i], inset, large ? 10 : 5, statusW - 2 * inset,
+            large ? &deck_font_14 : &deck_font_12, C_DIM);
+      lv_obj_set_height(caption, lv_font_get_line_height(large ? &deck_font_14 : &deck_font_12));
+    }
+    s_qp.wifi = cards[0]; s_qp.ha = cards[1]; s_qp.ip = cards[2];
+    lv_label_set_text_fmt(lv_obj_get_child(cards[3], 0), "v%s", FW_VERSION);
+    const int controlW = (w - 2 * pad - gap) / 2;
+    for (int i = 0; i < 2; ++i) {
+      auto* c = surface(pad + i * (controlW + gap), controlsY, controlW, controlsH);
+      const int inset = large ? 16 : 10, valueW = large ? 60 : 38;
+      auto* name = label(c, "", inset, large ? 10 : 5, controlW - 2 * inset - valueW,
+                         large ? &deck_font_20 : &deck_font_12, C_TEXT);
+      auto* value = label(c, "", controlW - inset - valueW, large ? 10 : 5, valueW,
+                          large ? &deck_font_20 : &deck_font_12, modernColour(0x89BFFF));
+      lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_RIGHT, 0);
+      auto* slider = qpSlider(c, inset, controlsH - (large ? 28 : 20),
+                              controlW - 2 * inset, modernColour(0x5197FF));
+      lv_obj_set_height(slider, large ? 12 : 8);
+      lv_obj_set_style_pad_all(slider, large ? 9 : 5, LV_PART_KNOB);
+      if (!i) {
+        s_qp.screenLbl = name; s_qp.screenVal = value; s_qp.screenSlider = slider;
+        lv_obj_add_event_cb(slider, onScreenSlider, LV_EVENT_VALUE_CHANGED, nullptr);
+        lv_obj_add_event_cb(slider, onScreenSlider, LV_EVENT_RELEASED, nullptr);
+      } else {
+        s_qp.lightLbl = name; s_qp.lightVal = value; s_qp.lightSlider = slider;
+        lv_slider_set_range(slider, 0, 255);
+        lv_obj_add_event_cb(slider, onLightSlider, LV_EVENT_VALUE_CHANGED, nullptr);
+        lv_obj_add_event_cb(slider, onLightSlider, LV_EVENT_RELEASED, nullptr);
+      }
+    }
+    const char* names[] = {"Screen off", "Night", "Photo frame", "Home", "Top bar", "Edit"};
+    const char* symbols[] = {LV_SYMBOL_POWER, LV_SYMBOL_EYE_CLOSE, LV_SYMBOL_IMAGE,
+                            LV_SYMBOL_HOME, LV_SYMBOL_UP, LV_SYMBOL_EDIT};
+    lv_event_cb_t callbacks[] = {onScreenOff, onNight, onFrameBtn, onHomeBtn, onHeaderBtn, onEditBtn};
+    const int bw = (w - 2 * pad - (buttonCols - 1) * gap) / buttonCols;
+    for (int i = 0; i < 6; ++i) {
+      const bool toggle = i == 1 || i == 4;
+      auto* b = qpButton(box, pad + (i % buttonCols) * (bw + gap),
+                         buttonY + (i / buttonCols) * (buttonH + gap), bw, "", toggle);
+      lv_obj_set_height(b, buttonH);
+      lv_obj_set_style_radius(b, large ? 14 : 9, 0);
+      lv_obj_set_style_bg_color(b, lv_color_hex(modernColour(0x28588D)), LV_STATE_CHECKED);
+      auto* l = lv_obj_get_child(b, 0);
+      const String title = String(symbols[i]) + (large ? "\n" : " ") + names[i];
+      lv_label_set_text(l, title.c_str());
+      lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+      lv_obj_set_style_text_font(l, large ? &deck_font_20 : &deck_font_12, 0);
+      if (i == 1) s_qp.nightBtn = b;
+      if (i == 4) {
+        s_qp.headerBtn = b;
+        if (s_header) lv_obj_add_state(b, LV_STATE_CHECKED);
+      }
+      lv_obj_add_event_cb(b, callbacks[i], toggle ? LV_EVENT_VALUE_CHANGED : LV_EVENT_CLICKED, nullptr);
+    }
+  } else {
   lv_obj_t* chips = lv_obj_create(box);
   lv_obj_remove_style_all(chips);
   const int statusWidth = w - 2 * QP_CHIP_INSET;
-  // Cap each chip so at least two fit per row, even in portrait.
-  const int chipTextWidth = (statusWidth - QP_CHIP_GAP) / 2 - 2 * QP_CHIP_PAD_X;
+  // Cap chips to two per row on compact panels, or four on the larger screen.
+  const int columns = large ? 4 : 2;
+  const int chipTextWidth = (statusWidth - (columns - 1) * QP_CHIP_GAP) / columns -
+                           2 * QP_CHIP_PAD_X;
   lv_obj_set_pos(chips, QP_CHIP_INSET, y0 + 10);
   lv_obj_set_size(chips, statusWidth, LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(chips, LV_FLEX_FLOW_ROW_WRAP);
@@ -379,29 +516,38 @@ void buildQuickPanel() {
   lv_obj_add_event_cb(chips, [](lv_event_t* e) {
     lv_obj_t* status = lv_event_get_target_obj(e);
     lv_obj_t* rows = static_cast<lv_obj_t*>(lv_event_get_user_data(e));
-    const bool wrapped = lv_obj_get_height(status) > lv_obj_get_height(lv_obj_get_child(status, 0));
-    lv_obj_set_y(rows, QP_LIP + (wrapped ? 60 : 46));
+    lv_obj_set_y(rows, QP_LIP + 16 + lv_obj_get_height(status));
   }, LV_EVENT_SIZE_CHANGED, controls);
 
   // The inset above the first slider keeps its full touch area in the container.
-  const int screenY = 12, lightY = 52, buttonY = 82;
-  const int labelW = 108, valW = 46;
+  const int screenY = 8, lightY = 44, buttonY = 78;
+  const int labelW = large ? 152 : 108, valW = large ? 68 : 46;
+  const int trackOffset = (lineHeight - 8) / 2;
+  const auto sizeLabel = [lineHeight](lv_obj_t* label, int width, bool value) {
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_size(label, width, lineHeight);
+    if (value) lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_RIGHT, 0);
+  };
   const int slX = 16 + labelW, slW = w - slX - valW - 22;
   s_qp.screenLbl = lv_label_create(controls);
   lv_obj_set_pos(s_qp.screenLbl, 16, screenY);
-  s_qp.screenSlider = qpSlider(controls, slX, screenY + 5, slW, C_SCREEN_ACCENT);
+  sizeLabel(s_qp.screenLbl, labelW - 8, false);
+  s_qp.screenSlider = qpSlider(controls, slX, screenY + trackOffset, slW, C_SCREEN_ACCENT);
   s_qp.screenVal = lv_label_create(controls);
   lv_obj_set_pos(s_qp.screenVal, w - valW - 10, screenY);
+  sizeLabel(s_qp.screenVal, valW, true);
   lv_obj_add_event_cb(s_qp.screenSlider, onScreenSlider, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(s_qp.screenSlider, onScreenSlider, LV_EVENT_RELEASED, nullptr);
 
   s_qp.lightLbl = lv_label_create(controls);
   lv_label_set_text(s_qp.lightLbl, "Light");
   lv_obj_set_pos(s_qp.lightLbl, 16, lightY);
-  s_qp.lightSlider = qpSlider(controls, slX, lightY + 5, slW, C_LIGHT_ACCENT);
+  sizeLabel(s_qp.lightLbl, labelW - 8, false);
+  s_qp.lightSlider = qpSlider(controls, slX, lightY + trackOffset, slW, C_LIGHT_ACCENT);
   lv_slider_set_range(s_qp.lightSlider, 0, 255);  // 0 = LED off (or the HA entity off)
   s_qp.lightVal = lv_label_create(controls);
   lv_obj_set_pos(s_qp.lightVal, w - valW - 10, lightY);
+  sizeLabel(s_qp.lightVal, valW, true);
   lv_obj_add_event_cb(s_qp.lightSlider, onLightSlider, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(s_qp.lightSlider, onLightSlider, LV_EVENT_RELEASED, nullptr);
 
@@ -417,7 +563,10 @@ void buildQuickPanel() {
   lv_obj_add_event_cb(s_qp.headerBtn, onHeaderBtn, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_t* edit = qpButton(controls, 16 + 3 * (bw + 10), buttonY, bw, wide ? LV_SYMBOL_EDIT "  Edit" : LV_SYMBOL_EDIT, false);
   lv_obj_add_event_cb(edit, onEditBtn, LV_EVENT_CLICKED, nullptr);
+  for (lv_obj_t* button : {off, s_qp.nightBtn, s_qp.headerBtn, edit})
+    lv_obj_set_style_text_font(lv_obj_get_child(button, 0), panelFont, 0);
 
+  }
   lv_obj_t* grip = lv_obj_create(box);
   lv_obj_remove_style_all(grip);
   lv_obj_set_size(grip, 36, 4);
@@ -426,13 +575,20 @@ void buildQuickPanel() {
   lv_obj_set_style_radius(grip, 2, 0);
   lv_obj_align(grip, LV_ALIGN_BOTTOM_MID, 0, -7);
 
-  s_qp.snap = lv_draw_buf_create(w, QP_H + QP_LIP, LV_COLOR_FORMAT_RGB565, 0);
+  // On the memory-constrained P4, cinematic uses live panel rendering
+  // instead of another large, continuously refreshed RGB565 snapshot.
+#if defined(BOARD_IS_JC8012P4A1C)
+  if (!cinematic)
+#endif
+    s_qp.snap = lv_draw_buf_create(w, s_qpHeight + QP_LIP, LV_COLOR_FORMAT_RGB565, 0);
+  s_qp.stale = s_qp.snap != nullptr;
   s_qp.open = false;
   qpUpdateStatus(true);
   qpSyncValues();
 }
 
 void destroyQuickPanel() {
+  s_frameShortcut = false;
   if (s_qp.scrim) lv_obj_delete(s_qp.scrim);
   if (s_qp.box) lv_obj_delete(s_qp.box);
   if (s_qp.snap) lv_draw_buf_destroy(s_qp.snap);
@@ -456,7 +612,7 @@ void showPanel(bool open) {
     // Closing slides the panel off the page image, so make it current.
     markPageStale(sh.active);
   } else {
-    lv_obj_set_y(s_qp.box, -(QP_H + QP_LIP + 8));
+    lv_obj_set_y(s_qp.box, -(s_qpHeight + QP_LIP + 8));
     lv_obj_add_flag(s_qp.scrim, LV_OBJ_FLAG_HIDDEN);
   }
   portENTER_CRITICAL(&s_mux);
@@ -487,7 +643,7 @@ void refreshPanelSnapshot() {
   sh.panelBusy = false;
   sh.panelValid = ok;
   if (ok) {
-    sh.panelSrc = {(const uint16_t*)s_qp.snap->data + QP_LIP * stride, stride, true, (uint16_t)QP_H};
+    sh.panelSrc = {(const uint16_t*)s_qp.snap->data + QP_LIP * stride, stride, true, (uint16_t)s_qpHeight};
   }
   portEXIT_CRITICAL(&s_mux);
   s_qp.stale = !ok;

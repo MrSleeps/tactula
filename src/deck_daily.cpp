@@ -5,7 +5,7 @@
 #include "deck_config.h"
 #include "deck_touch.h"
 #include "psram_json.h"
-#include "settings.h"
+#include "tactula_settings.h"
 #include "config.h"
 #include "tls_psram.h"
 #include "firmware_mirror_ca.h"
@@ -19,18 +19,23 @@
 #include <time.h>
 #include <algorithm>
 #include <vector>
+#if !defined(BOARD_IS_JC8012P4A1C)
 #include "img_converters.h"
 #include "esp32s3/rom/tjpgd.h"
+#endif
 
 namespace deck {
 namespace {
 
+#if !defined(BOARD_IS_JC8012P4A1C)
 // ROM TJpgDec can scale while it decodes (LVGL's copy is built without that).
 // Called by address (esp32s3.rom.ld) because LVGL defines the same names.
 using PrepareFn = JRESULT (*)(JDEC*, UINT (*)(JDEC*, BYTE*, UINT), void*, UINT, void*);
 using DecompFn = JRESULT (*)(JDEC*, UINT (*)(JDEC*, void*, JRECT*), BYTE);
 const PrepareFn romPrepare = (PrepareFn)0x40000858;
 const DecompFn romDecomp = (DecompFn)0x40000864;
+
+#endif
 
 constexpr const char* API_URL =
     "https://fd.api.iris.microsoft.com/v4/api/selection?placement=88000820&bcnt=4&country=US&locale=en-US&fmt=json";
@@ -212,15 +217,21 @@ bool mirrorPictureName(const char* name, bool portrait) {
   return true;
 }
 
-bool fetchMirrorFeed(std::vector<Pick>& picks) {
+bool fetchMirrorFeed(std::vector<Pick>& picks, const String& base) {
   WiFiClientSecure tls;
   tls.setCACert(FIRMWARE_MIRROR_CA);
   HTTPClient http;
   http.useHTTP10(true);
   http.setTimeout(15000);
-  const bool begun = http.begin(tls, String(MIRROR_BASE) + "current.json");
+  const bool begun = http.begin(tls, base + "current.json");
   const int code = begun ? http.GET() : -1;
   sampleRam();
+#if defined(BOARD_IS_JC8012P4A1C)
+  if (code == 404 && base != MIRROR_BASE) {
+    http.end();
+    return fetchMirrorFeed(picks, MIRROR_BASE);
+  }
+#endif
   if (code != 200) {
     char reason[64];
     if (code < 0) {
@@ -255,7 +266,7 @@ bool fetchMirrorFeed(std::vector<Pick>& picks) {
     }
     for (const JsonVariantConst value : names) {
       const char* name = value.as<const char*>();
-      if (mirrorPictureName(name, portrait)) picks.push_back({String(MIRROR_BASE) + name, portrait});
+      if (mirrorPictureName(name, portrait)) picks.push_back({base + name, portrait});
     }
   }
   if (!picks.empty()) return true;
@@ -276,21 +287,26 @@ bool curatedImageUrl(const char* value, const String& imagePrefix, bool portrait
   return true;
 }
 
-bool fetchCuratedFeed(std::vector<Pick>& picks, const String& base, const String& feedId) {
+bool fetchCuratedFeed(std::vector<Pick>& picks, const String& base, const String& feedId, bool p4) {
   if (!validDailyFeedId(feedId)) {
     setError("Enter a valid Tactula feed key in Wallpapers");
     return false;
   }
   const String feedUrl = base + "/" + feedId;
   const String imagePrefix = feedUrl + "/source-images/";
+  const String p4ImagePrefix = feedUrl + "/p4/source-images/";
   WiFiClientSecure tls;
   tls.setCACert(FIRMWARE_MIRROR_CA);
   HTTPClient http;
   http.useHTTP10(true);
   http.setTimeout(15000);
-  const bool begun = http.begin(tls, feedUrl + "/manifest.json");
+  const bool begun = http.begin(tls, feedUrl + (p4 ? "/p4/manifest.json" : "/manifest.json"));
   const int code = begun ? http.GET() : -1;
   sampleRam();
+  if (p4 && code == 404) {
+    http.end();
+    return fetchCuratedFeed(picks, base, feedId, false);
+  }
   if (code != 200) {
     char reason[80];
     if (code < 0) {
@@ -326,7 +342,8 @@ bool fetchCuratedFeed(std::vector<Pick>& picks, const String& base, const String
     }
     for (const JsonVariantConst entry : urls) {
       const char* imageUrl = entry.as<const char*>();
-      if (!curatedImageUrl(imageUrl, imagePrefix, portrait)) {
+      if (!curatedImageUrl(imageUrl, imagePrefix, portrait) &&
+          !(p4 && curatedImageUrl(imageUrl, p4ImagePrefix, portrait))) {
         setError("Curated feed contains an invalid image URL");
         return false;
       }
@@ -337,6 +354,7 @@ bool fetchCuratedFeed(std::vector<Pick>& picks, const String& base, const String
   return !picks.empty();
 }
 
+#if !defined(BOARD_IS_JC8012P4A1C)
 struct Decode {
   NetworkClient* stream;
   uint8_t* px;  // RGB888 at the decoded scale
@@ -435,6 +453,8 @@ size_t writeJpeg(void* arg, size_t, const void* data, size_t len) {
   return ((File*)arg)->write((const uint8_t*)data, len);
 }
 
+#endif
+
 uint64_t fsFree() { return wallFreeBytes(); }
 
 String dailyPath(bool portrait, const String& name) { return String(wallDir(portrait, true)) + "/" + name; }
@@ -485,6 +505,7 @@ void clearDaily(bool portrait) {
   }
 }
 
+#if !defined(BOARD_IS_JC8012P4A1C)
 // Download, decode at 1/2^n scale, crop, resample, encode and store one picture.
 // False with log.error set; a network failure also sets *offline.
 bool fetchImage(const Pick& pick, const String& name, LogEntry& log, bool* offline) {
@@ -565,6 +586,8 @@ bool fetchImage(const Pick& pick, const String& name, LogEntry& log, bool* offli
   return ok;
 }
 
+#endif
+
 bool fetchMirroredImage(const Pick& pick, const String& name, LogEntry& log, bool* offline) {
   WiFiClientSecure tls;
   tls.setCACert(FIRMWARE_MIRROR_CA);
@@ -636,12 +659,19 @@ void runTask(void*) {
     bool stop = false;
     int got[2] = {}, offlineRun = 0;
     const int feedRequests = mirror ? 1 : MAX_API_CALLS;
+#if defined(BOARD_IS_JC8012P4A1C)
+    constexpr bool nativeP4 = true;
+    const String mirrorBase = String(MIRROR_BASE) + "p4/";
+#else
+    constexpr bool nativeP4 = false;
+    const String mirrorBase = MIRROR_BASE;
+#endif
     for (int call = 0; call < feedRequests && !stop && (got[0] < want[0] || got[1] < want[1]); call++) {
       setStep(curated ? "Reading Tactula feed" : mirror ? "Reading Tactula mirror" : "Asking Spotlight");
       update([](Status& s) { s.apiCalls++; });
       std::vector<Pick> picks;
-      const bool fetched = curated ? fetchCuratedFeed(picks, s_runFeedBase, s_runFeedId)
-                                   : mirror ? fetchMirrorFeed(picks) : fetchApi(picks);
+      const bool fetched = curated ? fetchCuratedFeed(picks, s_runFeedBase, s_runFeedId, nativeP4)
+                                   : mirror ? fetchMirrorFeed(picks, mirrorBase) : fetchApi(picks);
       if (!fetched) break;
       for (const Pick& pick : picks) {
         const bool p = pick.portrait;
@@ -663,8 +693,14 @@ void runTask(void*) {
         bool offline = false;
         if (wallFs().exists(dailyPath(p, name))) log.ok = true;
         else if (!makeRoom(p, keep[p])) strlcpy(log.error, "flash full", sizeof(log.error));
-        else log.ok = mirror ? fetchMirroredImage(pick, name, log, &offline)
-                             : fetchImage(pick, name, log, &offline);
+        else {
+#if defined(BOARD_IS_JC8012P4A1C)
+          log.ok = fetchMirroredImage(pick, name, log, &offline);
+#else
+          log.ok = mirror ? fetchMirroredImage(pick, name, log, &offline)
+                          : fetchImage(pick, name, log, &offline);
+#endif
+        }
         log.ms = millis() - start;
         if (log.ok) {
           keep[p].push_back(wallId(name));
@@ -756,7 +792,13 @@ bool dailyStart() {
     memset(s_status, 0, sizeof(Status));
     s_status->running = true;
     s_status->curated = curated;
+#if defined(BOARD_IS_JC8012P4A1C)
+    // The Tactula feeds already provide resized JPEGs. Direct Spotlight
+    // relies on the S3 ROM decoder and esp32-camera's JPEG encoder.
+    s_status->mirror = true;
+#else
     s_status->mirror = curated || dispSettings.dailyMirror != 0;
+#endif
     const int count = std::min<int>(dispSettings.dailyCount, wallOnSd() ? 32 : 16);
     s_status->want[0] = wants(0) ? count : 0;
     s_status->want[1] = wants(1) ? count : 0;

@@ -20,6 +20,7 @@
 //   "warn": 25, "crit": 30 } (thresholds optional, in the sensor unit).
 // crit < warn means lower is worse; otherwise higher is worse.
 // "format": "duration" shows a number in s / min / h / d as "1h 49m".
+// "decimals": 0..3 fixes numeric precision; absent = auto (up to two decimals below 1).
 //
 // An HTTP sensor uses "http" instead of "entity":
 // { "type": "sensor", "http": { "url": "http://host/usage",
@@ -92,7 +93,7 @@ constexpr int ORIENT_PORTRAIT = 1;
 constexpr int MAX_DECK_PAGES = 8;
 constexpr int MAX_PAGE_TILES = 24;
 
-enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_SLIDER, TILE_CLOCK, TILE_CLIMATE, TILE_HA_MEDIA, TILE_NAV, TILE_BAMBU, TILE_GROUP, TILE_WEATHER_CLOCK };
+enum TileType : uint8_t { TILE_ACTION = 0, TILE_TOGGLE, TILE_SENSOR, TILE_SLIDER, TILE_CLOCK, TILE_CLIMATE, TILE_HA_MEDIA, TILE_NAV, TILE_BAMBU, TILE_GROUP, TILE_WEATHER_CLOCK, TILE_TEXT };
 enum MetricStyle : uint8_t { METRIC_NUMBER = 0, METRIC_CHART, METRIC_BAR, METRIC_HEADLINE, METRIC_WEATHER, METRIC_CARD };
 enum ActionKind : uint8_t {
   ACT_NONE = 0,
@@ -103,6 +104,7 @@ enum ActionKind : uint8_t {
   ACT_HTTP,          // {method, url, body, contentType, headers}
 };
 enum ConfirmMode : uint8_t { CONFIRM_NONE = 0, CONFIRM_OFF, CONFIRM_ALWAYS };
+enum class NavLinkStyle : uint8_t { Auto, Classic, Glass };
 enum WhenKind : uint8_t { WHEN_ALWAYS = 0, WHEN_ENTITY };
 
 struct WhenDef {
@@ -142,6 +144,7 @@ struct SensorRowDef {
 struct TileDef {
   String id;
   TileType type = TILE_ACTION;
+  NavLinkStyle navLinkStyle = NavLinkStyle::Auto;
   // One-level containers. Children remain ordinary tiles for HA subscriptions,
   // actions and persistence; parent names a group on the same page.
   String parent;
@@ -153,12 +156,18 @@ struct TileDef {
   uint8_t groupSurface = 0; // theme=0, solid=1, transparent=2
   bool groupPlainChildren = true, groupPlain = false; // latter is resolved at parse time
   String entity, label, sub, icon;
+  String text, layer;
+  uint8_t textSize = 1, textAlign = 1, textVAlign = 1;
+  WhenDef layerWhen;
   bool noName = false;  // "label": "" (or blank): show no name instead of HA's
   bool iconPlain = false;   // "iconStyle": "plain": no circle
   bool clockBox = true;    // Clock/headline/weather/toggle: "box": false removes fill and border.
   bool clockDate = false;       // Clock: "date": "always" forces date to fit.
   bool clockDateNever = false;  // Clock: "date": "never" hides the date.
   uint8_t weatherIcons = 0; // Weather Clock: MDI=0, Meteocons Fill=1, Flat=2, Skycons animated=3
+  bool weatherApparent = false; // Weather Clock: "weatherTemperature": "apparent"
+  bool climateDial = false; // Climate controls: "climateLayout": "circular"
+  bool mediaWebOs = false; // Media controls: "mediaRemote": "webos"
   uint8_t bambuLook = 0; // Bambu: dashboard=0 (default in ALL themes), classic=1; legacy 2 supported
   uint8_t bambuAmsUnit = 1; // Bambu AMS detail widget: unit 1..6
   bool showEntityId = true; // Sensor detail popup: optionally show the entity ID under the title.
@@ -169,11 +178,13 @@ struct TileDef {
   String activeState = "on";
   String onImage, offImage; // microSD PNG filename, empty for legacy automatic, or "icon"
   uint8_t lightColorMode = 0; // "lightColor": fixed=0, icon=1, background=2, both=3
+  bool lightPopupPresets = false;  // "lightPopup": "presets", otherwise a hue slider
   HttpSensorDef http;
   String unit;  // HTTP sensor: unit for JSON numbers only
   String detail;  // HTTP sensor: second line template, see above
   std::vector<SensorRowDef> rows;  // HTTP sensor: label + bar + value lines
   bool duration = false;  // sensor: "format": "duration"
+  int8_t decimals = -1;   // sensor: 0..3 fixed precision, -1 = auto
   bool hasColor = false;
   uint32_t color = 0;
   bool hasTextColor = false, hasChartColor = false;
@@ -195,6 +206,8 @@ struct TileDef {
   bool shown = true;  // runtime: "when" as the pages were last built
 };
 
+struct VisibilityLayer { String id; WhenDef when; };
+
 struct PageDef {
   String id, name;
   String group;  // adjacent pages with the same group form one column
@@ -203,6 +216,7 @@ struct PageDef {
   bool shown = true;      // runtime, as for tiles
   uint8_t cols[2] = {4, 3};
   uint8_t rows[2] = {3, 4};
+  std::vector<VisibilityLayer> layers;
   std::vector<TileDef> tiles;
 };
 

@@ -6,7 +6,7 @@
 #include <ImprovWiFiLibrary.h>
 
 #include "config.h"
-#include "settings.h"
+#include "tactula_settings.h"
 
 static ImprovWiFi improvSerial(&Serial);
 static bool improvInited = false;

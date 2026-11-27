@@ -17,7 +17,8 @@ constexpr const char* NVS = "officebambu";
 constexpr const char* ID = "p1s";
 bool s_enabled = false;
 bool s_ha = false;
-String s_address, s_serial, s_code, s_displayName;
+String s_address, s_serial, s_code, s_displayName, s_camera;
+int s_cameraRefresh = 60;
 String s_liveHaName;
 uint32_t s_lastNameLookup = 0;
 
@@ -65,6 +66,8 @@ void officeBambuBegin() {
     s_serial = pref.getString("serial", "");
     s_code = pref.getString("code", "");
     s_displayName = pref.getString("display_name", "");
+    s_camera = pref.getString("camera", "");
+    s_cameraRefresh = constrain(pref.getInt("cam_refresh", 60), 15, 600);
     pref.end();
   }
   apply();
@@ -98,6 +101,8 @@ void officeBambuTick() {
 }
 
 bool officeBambuEnabled() { return s_enabled; }
+String officeBambuCamera() { return s_camera; }
+int officeBambuCameraRefresh() { return s_cameraRefresh; }
 
 String officeBambuLiveName() { return s_liveHaName; }
 
@@ -128,7 +133,21 @@ bool officeBambuConfigured() {
 }
 
 bool officeBambuSave(bool enabled, const String& source, const String& address,
-                     const String& serial, const String& code, const String& displayName, String& error) {
+                     const String& serial, const String& code, const String& displayName, String& error, const String& camera, int refresh) {
+  String nextCamera = camera;
+  nextCamera.trim();
+  if (nextCamera.length()) {
+    if (!nextCamera.startsWith("camera.") || nextCamera.length() <= 7 || nextCamera.length() > 128) {
+      error = "invalid camera entity"; return false;
+    }
+    for (unsigned i = 7; i < nextCamera.length(); ++i) {
+      char c = nextCamera[i];
+      if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
+        error = "invalid camera entity"; return false;
+      }
+    }
+  }
+  refresh = constrain(refresh, 15, 600);
   const bool ha = source == "ha";
   if (source != "ha" && source != "lan") {
     error = "source must be lan or ha";
@@ -165,6 +184,8 @@ bool officeBambuSave(bool enabled, const String& source, const String& address,
   ok = (pref.putString("serial", nextSerial) > 0 || nextSerial.isEmpty()) && ok;
   ok = (pref.putString("code", nextCode) > 0 || nextCode.isEmpty()) && ok;
   ok = (pref.putString("display_name", nextName) > 0 || nextName.isEmpty()) && ok;
+  ok = (pref.putString("camera", nextCamera) > 0 || nextCamera.isEmpty()) && ok;
+  ok = (pref.putInt("cam_refresh", refresh) > 0) && ok;
   pref.end();
   if (!ok) { error = "could not save printer settings"; return false; }
   const bool wasEnabled = s_enabled;
@@ -174,6 +195,8 @@ bool officeBambuSave(bool enabled, const String& source, const String& address,
   s_serial = nextSerial;
   s_code = nextCode;
   s_displayName = nextName;
+  s_camera = nextCamera;
+  s_cameraRefresh = refresh;
   s_liveHaName = "";
   s_lastNameLookup = 0;
   apply();
@@ -201,6 +224,8 @@ String officeBambuJson() {
   doc["source"] = s_ha ? "ha" : "lan";
   doc["address"] = s_address;
   doc["display_name"] = s_displayName;
+  doc["camera"] = s_camera;
+  doc["camera_refresh"] = s_cameraRefresh;
   doc["serial_set"] = s_serial.length() > 0;
   doc["access_code_set"] = s_code.length() > 0;
   doc["version"] = printersVersion();

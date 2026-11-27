@@ -43,6 +43,7 @@ bool wallPin(bool portrait, const String& name);
 void wallClearPin(bool portrait);
 bool wallValidateJpeg(const char* path, bool portrait);
 // Worker from wallRunWorker only. Undimmed RGB565, no full-size scratch.
+bool wallDecodeCamera(const uint8_t* data, size_t bytes, int w, int h, uint16_t* pixels);
 bool wallLoadPicture(const char* path, int w, int h, uint16_t* pixels);
 // Runs a picture job off the loop task. SD jobs share one long-lived worker with
 // a PSRAM stack; LittleFS jobs get a short-lived task with an internal stack.
@@ -53,7 +54,7 @@ bool wallNext(bool portrait);
 void wallGalleryChanged(bool portrait);
 void wallInvalidateJobs();
 // Poll/start work, then commit only after the UI has stopped gestures.
-bool wallPoll(int w, int h, bool idle, bool canSwitch);
+bool wallPoll(int w, int h, bool idle, bool canSwitch, bool automatic = true);
 void wallCommit();
 // The automatic change interval starts again (the photo frame covered the wallpaper).
 void wallRestartTimer();

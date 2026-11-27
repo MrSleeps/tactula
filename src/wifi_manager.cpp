@@ -1,9 +1,11 @@
 #include "debug_log.h"
 #include "wifi_manager.h"
-#include "settings.h"
+#include "tactula_settings.h"
 #include "display_ui.h"
 #include "config.h"
 #include "improv_setup.h"
+#include "deck_updates.h"
+#include "web_server.h"
 #include <WiFi.h>
 #include <DNSServer.h>
 #include <ESPmDNS.h>
@@ -174,6 +176,18 @@ static void completeWiFiStartup() {
   }
 }
 
+// Weak-link recovery: no separate scans, allocations or periodic handoffs.
+static constexpr uint32_t WEAK_SAMPLE_MS = 5000;
+static constexpr uint32_t WEAK_HOLD_MS = 15000;
+static constexpr uint32_t WEAK_RETRY_MS = 300000;
+static constexpr int32_t WEAK_RSSI_DBM = -80;
+static uint32_t weakSampleAt = 0, weakSince = 0, weakAttemptAt = 0;
+static bool weakTracking = false, weakAttempted = false, weakPending = false;
+static int32_t weakPreviousRssi = 0;
+static uint32_t weakReconnects = 0;
+
+uint32_t wifiWeakReconnectCount() { return weakReconnects; }
+
 static void configureStaConnection() {
   // When multiple APs broadcast the same SSID, prefer the best signal
   // during a new connection attempt. No scans or handoffs while connected.
@@ -204,6 +218,15 @@ void startWiFiDuringSplash() {
 
   registerWiFiDiagnostics();
   debugSerial.printf("WiFi: starting background connect during splash: %s\n", wifiSSID);
+#if defined(BOARD_IS_JC8012P4A1C)
+  if (WiFi.mode(WIFI_STA)) {
+    const unsigned long primedAt = millis();
+    while (millis() - primedAt < 2500) {
+      displayTick();
+      delay(20);
+    }
+  }
+#endif
   beginStaConnectAttempt();
   splashStaStarted = true;
   splashStaStartMs = millis();
@@ -343,6 +366,7 @@ void handleWiFi() {
 
   // In STA mode: check for disconnection
   if (WiFi.status() != WL_CONNECTED) {
+    weakTracking = false;
     if (disconnectTime == 0) {
       disconnectTime = millis();
       lastReconnectAttempt = 0;
@@ -390,5 +414,50 @@ void handleWiFi() {
     reconnectAttempts = 0;
     lastReconnectAttempt = 0;
     phase3StartTime = 0;
+
+    const uint32_t now = millis();
+    if (now - weakSampleAt < WEAK_SAMPLE_MS) return;
+    weakSampleAt = now;
+    const int32_t rssi = WiFi.RSSI();
+    if (weakPending && rssi < 0) {
+      debugSerial.printf("WiFi weak recovery: RSSI %ld -> %ld dBm (change %+ld dB)\n",
+                         (long)weakPreviousRssi, (long)rssi,
+                         (long)(rssi - weakPreviousRssi));
+      weakPending = false;
+    }
+    // Ignore invalid samples; never disrupt a firmware operation.
+    if (rssi >= 0 || rssi > WEAK_RSSI_DBM) {
+      weakTracking = false;
+      return;
+    }
+    if (webOtaBusy() || firmwareUpdate::snapshot().downloading ||
+        getScreenState() == SCREEN_OTA_UPDATE) {
+      weakTracking = false;
+      return;
+    }
+    if (!weakTracking) {
+      weakTracking = true;
+      weakSince = now;
+      return;
+    }
+    if (now - weakSince < WEAK_HOLD_MS ||
+        (weakAttempted && now - weakAttemptAt < WEAK_RETRY_MS)) return;
+
+    weakTracking = false;
+    weakAttempted = true;
+    weakAttemptAt = now;
+    weakPreviousRssi = rssi;
+    weakPending = true;
+    ++weakReconnects;
+    debugSerial.printf("WiFi weak recovery #%lu: %ld dBm, reconnecting\n",
+                       (unsigned long)weakReconnects, (long)rssi);
+    // Mark the outage even if the driver reconnects before the next tick,
+    // so the normal recovery path re-announces mDNS.
+    disconnectTime = now ? now : 1;
+    lastReconnectAttempt = now;
+    reconnectAttempts = 0;
+    WiFi.disconnect();
+    configureStaConnection();
+    WiFi.begin(wifiSSID, wifiPass);
   }
 }

@@ -1,5 +1,5 @@
 #include "debug_log.h"
-#include "settings.h"
+#include "tactula_settings.h"
 #include "config.h"
 #include "led.h"       // sanitizeLedPin()
 #include "haptic.h"    // sanitizeHapticPin()
@@ -149,14 +149,16 @@ bool validWallEvery(int minutes) {
 }
 
 void defaultDisplaySettings(DisplaySettings& ds) {
+#if defined(BOARD_IS_JC8012P4A1C)
+  ds.rotation         = 3;   // landscape, matching the validated panel orientation
+#else
   ds.rotation         = 1;   // landscape
+#endif
   ds.tempScaleMax     = GAUGE_TEMP_SCALE_DEFAULT;
   ds.powerScaleW      = GAUGE_POWER_SCALE_DEFAULT;
   ds.warnThresholdPct = 90;
-  ds.theme            = THEME_MIDNIGHT_STUDIO;  // Factory default; existing NVS choices are preserved
-  ds.glassTint        = 40;  // Glass/Tactula opacity; Midnight has its own controls
-  ds.midnightTint     = 90;  // Current Midnight look for existing installations
-  ds.midnightOn       = 92;
+  ds.theme            = normalizeDisplayTheme(THEME_GLASS);
+  ds.glassTint        = 40;  // Glass/Tactula opacity
   ds.glassBlur        = 12;  // Only used by wallpaper themes
   ds.glassDim         = 25;
   ds.glassOn          = 80;
@@ -233,12 +235,9 @@ void loadSettings() {
     dispSettings.powerScaleW = prefs.getUShort("pscale", dispSettings.powerScaleW);
     dispSettings.warnThresholdPct = prefs.getUChar("warnpct", dispSettings.warnThresholdPct);
   }
-  dispSettings.theme = prefs.getUChar("theme", dispSettings.theme);
-  if (dispSettings.theme > THEME_MAX) dispSettings.theme = THEME_MIDNIGHT_STUDIO;
+  dispSettings.theme = normalizeDisplayTheme(prefs.getUChar("theme", dispSettings.theme));
   dispSettings.tactulaRadius = min<uint8_t>(prefs.getUChar("tacradius", dispSettings.tactulaRadius), TACTULA_RADIUS_MAX);
   dispSettings.tactulaPadding = min<uint8_t>(prefs.getUChar("tacpadding", dispSettings.tactulaPadding), TACTULA_PADDING_MAX);
-  dispSettings.midnightTint = min<uint8_t>(prefs.getUChar("midntint", dispSettings.midnightTint), 100);
-  dispSettings.midnightOn = min<uint8_t>(prefs.getUChar("midnon", dispSettings.midnightOn), 100);
   dispSettings.glassTint = min<uint8_t>(prefs.getUChar("gtint", dispSettings.glassTint), 100);
   dispSettings.glassBlur = min<uint8_t>(prefs.getUChar("gblur", dispSettings.glassBlur), 24);
   dispSettings.glassDim = min<uint8_t>(prefs.getUChar("gdim", dispSettings.glassDim), 100);
@@ -302,6 +301,9 @@ void loadSettings() {
   presenceSettings.frameEvery = prefs.getUChar("pfevery", 5);
   if (!validFrameEvery(presenceSettings.frameEvery)) presenceSettings.frameEvery = 5;
   presenceSettings.frameClock = prefs.getBool("pfclock", true);
+  presenceSettings.frameClockLarge = prefs.getBool("pfclocklarge", false);
+  presenceSettings.frameWeatherIcon = prefs.getBool("pfweathericon", true);
+  presenceSettings.frameClockBackground = prefs.getBool("pfclockbg", true);
   presenceSettings.frameAnim = prefs.getBool("pfanim", true);
   presenceSettings.nightWake = prefs.getBool("pnwake", false);
   presenceSettings.nightWakeLevel = prefs.getUChar("pnwlvl", 128);
@@ -355,8 +357,6 @@ void saveSettings() {
   prefs.putUChar("theme", dispSettings.theme);
   prefs.putUChar("tacradius", dispSettings.tactulaRadius);
   prefs.putUChar("tacpadding", dispSettings.tactulaPadding);
-  prefs.putUChar("midntint", dispSettings.midnightTint);
-  prefs.putUChar("midnon", dispSettings.midnightOn);
   prefs.putUChar("gtint", dispSettings.glassTint);
   prefs.putUChar("gblur", dispSettings.glassBlur);
   prefs.putUChar("gdim", dispSettings.glassDim);
@@ -392,6 +392,9 @@ void saveSettings() {
   prefs.putBool("pframe", presenceSettings.frame);
   prefs.putUChar("pfevery", presenceSettings.frameEvery);
   prefs.putBool("pfclock", presenceSettings.frameClock);
+  prefs.putBool("pfclocklarge", presenceSettings.frameClockLarge);
+  prefs.putBool("pfweathericon", presenceSettings.frameWeatherIcon);
+  prefs.putBool("pfclockbg", presenceSettings.frameClockBackground);
   prefs.putBool("pfanim", presenceSettings.frameAnim);
   prefs.putBool("pnwake", presenceSettings.nightWake);
   prefs.putUChar("pnwlvl", presenceSettings.nightWakeLevel);

@@ -6,7 +6,9 @@ void officeBambuBegin();
 void officeBambuTick();
 String officeBambuJson();
 bool officeBambuSave(bool enabled, const String& source, const String& address,
-                     const String& serial, const String& code, const String& displayName, String& error);
+                     const String& serial, const String& code, const String& displayName, String& error, const String& camera = "", int refresh = 60);
+String officeBambuCamera();
+int officeBambuCameraRefresh();
 bool officeBambuLight(bool on);
 bool officeBambuEnabled();
 // Human-readable printer name, stored separately from the editable page layout.

@@ -283,15 +283,16 @@ Choose the file that matches your device and whether you want Bambu printer supp
 
 | Edition | Full installation via USB | Update an existing Tactula device |
 | --- | --- | --- |
-| Standard (no Bambu) | `tactula-v<version>-jc3248w535-without_bambu-full.bin` | `tactula-v<version>-jc3248w535-without_bambu-ota.bin` |
-| With Bambu | `tactula-v<version>-jc3248w535-with_bambu-full.bin` | `tactula-v<version>-jc3248w535-with_bambu-ota.bin` |
+| S3 JC3248W535 Standard | `tactula-v<version>-s3-jc3248w535-standard-full.bin` | `tactula-v<version>-s3-jc3248w535-standard-ota.bin` |
+| S3 JC3248W535 Bambu | `tactula-v<version>-s3-jc3248w535-bambu-full.bin` | `tactula-v<version>-s3-jc3248w535-bambu-ota.bin` |
+| P4 JC8012P4A1C Bambu | `tactula-v<version>-p4-jc8012p4a1c-bambu-full.bin` | `tactula-v<version>-p4-jc8012p4a1c-bambu-ota.bin` |
 
-Replace `<version>` with the published release number, such as `1.2.0`. Both editions target the **Guition JC3248W535 ESP32-S3** board.
+Replace `<version>` with the published version. Earlier releases use their original filenames.
 
-- **First installation or erased flash:** flash the matching `*-full.bin` at address `0x0` over USB using esptool or the [ESP Web Flasher](https://espressif.github.io/esptool-js/) in a supported desktop browser. Example for the Standard edition of v1.2.0:
+- **First installation or erased flash:** flash the matching `*-full.bin` at address `0x0` over USB using esptool or the [ESP Web Flasher](https://espressif.github.io/esptool-js/) in a supported desktop browser. Example for the S3 Standard edition:
 
   ```sh
-  esptool.py --chip esp32s3 --port COM3 --baud 460800 write_flash 0x0 tactula-v1.2.0-jc3248w535-without_bambu-full.bin
+  esptool.py --chip esp32s3 --port COM3 --baud 460800 write_flash 0x0 tactula-v1.6.0-s3-jc3248w535-standard-full.bin
   ```
 
   Change `COM3` to your device's serial port (for example, `/dev/ttyACM0` on Linux). The *full* image can overwrite existing settings and flash data; back up your configuration before reinstalling.
@@ -304,11 +305,12 @@ Releases also include `MANIFEST.json` and `SHA256SUMS.txt`, which record the pac
 
 Source code and official firmware releases are available from **[MrSleeps/tactula](https://github.com/MrSleeps/tactula)**, a fork of [Keralots/TouchDeck](https://github.com/Keralots/TouchDeck).
 
-For local builds, install [PlatformIO](https://platformio.org/) and select one of the two environments:
+For local builds, install [PlatformIO](https://platformio.org/) and run the environment for your hardware and edition:
 
 ```sh
 pio run -e without_bambu
 pio run -e with_bambu
+pio run -e jc8012p4a1c_bambu
 ```
 
 The resulting app-only OTA image is `.pio/build/<environment>/firmware.bin`. To produce a complete installation image, use the firmware packaging scripts described in the repository rather than assuming `firmware.bin` is flashable at `0x0`. The versioned release packaging process also produces full and OTA images for each edition with checksums.

@@ -12,11 +12,20 @@
 #include "deck_panel.h"
 #include <ArduinoJson.h>
 
-// Brings up the panel, LVGL, the pages and touch at the given rotation.
+// Bring up the panel and LVGL at the given rotation.
 bool deckBegin(uint8_t rotation);
+// Load dashboard resources, build its pages and start the touch task.
+void deckLoadDashboard();
 // Once per loop pass (displayTick()): slide landings, the touch wake, system
 // screens, LVGL, page-image refresh.
 void deckTick();
+#if defined(BOARD_IS_JC8012P4A1C)
+void deckShowBootSplash(const char* status);
+enum class DeckDisplayTest : uint8_t { None, Hold, Replay, WithoutSnapshots, RenderOnly, PartialScanout, CpuScanout, DmaReload, DmaLiveReload };
+bool deckBeginDisplayTest(DeckDisplayTest test);
+void deckStopDisplayTest();
+bool deckScanoutHoldActive();
+#endif
 // Short message pill above the page dots (loop task only).
 void deckToast(const char* text);
 // Wake the screen and restart the presence sleep timer (loop task only).
@@ -97,6 +106,12 @@ namespace deck {
 bool uiTryBeginSwipe(int dir, bool vertical, Src& a, Src& b, int& startOff, int& idxA);
 // The compositor refused the drag after a uiTryBegin*() call succeeded.
 void uiSwipeAborted();
+#if defined(BOARD_IS_JC8012P4A1C)
+// Capture a missing-snapshot destination and queue a direct jump on release.
+// The loop task alone performs LVGL navigation.
+bool uiUncachedSwipeTarget(int dir, bool vertical, int& origin, int& target, uint32_t& epoch);
+void uiQueueUncachedSwipe(int origin, int target, uint32_t epoch);
+#endif
 // Touch task: true when a swipe on the pages is never a tap, even with no
 // page that way (pages shown, no panel, card or editor over them).
 bool uiSwipeOwnsTouch();
@@ -108,6 +123,8 @@ bool uiNoSwipeAt(int x, int y);
 // panel height in rows.
 bool uiTryBeginPanel(bool opening, Src& panel, Src& page, int& startOff, int& panelH);
 bool uiPanelIsOpen();
+// Touch task: enqueue a live panel gesture if the snapshot path is unavailable.
+bool uiRequestLivePanel(bool opening);
 }  // namespace deck
 
 #endif  // DECK_UI_H

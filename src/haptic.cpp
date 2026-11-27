@@ -1,6 +1,6 @@
 #include "debug_log.h"
 #include "haptic.h"
-#include "settings.h"
+#include "tactula_settings.h"
 #include "led.h"
 #include <esp_timer.h>
 

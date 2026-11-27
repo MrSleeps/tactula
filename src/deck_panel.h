@@ -16,8 +16,13 @@
 
 namespace deck {
 
+#if defined(BOARD_IS_JC8012P4A1C)
+static constexpr int NATIVE_W = 800;
+static constexpr int NATIVE_H = 1280;
+#else
 static constexpr int NATIVE_W = 320;
 static constexpr int NATIVE_H = 480;
+#endif
 static constexpr size_t FRAME_BYTES = (size_t)NATIVE_W * NATIVE_H * 2;
 
 // A full-screen logical image (logicalW() x logicalH()). stride is in pixels.
@@ -63,7 +68,20 @@ const uint16_t* panelLatestLvFrame();
 // panelWaitLvReady() blocks the LVGL task until the flush task has copied
 // every pixel out of a posted framebuffer (or dropped the frame): one token
 // per posted frame, up to two frames in flight.
+#if defined(BOARD_IS_JC8012P4A1C)
+struct PanelDamageRect {
+  int x1, y1, x2, y2;  // Inclusive logical coordinates of the redraw.
+};
+struct PanelDamage {
+  static constexpr unsigned MaxRects = 8;
+  PanelDamageRect rects[MaxRects];
+  unsigned count;
+  bool full;
+};
+void panelPostLv(int idx, uint32_t gen, const PanelDamage& damage);
+#else
 void panelPostLv(int idx, uint32_t gen);
+#endif
 bool panelWaitLvReady(uint32_t timeoutMs);
 
 // --- Page-slide compositor ---------------------------------------------------
@@ -157,8 +175,29 @@ void compCancel();
 // compCancel() and wait until no frame is reading page images: call before
 // freeing snapshot buffers.
 void panelQuiesce();
+#if defined(BOARD_IS_JC8012P4A1C)
+enum class ScanoutHold : uint8_t { Off, Static, Replay, RenderOnly };
+struct ScanoutTestStats {
+  uint32_t presented;
+  uint32_t failed;
+  uint32_t rendered;
+};
+// Hold the displayed image. Replay repeats the last staging image;
+// RenderOnly keeps building staging images without presenting them.
+void panelBeginScanoutHold(ScanoutHold mode);
+ScanoutTestStats panelEndScanoutHold();
+enum class PanelScanoutPath : uint8_t { Ppa, Partial, Cpu };
+void panelSetScanoutPath(PanelScanoutPath path);
+#endif
 
 struct PanelStats {
+#if defined(BOARD_IS_JC8012P4A1C)
+  uint32_t outputChecked;
+  uint32_t outputMismatchMax;
+  uint32_t nativePartial;
+  uint32_t ppaFull;
+  uint32_t cpuFull;
+#endif
   uint32_t frames;
   uint32_t compFrames;
   uint32_t flushUsAvg;

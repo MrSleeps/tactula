@@ -1,5 +1,6 @@
 // Guition deck: Glass theme wallpaper. See deck_wall.h.
 #include "debug_log.h"
+#include "p4_trace.h"
 #include "deck_wall.h"
 #include <src/misc/cache/instance/lv_image_cache.h>
 #include "deck_config.h"
@@ -12,7 +13,7 @@
 #include <esp_random.h>
 #include <algorithm>
 #include <memory>
-#include "settings.h"
+#include "tactula_settings.h"
 #include "config.h"
 #include <src/libs/tjpgd/tjpgd.h>
 
@@ -58,7 +59,10 @@ struct WallJob {
   char name[15], path[64];
   uint16_t* sharp;
   BlurPixels blurred;
-  bool ok, automatic;
+  uint8_t* jpeg;
+  uint8_t* scratch;
+  size_t jpegBytes;
+  bool ok, automatic, reuseBuffers;
 };
 WallJob s_job = {};
 
@@ -78,6 +82,9 @@ JobState jobState() {
 
 void discardJob() {
   free(s_job.sharp);
+  free(s_job.jpeg);
+  free(s_job.scratch);
+  s_job.jpeg = s_job.scratch = nullptr;
   s_job.blurred.release();
   s_job.sharp = nullptr;
   portENTER_CRITICAL(&s_jobMux);
@@ -105,25 +112,61 @@ class WallReader {
   File file_;
 };
 
+// FASTDECODE 1 needs up to 4 KB for standard tables, input and MCU buffers.
+constexpr size_t JPEG_WORK_BYTES = 4096;
+
 struct JpegInput {
-  WallReader file;
   BlurPixels* bgr;
   int w, h;
+  WallReader* file = nullptr;
+  const uint8_t* data = nullptr;
+  size_t bytes = 0, offset = 0;
   uint16_t* rgb565 = nullptr;
-  JpegInput(const char* path, BlurPixels* packed, int width, int height)
-      : file(path), bgr(packed), w(width), h(height) {}
+  int sourceW = 0, sourceH = 0, cropX = 0, cropY = 0;
 };
 
 size_t jpegRead(JDEC* jd, uint8_t* data, size_t size) {
   JpegInput& in = *(JpegInput*)jd->device;
-  if (data) return in.file.read(data, size);
-  const size_t pos = in.file.position();
-  const size_t count = std::min(size, in.file.size() - pos);
-  return in.file.seek(pos + count) ? count : 0;
+  if (!in.file) {
+    const size_t count = std::min(size, in.bytes - in.offset);
+    if (data) memcpy(data, in.data + in.offset, count);
+    in.offset += count;
+    return count;
+  }
+  if (data) return in.file->read(data, size);
+  const size_t pos = in.file->position();
+  const size_t count = std::min(size, in.file->size() - pos);
+  return in.file->seek(pos + count) ? count : 0;
+}
+
+// Map one decoded JPEG block into the display without a second full image.
+int jpegScaledOutput(JpegInput& in, const uint8_t* pixels, const JRECT& rect) {
+  const int stride = (rect.right - rect.left + 1) * 3;
+  const auto edge = [](int src, int crop, int extent, int output) {
+    const int relative = std::max(0, std::min(src - crop, extent));
+    return (relative * output + extent - 1) / extent;
+  };
+  const int x0 = edge(rect.left, in.cropX, in.sourceW, in.w);
+  const int x1 = edge(rect.right + 1, in.cropX, in.sourceW, in.w);
+  const int y0 = edge(rect.top, in.cropY, in.sourceH, in.h);
+  const int y1 = edge(rect.bottom + 1, in.cropY, in.sourceH, in.h);
+  for (int y = y0; y < y1; ++y) {
+    const int sy = in.cropY + y * in.sourceH / in.h - rect.top;
+    uint8_t* row = in.bgr ? in.bgr->row(y) : nullptr;
+    for (int x = x0; x < x1; ++x) {
+      const int sx = in.cropX + x * in.sourceW / in.w - rect.left;
+      const uint8_t* src = pixels + sy * stride + sx * 3;
+      if (row) memcpy(row + x * 3, src, 3);
+      else in.rgb565[y * in.w + x] = wallDither565(src[2], src[1], src[0], x, y);
+    }
+  }
+  return 1;
 }
 
 int jpegOutput(JDEC* jd, void* pixels, JRECT* rect) {
   JpegInput& in = *(JpegInput*)jd->device;
+  if (!in.bgr && !in.rgb565) return 1;  // Verify without changing the displayed pixels.
+  if (in.sourceW) return jpegScaledOutput(in, (const uint8_t*)pixels, *rect);
   if (rect->right >= in.w || rect->bottom >= in.h) return 0;
   const uint8_t* src = (const uint8_t*)pixels;
   for (int y = rect->top; y <= rect->bottom; y++) {
@@ -140,21 +183,38 @@ int jpegOutput(JDEC* jd, void* pixels, JRECT* rect) {
   return 1;
 }
 
-bool jpegLoad(const char* path, int w, int h, BlurPixels* bgr, uint16_t* rgb565 = nullptr) {
-  JpegInput in(path, bgr, w, h);
-  in.rgb565 = rgb565;
-  if (!in.file) return false;
-  if (in.file.read() != 0xFF || in.file.read() != 0xD8 || !in.file.seek(0)) return false;
-  // FASTDECODE 1 needs up to 4 KB for standard tables, input and MCU buffers.
-  constexpr size_t workSize = 4096;
-  void* work = heap_caps_malloc(workSize, MALLOC_CAP_SPIRAM);
-  if (!work) return false;
+bool decodeJpeg(JpegInput& in, void* work, bool decompress) {
   JDEC jd;
-  bool ok = jd_prepare(&jd, jpegRead, work, workSize, &in) == JDR_OK &&
-            jd.width == w && jd.height == h;
-  if (ok && (bgr || rgb565)) ok = jd_decomp(&jd, jpegOutput, 0) == JDR_OK;
+  if (jd_prepare(&jd, jpegRead, work, JPEG_WORK_BYTES, &in) != JDR_OK) return false;
+  if (jd.width != in.w || jd.height != in.h) {
+    const bool portrait = in.w < in.h;
+    if (!decompress || jd.width != (portrait ? 320 : 480) ||
+        jd.height != (portrait ? 480 : 320)) return false;
+    in.sourceW = std::min<int>(jd.width, jd.height * in.w / in.h);
+    in.sourceH = std::min<int>(jd.height, jd.width * in.h / in.w);
+    in.cropX = (jd.width - in.sourceW) / 2;
+    in.cropY = (jd.height - in.sourceH) / 2;
+  }
+  return !decompress || jd_decomp(&jd, jpegOutput, 0) == JDR_OK;
+}
+
+bool jpegLoad(const char* path, int w, int h, BlurPixels* bgr, uint16_t* rgb565 = nullptr) {
+  WallReader file(path);
+  if (!file || file.read() != 0xFF || file.read() != 0xD8 || !file.seek(0)) return false;
+  void* work = heap_caps_malloc(JPEG_WORK_BYTES, MALLOC_CAP_SPIRAM);
+  if (!work) return false;
+  JpegInput in{bgr, w, h, &file};
+  in.rgb565 = rgb565;
+  const bool ok = decodeJpeg(in, work, bgr || rgb565);
   free(work);
   return ok;
+}
+
+bool decodeStagedJpeg(const WallJob& job, BlurPixels* output) {
+  JpegInput in{output, job.w, job.h};
+  in.data = job.jpeg;
+  in.bytes = job.jpegBytes;
+  return decodeJpeg(in, job.scratch, true);
 }
 
 // Each gallery keeps its own pin.
@@ -174,7 +234,8 @@ void initGallery(bool portrait) {
   loadSource();
   Preferences prefs;
   if (prefs.begin(NVS_NAMESPACE, true)) {
-    s_pin[portrait] = prefs.getString(pinKey(portrait), "");
+    const char* key = pinKey(portrait);
+    s_pin[portrait] = prefs.isKey(key) ? prefs.getString(key, "") : String();
     prefs.end();
   }
   if (!wallValidRef(s_pin[portrait])) s_pin[portrait] = "";
@@ -350,6 +411,27 @@ void blurPacked(BlurPixels& pixels, uint8_t* line, int w, int h, int radius) {
   }
 }
 
+void finishImage(const WallJob& job, uint16_t* sharp, BlurPixels& pixels, uint8_t* scratch) {
+  const int w = job.w, h = job.h;
+  // Pre-composite a black overlay with the wallpaper ONCE when it loads.
+  // Keep this off the render loop: both sharp and frosted tiles use the same
+  // dimming, while labels, icons and controls are drawn afterwards untouched.
+  const int keep = (100 - job.dim) * 256 / 100;
+  for (int y = 0; y < h; y++) {
+    const uint8_t* row = pixels.row(y);
+    for (int x = 0; x < w; x++) {
+      const uint8_t* pixel = row + 3 * x;
+      sharp[y * w + x] = wallDither565(pixel[2] * keep >> 8, pixel[1] * keep >> 8,
+                                      pixel[0] * keep >> 8, x, y);
+    }
+  }
+  blurPacked(pixels, scratch, w, h, job.blur);
+  for (int y = 0; y < h; ++y) {
+    uint8_t* row = pixels.row(y);
+    for (int x = 0; x < pixels.stride; ++x) row[x] = row[x] * keep >> 8;
+  }
+}
+
 bool prepareImage(WallJob& job) {
   const int w = job.w, h = job.h;
   if (w <= 0 || h <= 0 || h > NATIVE_H) return false;
@@ -362,6 +444,30 @@ bool prepareImage(WallJob& job) {
                        static_cast<unsigned>(heap_caps_get_largest_free_block(caps)));
     return false;
   };
+  // Blur scratch holds one output line and one gathered column.
+  const size_t scratchBytes = 3 * (std::max(w, h) + h);
+  if (job.reuseBuffers) {
+    // Keep just the compressed file. Validate all its JPEG blocks off the UI
+    // thread before decoding the same bytes into the existing bands at commit.
+    WallReader file(job.path);
+    const size_t bytes = file ? file.size() : 0;
+    if (bytes < 2) return false;
+    job.jpeg = static_cast<uint8_t*>(heap_caps_malloc(bytes, caps));
+    if (!job.jpeg) return allocationFailed(bytes);
+    if (file.read(job.jpeg, bytes) != bytes || job.jpeg[0] != 0xFF || job.jpeg[1] != 0xD8) {
+      debugSerial.printf("Deck: wallpaper read failed: %s\n", job.name);
+      return false;
+    }
+    job.jpegBytes = bytes;
+    const size_t workBytes = job.blur ? std::max(scratchBytes, JPEG_WORK_BYTES) : JPEG_WORK_BYTES;
+    job.scratch = static_cast<uint8_t*>(heap_caps_malloc(workBytes, caps));
+    if (!job.scratch) return allocationFailed(workBytes);
+    if (!decodeStagedJpeg(job, nullptr)) {
+      debugSerial.printf("Deck: wallpaper decode failed: %s\n", job.name);
+      return false;
+    }
+    return true;
+  }
   job.sharp = static_cast<uint16_t*>(heap_caps_malloc(n * 2, caps));
   if (!job.sharp) return allocationFailed(n * 2);
   job.blurred.stride = 3 * w;
@@ -372,8 +478,6 @@ bool prepareImage(WallJob& job) {
     if (!band) return allocationFailed(bytes);
   }
 
-  // The blur uses one output line and one gathered column.
-  const size_t scratchBytes = 3 * (std::max(w, h) + h);
   std::unique_ptr<uint8_t, decltype(&free)> line(nullptr, free);
   if (job.blur > 0) {
     line.reset(static_cast<uint8_t*>(heap_caps_malloc(scratchBytes, caps)));
@@ -390,23 +494,7 @@ bool prepareImage(WallJob& job) {
   if (!loaded) gradient(job.blurred, w, h);
   const uint32_t decodeMs = millis() - start;
   start = millis();
-  // Pre-composite a black overlay with the wallpaper ONCE when it loads.
-  // Keep this off the render loop: both sharp and frosted tiles use the same
-  // dimming, while labels, icons and controls are drawn afterwards untouched.
-  const int keep = (100 - job.dim) * 256 / 100;
-  for (int y = 0; y < h; y++) {
-    const uint8_t* row = job.blurred.row(y);
-    for (int x = 0; x < w; x++) {
-      const uint8_t* pixel = row + 3 * x;
-      job.sharp[y * w + x] = wallDither565(pixel[2] * keep >> 8, pixel[1] * keep >> 8,
-                                          pixel[0] * keep >> 8, x, y);
-    }
-  }
-  blurPacked(job.blurred, line.get(), w, h, job.blur);
-  for (int y = 0; y < h; ++y) {
-    uint8_t* row = job.blurred.row(y);
-    for (int x = 0; x < job.blurred.stride; ++x) row[x] = row[x] * keep >> 8;
-  }
+  finishImage(job, job.sharp, job.blurred, line.get());
   debugSerial.printf("Deck: wallpaper %s decode %lu ms, dim+blur %lu ms\n",
                 jpeg ? job.name : loaded ? "legacy" : "gradient",
                 (unsigned long)decodeMs, (unsigned long)(millis() - start));
@@ -417,7 +505,10 @@ void wallJob() {
   portENTER_CRITICAL(&s_jobMux);
   WallJob job = s_job;
   portEXIT_CRITICAL(&s_jobMux);
-  job.ok = prepareImage(job);
+  {
+    p4Trace::WorkerScope trace(p4Trace::Worker::WallpaperDecode);
+    job.ok = prepareImage(job);
+  }
   portENTER_CRITICAL(&s_jobMux);
   s_job = job;
   s_jobState = JOB_READY;
@@ -455,21 +546,32 @@ bool wallRunWorker(void (*job)(), bool onSd, const char* name) {
 
 namespace {
 
-void releaseImages() {
+void dropImageCache() {
   lv_image_cache_drop(&s_sharpDsc);
   for (int y = 0; y < s_h; y += WALL_BLUR_BAND_ROWS)
     lv_image_cache_drop(&s_blurDsc[y / WALL_BLUR_BAND_ROWS]);
+}
+
+void releaseImages() {
+  dropImageCache();
   free(s_sharp);
   s_sharp = nullptr;
   s_blur.release();
 }
 
-void installImage(WallJob& job) {
-  releaseImages();
-  s_sharp = job.sharp;
-  s_blur = job.blurred;
-  job.sharp = nullptr;
-  job.blurred = {};
+bool installImage(WallJob& job) {
+  if (job.reuseBuffers) {
+    dropImageCache();
+    // Identical bytes, dimensions and workspace already passed a full decode.
+    if (!decodeStagedJpeg(job, &s_blur)) return false;
+    finishImage(job, s_sharp, s_blur, job.scratch);
+  } else {
+    releaseImages();
+    s_sharp = job.sharp;
+    s_blur = job.blurred;
+    job.sharp = nullptr;
+    job.blurred = {};
+  }
   s_w = job.w;
   s_h = job.h;
   s_blurR = job.blur;
@@ -486,6 +588,7 @@ void installImage(WallJob& job) {
     fillDsc(s_blurDsc[band], s_blur.bands[band], s_w,
             std::min(WALL_BLUR_BAND_ROWS, s_h - y), LV_COLOR_FORMAT_RGB888, 3);
   }
+  return true;
 }
 
 }  // namespace
@@ -493,6 +596,21 @@ void installImage(WallJob& job) {
 bool wallLoad(int w, int h, int blurR, int dimPct) {
   const bool p = w < h;
   initGallery(p);
+#if defined(BOARD_IS_JC8012P4A1C)
+  // Leave the portal/LVGL loop free while the full-size image is prepared.
+  // Keep the previous background during a same-size theme or settings change.
+  const String name = s_request[p] ? s_requested[p] : s_current[p];
+  const bool sameSize = s_sharp && s_w == w && s_h == h;
+  if (sameSize && s_blurR == blurR && s_dim == dimPct && s_loadedName == name) {
+    s_request[p] = false;
+    return true;
+  }
+  if (!sameSize && s_sharp) wallFree();
+  wallRequest(p, name);
+  // Queue the requested image during splash so decoding overlaps Wi-Fi startup.
+  wallPoll(w, h, false, true);
+  return sameSize;
+#else
   if (s_request[p]) {
     s_current[p] = s_requested[p];
     s_request[p] = false;
@@ -517,8 +635,8 @@ bool wallLoad(int w, int h, int blurR, int dimPct) {
     job.blurred.release();
     return false;
   }
-  installImage(job);
-  return true;
+  return installImage(job);
+#endif
 }
 
 void wallFree() {
@@ -635,11 +753,35 @@ void wallClearPin(bool portrait) {
   wallProtect(portrait, 4 + s_source, "");
 }
 
+// Camera-specific entry point: accepts arbitrary baseline JPEG sizes, leaving
+// the stricter wallpaper validation path unchanged.
+bool wallDecodeCamera(const uint8_t* data, size_t bytes, int w, int h, uint16_t* pixels) {
+  if (!data || !bytes || !pixels || w < 1 || h < 1) return false;
+  void* work = heap_caps_malloc(JPEG_WORK_BYTES, MALLOC_CAP_SPIRAM);
+  if (!work) return false;
+  JpegInput in{nullptr, w, h};
+  in.data = data; in.bytes = bytes; in.rgb565 = pixels;
+  JDEC jd;
+  bool ok = jd_prepare(&jd, jpegRead, work, JPEG_WORK_BYTES, &in) == JDR_OK;
+  if (ok && jd.width && jd.height && jd.width <= 4096 && jd.height <= 4096) {
+    in.sourceW = std::max(1, std::min<int>(jd.width, jd.height * w / h));
+    in.sourceH = std::max(1, std::min<int>(jd.height, jd.width * h / w));
+    in.cropX = (jd.width - in.sourceW) / 2;
+    in.cropY = (jd.height - in.sourceH) / 2;
+    ok = jd_decomp(&jd, jpegOutput, 0) == JDR_OK;
+  } else ok = false;
+  free(work);
+  return ok;
+}
+
 bool wallLoadPicture(const char* path, int w, int h, uint16_t* pixels) {
   return pixels && jpegLoad(path, w, h, nullptr, pixels);
 }
 
 bool wallValidateJpeg(const char* path, bool portrait) {
+#if defined(BOARD_IS_JC8012P4A1C)
+  if (jpegLoad(path, portrait ? 800 : 1280, portrait ? 1280 : 800, nullptr)) return true;
+#endif
   return jpegLoad(path, portrait ? 320 : 480, portrait ? 480 : 320, nullptr);
 }
 
@@ -720,12 +862,13 @@ void wallGalleryChanged(bool portrait) {
   wallRequest(portrait, next);
 }
 
-bool wallPoll(int w, int h, bool idle, bool canSwitch) {
+bool wallPoll(int w, int h, bool idle, bool canSwitch, bool automatic) {
   const bool p = w < h;
   const uint32_t now = millis();
   if (jobState() == JOB_READY) {
     if (s_job.epoch != s_epoch || s_job.requestId != s_requestId[p] || s_job.settings != settingsKey() ||
-        s_job.w != w || s_job.h != h || !s_job.ok) {
+        s_job.w != w || s_job.h != h ||
+        (s_job.reuseBuffers && (!s_sharp || s_w != w || s_h != h)) || !s_job.ok) {
       if (!s_job.ok) s_retryMs = now;
       discardJob();
     } else {
@@ -739,6 +882,7 @@ bool wallPoll(int w, int h, bool idle, bool canSwitch) {
   initGallery(p);
   if (s_request[p] && s_automatic[p] && !idle) return false;
   if (!s_request[p]) {
+    if (!automatic) return false;
     if (!idle || !dispSettings.wallEvery || now - s_changedMs < (uint32_t)dispSettings.wallEvery * 60000)
       return false;
     if (now - s_scanMs < 1000) return false;
@@ -750,14 +894,18 @@ bool wallPoll(int w, int h, bool idle, bool canSwitch) {
   WallJob job = {};
   job.w = w;
   job.h = h;
-  job.blur = dispSettings.glassBlur;
-  job.dim = dispSettings.glassDim;
+  const bool cinematic = themeUsesModernLayout(dispSettings.theme);
+  job.blur = cinematic ? 0 : dispSettings.glassBlur;
+  job.dim = cinematic && !themeUsesGlassMode(dispSettings.theme) ? std::max<int>(dispSettings.glassDim, 35) : dispSettings.glassDim;
   job.settings = settingsKey();
   job.epoch = s_epoch;
   job.requestId = s_requestId[p];
   job.automatic = s_automatic[p];
   strlcpy(job.name, s_requested[p].c_str(), sizeof(job.name));
   strlcpy(job.path, wallGalleryPath(p, job.name).c_str(), sizeof(job.path));
+#if defined(BOARD_IS_JC8012P4A1C)
+  job.reuseBuffers = job.name[0] && s_sharp && s_w == w && s_h == h;
+#endif
   portENTER_CRITICAL(&s_jobMux);
   s_job = job;
   s_jobState = JOB_RUNNING;
@@ -776,9 +924,15 @@ bool wallPoll(int w, int h, bool idle, bool canSwitch) {
 void wallCommit() {
   if (jobState() != JOB_READY) return;
   const uint32_t start = millis();
-  installImage(s_job);
+  const bool reused = s_job.reuseBuffers;
+  const bool installed = installImage(s_job);
   discardJob();
-  debugSerial.printf("Deck: wallpaper swap %lu ms\n", (unsigned long)(millis() - start));
+  if (installed) debugSerial.printf("Deck: wallpaper swap %lu ms%s\n", (unsigned long)(millis() - start),
+                                    reused ? " (reused pixel buffers)" : "");
+  else {
+    s_retryMs = millis();
+    debugSerial.println("Deck: wallpaper commit decode failed");
+  }
 }
 
 void wallRestartTimer() { s_changedMs = millis(); }

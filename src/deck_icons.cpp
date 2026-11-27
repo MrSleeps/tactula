@@ -265,7 +265,7 @@ uint8_t* readBrandFile(const char* path, size_t limit, size_t& size, String& err
     const int n = f.read(data + got, std::min<size_t>(32768, size - got));
     if (n <= 0) break;
     got += n;
-    esp_task_wdt_reset();
+    if (esp_task_wdt_status(nullptr) == ESP_OK) esp_task_wdt_reset();
   }
   if (got != size) {
     heap_caps_free(data);
@@ -484,7 +484,7 @@ bool iconsLoad(const char* path, String& err) {
     const int r = f.read(data + got, std::min<size_t>(32768, size - got));
     if (r <= 0) break;
     got += r;
-    esp_task_wdt_reset();
+    if (esp_task_wdt_status(nullptr) == ESP_OK) esp_task_wdt_reset();
   }
   f.close();
   size_t count = 0;

@@ -1,3 +1,4 @@
+#include "optional_preferences.h"
 #include "deck_auth.h"
 
 #include <Preferences.h>
@@ -76,7 +77,7 @@ void begin() {
   valid = false;
   stored = {};
   Preferences prefs;
-  if (!prefs.begin(NAMESPACE, true)) return;
+  if (!openOptionalPreferences(prefs, NAMESPACE)) return;
   active = prefs.isKey(KEY);
   if (active && prefs.getBytesLength(KEY) == sizeof(Record) &&
       prefs.getBytes(KEY, &stored, sizeof(Record)) == sizeof(Record) &&

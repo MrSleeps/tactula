@@ -1,7 +1,7 @@
 #include "audio.h"
 #include "deck_sd.h"
 #include "display_ui.h"
-#include "settings.h"
+#include "tactula_settings.h"
 #include <driver/i2s_std.h>
 #include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
@@ -102,6 +102,11 @@ void closeChannel() {
 }
 
 bool openChannel(uint32_t rate) {
+#if defined(BOARD_IS_JC8012P4A1C)
+  // P4 playback requires ES8311 codec setup on the board I2C bus.
+  s_lastErr = ESP_ERR_NOT_SUPPORTED;
+  return false;
+#else
   esp_err_t err;
   if (s_tx && s_rate == rate) return true;
   if (s_tx) {
@@ -158,6 +163,7 @@ bool openChannel(uint32_t rate) {
   // The amp wakes when BCLK returns; let it settle on silence.
   vTaskDelay(pdMS_TO_TICKS(AMP_SETTLE_MS));
   return true;
+#endif
 }
 
 // ---- synthesis ----

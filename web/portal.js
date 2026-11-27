@@ -45,6 +45,109 @@
     return data;
   }
 
+  const scanoutHold = $("scanoutHold");
+  const scanoutReplay = $("scanoutReplay");
+  const renderOnly = $("renderOnly");
+  const partialScanout = $("partialScanout");
+  const cpuScanout = $("cpuScanout");
+  const pauseSnapshots = $("pauseSnapshots");
+  const scanoutTestButtons = [scanoutHold, scanoutReplay, renderOnly, partialScanout, cpuScanout, pauseSnapshots].filter(Boolean);
+  function setScanoutTestsDisabled(disabled) {
+    scanoutTestButtons.forEach((button) => { button.disabled = disabled; });
+  }
+  const scanoutStop = $("scanoutStop");
+  let scanoutTimer = null, scanoutRequestBusy = false;
+  async function runScanoutTest(mode) {
+    if (scanoutRequestBusy) return;
+    scanoutRequestBusy = true;
+    scanoutStop.disabled = true;
+    const status = $("scanoutHoldStatus");
+    const snapshots = mode === "snapshots";
+    setScanoutTestsDisabled(true);
+    try {
+      await getJson("/api/deck/scanout-hold", {
+        method: "POST",
+        body: new URLSearchParams({ mode, replay: mode === "replay" ? "1" : "0" }),
+      });
+      status.textContent = snapshots
+        ? "Leave the dashboard idle and watch for flashes. Live updates continue."
+        : mode === "render-only"
+        ? "Watch for flashes while the displayed picture stays still and the dashboard keeps rendering."
+        : mode === "cpu-scanout"
+        ? "Watch for flashes while the dashboard stays live. Normal scanout resumes in 2 minutes."
+        : mode === "partial-scanout"
+        ? "Watch for flashes on the same page. Full-frame scanout resumes automatically."
+        : "Watch the screen for a flash. The dashboard will resume automatically.";
+      clearTimeout(scanoutTimer);
+      scanoutTimer = setTimeout(() => {
+        scanoutTimer = null;
+        status.textContent = "Display test finished.";
+        setScanoutTestsDisabled(false);
+      }, snapshots || mode === "cpu-scanout" ? 120000 : 60000);
+    } catch (error) {
+      status.textContent = error.message;
+      setScanoutTestsDisabled(false);
+    } finally {
+      scanoutRequestBusy = false;
+      scanoutStop.disabled = false;
+    }
+  }
+  scanoutStop.addEventListener("click", async () => {
+    if (scanoutRequestBusy) return;
+    scanoutRequestBusy = true;
+    scanoutStop.disabled = true;
+    setScanoutTestsDisabled(true);
+    try {
+      await getJson("/api/deck/scanout-hold", {
+        method: "POST", body: new URLSearchParams({mode: "stop"})
+      });
+      clearTimeout(scanoutTimer);
+      scanoutTimer = null;
+      $("scanoutHoldStatus").textContent = "Normal display operation requested.";
+    } catch (error) {
+      $("scanoutHoldStatus").textContent = error.message;
+    } finally {
+      scanoutRequestBusy = false;
+      scanoutStop.disabled = false;
+      setScanoutTestsDisabled(scanoutTimer !== null);
+    }
+  });
+  scanoutHold.addEventListener("click", () => runScanoutTest("hold"));
+  scanoutReplay.addEventListener("click", () => runScanoutTest("replay"));
+  renderOnly.addEventListener("click", () => runScanoutTest("render-only"));
+  cpuScanout?.addEventListener("click", () => runScanoutTest("cpu-scanout"));
+  partialScanout?.addEventListener("click", () => runScanoutTest("partial-scanout"));
+  pauseSnapshots.addEventListener("click", () => runScanoutTest("snapshots"));
+
+  let p4DiagnosticsAvailable = false;
+  let p4DiagnosticsBusy = false;
+  async function refreshP4Diagnostics(body) {
+    if (!debugModeEnabled || !p4DiagnosticsAvailable || p4DiagnosticsBusy) return;
+    p4DiagnosticsBusy = true;
+    const select = $("p4DiagnosticsMode");
+    select.disabled = $("p4DiagRefresh").disabled = $("p4DiagReset").disabled = true;
+    try {
+      const data = await getJson("/api/p4/diagnostics", body ? {
+        method: "POST", body: new URLSearchParams(body)
+      } : { cache: "no-store" });
+      select.value = data.mode;
+      $("p4DiagLate").textContent = data.lateFrames;
+      $("p4DiagUnderruns").textContent = data.underruns;
+      $("p4DiagGap").textContent = (data.worstGapUs / 1000).toFixed(3) + " ms";
+      const seconds = Math.floor(data.elapsedMs / 1000);
+      $("p4DiagElapsed").textContent = Math.floor(seconds / 60) + "m " + seconds % 60 + "s";
+      $("p4DiagStatus").textContent = "Counters reset on mode change. Refresh manually after the test.";
+    } catch (error) {
+      $("p4DiagStatus").textContent = error.message;
+    } finally {
+      select.disabled = $("p4DiagRefresh").disabled = $("p4DiagReset").disabled = false;
+      p4DiagnosticsBusy = false;
+    }
+  }
+  $("p4DiagnosticsMode").addEventListener("change", (e) => refreshP4Diagnostics({mode: e.target.value}));
+  $("p4DiagRefresh").addEventListener("click", () => refreshP4Diagnostics());
+  $("p4DiagReset").addEventListener("click", () => refreshP4Diagnostics({reset: "1"}));
+
   let debugModeEnabled = false;
   let debugLogsAvailable = false;
   let debugLogsPaused = false;
@@ -53,24 +156,42 @@
   let debugLogDecoder = new TextDecoder();
   const debugMode = $("debugMode");
   const debugModeHint = $("debugModeHint");
+  const debugModeRetry = $("debugModeRetry");
   const debugLogStatus = $("debugLogsStatus");
   const debugLogOutput = $("debugLogsOutput");
 
+  function updateDebugVisibility() {
+    $("debugLogViewer").classList.toggle("hidden", !debugModeEnabled || !debugLogsAvailable);
+    $("p4DiagnosticsCard").classList.toggle("hidden", !debugModeEnabled || !p4DiagnosticsAvailable);
+    if (debugModeEnabled && p4DiagnosticsAvailable &&
+        document.querySelector(".page.active")?.dataset.page === "debug") refreshP4Diagnostics();
+  }
+
   async function loadDebugStatus() {
+    debugMode.disabled = true;
+    debugModeRetry.classList.add("hidden");
+    debugModeHint.textContent = "Checking debug mode…";
     try {
-      const state = await getJson("/api/debug", { cache: "no-store" });
+      const state = await getJson("/api/debug", {
+        cache: "no-store", signal: AbortSignal.timeout(5000),
+      });
       debugModeEnabled = state.enabled;
       debugLogsAvailable = state.available;
       debugMode.checked = debugModeEnabled;
       debugMode.disabled = false;
-      $("navLogs").classList.toggle("hidden", !debugLogsAvailable);
+      updateDebugVisibility();
       debugModeHint.textContent = state.enabled && !state.available
         ? "Running without log capture. The device could not allocate the log buffer."
-        : "Restarts the device and applies your change.";
+        : state.enabled
+          ? "Log capture is on. Turning it off restarts the device."
+          : "Turn on Debug mode to capture live logs. The device will restart.";
+      if (debugLogsAvailable) readDebugLogs();
     } catch {
       debugModeHint.textContent = "Could not read debug mode.";
+      debugModeRetry.classList.remove("hidden");
     }
   }
+  debugModeRetry.addEventListener("click", loadDebugStatus);
 
   debugMode.addEventListener("change", async () => {
     const enabled = debugMode.checked;
@@ -92,13 +213,14 @@
             cache: "no-store", signal: AbortSignal.timeout(1500),
           });
           if (state.enabled === enabled) {
-            try { localStorage.setItem("sn_page", state.available ? "logs" : "overview"); } catch {}
+            try { localStorage.setItem("sn_page", "logs"); } catch {}
             location.reload();
             return;
           }
         } catch {}
       }
-      debugModeHint.textContent = "Waiting for the device. Reload this page when it is online.";
+      debugModeHint.textContent = "Waiting for the device. Retry when it is online.";
+      debugModeRetry.classList.remove("hidden");
     } catch (e) {
       debugMode.checked = debugModeEnabled;
       debugMode.disabled = false;
@@ -107,8 +229,8 @@
   });
 
   async function readDebugLogs() {
-    if (!debugLogsAvailable || debugLogsPaused || debugLogsReading || document.hidden ||
-        document.querySelector(".page.active")?.dataset.page !== "logs") return;
+    if (!debugModeEnabled || !debugLogsAvailable || debugLogsPaused || debugLogsReading || document.hidden ||
+        document.querySelector(".page.active")?.dataset.page !== "debug") return;
     debugLogsReading = true;
     try {
       const r = await fetch("/api/debug/logs?after=" + debugLogCursor, { cache: "no-store" });
@@ -262,19 +384,21 @@
       if (!(await loadConfig())) return false;
     }
     if (name !== "hardware") stopLedPreview();
-    if (name === "light" || name === "hardware") loadEntityLists();
+    // Entity suggestions load only when the user focuses a relevant input.
     if (name === "hardware") loadAudio();
     if (name === "printer") {
       if (!printerAvailable) return false;
       refreshPrinter();
     }
-    if (name === "logs" && !debugLogsAvailable) return false;
     if (name === "storage") loadStorageStatus();
     if (name === "icons") loadBedroomIcons();
     if (name === "security") loadAuthStatus();
     qa(".page").forEach((p) => p.classList.toggle("active", p.dataset.page === name));
     if (name === "overview") refreshOverviewBambuConnection();
-    if (name === "logs") readDebugLogs();
+    if (name === "debug") {
+      readDebugLogs();
+      updateDebugVisibility();
+    }
     qa(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.nav === name));
     const button = document.querySelector('.nav-item[data-nav="' + name + '"]');
     $("crumb").textContent = button ? button.textContent.replace(/\s+/g, " ").trim() : "tactula";
@@ -335,8 +459,6 @@
     $("ledNightBrightnessVal").textContent = pct("ledNightBrightness");
     $("tactulaRadiusVal").textContent = $("tactulaRadius").value + " px";
     $("tactulaPaddingVal").textContent = $("tactulaPadding").value + " px";
-    $("midnightTintVal").textContent = $("midnightTint").value + "%";
-    $("midnightOnVal").textContent = $("midnightOn").value + "%";
     $("glassTintVal").textContent = $("glassTint").value + "%";
     $("glassBlurVal").textContent = $("glassBlur").value === "0" ? "Off" : $("glassBlur").value + " px";
     $("glassDimVal").textContent = $("glassDim").value + "%";
@@ -354,8 +476,6 @@
     "ledNightBrightness",
     "tactulaRadius",
     "tactulaPadding",
-    "midnightTint",
-    "midnightOn",
     "glassTint",
     "glassBlur",
     "glassDim",
@@ -365,18 +485,30 @@
     "hapticMs",
     "audioVolume",
   ].forEach((id) => $(id).addEventListener("input", updateRangeLabels));
+  const tactulaPaletteIds = { ocean: [6, 8], ember: [7, 9], amethyst: [10, 13], forest: [11, 14], graphite: [12, 15] };
+  const modernThemeIds = Object.values(tactulaPaletteIds).flat();
+  const glassThemeIds = Object.values(tactulaPaletteIds).map(ids => ids[1]);
   function updateGlassFields() {
     const theme = $("theme").value;
     const tactula = theme === "3";
-    const studio = theme === "5";
-    $("glassLook").classList.toggle("hidden", theme !== "2" && !tactula);
-    $("tactulaLook").classList.toggle("hidden", !tactula && !studio);
-    $("midnightTintField").classList.toggle("hidden", !studio);
-    $("midnightOnField").classList.toggle("hidden", !studio);
-    $("glassBlurField").classList.toggle("hidden", tactula);
+    const modern = modernThemeIds.includes(Number(theme));
+    const glass = glassThemeIds.includes(Number(theme));
+    $("glassLook").classList.toggle("hidden", theme !== "2" && !tactula && !glass);
+    $("tactulaLook").classList.toggle("hidden", !tactula);
+    // P4 modern Glass is live transparency, not the legacy full-page frost bake.
+    $("glassBlurField").classList.toggle("hidden", tactula || modern);
+    $("glassAutoTextField").classList.toggle("hidden", modern);
     $("glassLookTitle").textContent = tactula ? "Tactula glass look" : "Glass look";
   }
   $("theme").addEventListener("change", updateGlassFields);
+  function updateModernTheme() {
+    const ids = tactulaPaletteIds[$("tactulaPalette").value] || tactulaPaletteIds.ocean;
+    const glass = $("tactulaGlass").checked;
+    $("theme").value = String(ids[glass ? 1 : 0]);
+    $("theme").dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  $("tactulaPalette").addEventListener("change", updateModernTheme);
+  $("tactulaGlass").addEventListener("change", updateModernTheme);
   // Animations: the presets as touch, on/off, page, card (as on the deck);
   // switching to Custom starts from the preset that was chosen.
   const FX_SETS = [[0, 0, 0, 0], [1, 1, 1, 1], [2, 2, 2, 2], [3, 3, 3, 3], [4, 4, 4, 1]];
@@ -416,6 +548,9 @@
   }
   $("nightWake").addEventListener("change", updateNightWakeFields);
   /* Entity suggestions from the list cached on the device ("Update from HA" in Pages & tiles). */
+  document.addEventListener("focusin", (e) => {
+    if (e.target.matches?.("input[list=presenceList], input[list=ledEntityList]")) loadEntityLists();
+  });
   let entityListsLoaded = false;
   async function loadEntityLists() {
     if (entityListsLoaded) return;
@@ -621,8 +756,23 @@
     $("maintBoard").textContent = c.board;
     $("maintIp").textContent = c.ip || "--";
     $("diagBoard").textContent = c.board;
+    $("scanoutHoldControls").classList.toggle("hidden", !c.display.cinematicAvailable);
+    p4DiagnosticsAvailable = !!c.display.cinematicAvailable;
+    updateDebugVisibility();
     setVal("rotation", c.display.rotation);
-    setVal("theme", c.display.theme || 0);
+    $("legacyThemeField").classList.add("hidden");
+    $("modernPaletteField").classList.remove("hidden");
+    $("modernGlassField").classList.remove("hidden");
+    for (const option of $("theme").options) {
+      const modern = modernThemeIds.includes(Number(option.value));
+      option.disabled = option.hidden = !modern;
+    }
+    const selectedTheme = Number(c.display.theme ?? 2);
+    const migrated = modernThemeIds.includes(selectedTheme) ? selectedTheme :
+      (selectedTheme === 0 || selectedTheme === 1 || selectedTheme === 3) ? 6 : 8;
+    setVal("theme", migrated);
+    setVal("tactulaPalette", Object.keys(tactulaPaletteIds).find(key => tactulaPaletteIds[key].includes(migrated)) || "ocean");
+    setCheck("tactulaGlass", glassThemeIds.includes(migrated));
     setVal("tileFx", c.display.tileFx || 0);
     FX_IDS.forEach((id) => setVal(id, c.display[id] || 0));
     setVal("brightness", c.display.brightness);
@@ -644,8 +794,6 @@
     dailyStatus();
     setVal("tactulaRadius", c.display.tactulaRadius ?? 22);
     setVal("tactulaPadding", c.display.tactulaPadding ?? 9);
-    setVal("midnightTint", c.display.midnightTint ?? 90);
-    setVal("midnightOn", c.display.midnightOn ?? 92);
     setVal("glassTint", c.display.glassTint);
     setVal("glassBlur", c.display.glassBlur);
     setVal("glassDim", c.display.glassDim);
@@ -705,6 +853,9 @@
     setVal("sleepMode", p.frame ? "frame" : p.dim ? "dim" : "off");
     setVal("frameEvery", p.frameEvery || 5);
     setCheck("frameClock", p.frameClock !== false);
+    setVal("frameClockSize", p.frameClockLarge ? "large" : "small");
+    setCheck("frameWeatherIcon", p.frameWeatherIcon !== false);
+    setCheck("frameClockBackground", p.frameClockBackground !== false);
     setCheck("frameAnim", p.frameAnim !== false);
     setVal("sleepDim", p.dim || 10);
     for (let i = 0; i < 4; i++) setVal("presence" + i, (p.entities || [])[i] || "");
@@ -849,7 +1000,11 @@
   }
   setInterval(refreshOverviewBambuConnection, 15000);
 
+  let statusBusy = false, lastStatusPoll = 0;
   async function pollStatus() {
+    if (statusBusy || (document.hidden && !awaitingOtaRestart)) return;
+    statusBusy = true;
+    lastStatusPoll = Date.now();
     try {
       const s = await getJson("/api/status?t=" + Date.now());
       const version = typeof s.version === "string" ? s.version : null;
@@ -936,6 +1091,8 @@
       connectionState("factMqtt", "Unavailable", "error", "factMqttDetail", "");
       if (overviewBambuLan) connectionState("factBambu", "Unavailable", "error",
         "factBambuDetail", "");
+    } finally {
+      statusBusy = false;
     }
   }
 
@@ -960,7 +1117,7 @@
   }
   $("previewNow").addEventListener("click", refreshPreview);
   setInterval(() => {
-    if ($("previewAuto").checked && document.querySelector(".page.active")?.dataset.page === "overview")
+    if (!document.hidden && $("previewAuto").checked && document.querySelector(".page.active")?.dataset.page === "overview")
       refreshPreview();
   }, 5000);
 
@@ -979,7 +1136,7 @@
       const fwAction = $("fwDownloadNow");
       fwAction.dataset.action = data.staged ? "confirm" : "download";
       fwAction.textContent = data.staged ? "Install firmware" : "Download verified OTA";
-      fwAction.disabled = data.downloading || (!data.staged && !data.available);
+      fwAction.disabled = data.otaSupported === false || data.downloading || (!data.staged && !data.available);
       $("fwDownloadStatus").textContent = data.downloading
         ? "Downloading to Tactula and verifying: " + fmtBytes(data.downloadedBytes) + " / " + fmtBytes(data.totalBytes)
         : data.staged
@@ -989,7 +1146,9 @@
             : data.available
               ? "Update found, but NOT downloaded to Tactula. Select Download verified OTA, then wait for verification before installing."
               : "";
-      $("fwUpdateStatus").textContent = data.checking
+      $("fwUpdateStatus").textContent = data.otaSupported === false
+        ? "OTA unavailable: this device has no inactive OTA partition. Preserve NVS and check the partition layout before USB recovery."
+        : data.checking
         ? "Checking the " + (data.allowBeta ? "beta" : "stable") + " firmware release feed..."
         : data.checkPending
           ? "Update check queued..."
@@ -1065,13 +1224,30 @@
   });
   refreshFirmwareUpdateStatus();
   setInterval(() => {
-    if (document.querySelector(".page.active")?.dataset.page === "maintenance")
+    if (!document.hidden && document.querySelector(".page.active")?.dataset.page === "maintenance")
       refreshFirmwareUpdateStatus();
   }, 15000);
 
-  function uploadFirmware(file) {
+  let firmwareUploadInProgress = false;
+  async function uploadFirmware(file) {
     if (!file || !file.name.toLowerCase().endsWith(".bin")) {
       showToast("Choose a firmware .bin file", true);
+      return;
+    }
+    if (firmwareUploadInProgress) {
+      showToast("A firmware upload is already running.", true);
+      return;
+    }
+    firmwareUploadInProgress = true;
+    try {
+      const readiness = await getJson("/api/firmware/updates?t=" + Date.now());
+      if (readiness.otaSupported === false)
+        throw new Error("No inactive OTA partition. An application-only USB recovery may be needed; do not erase P4 NVS.");
+      if (readiness.otaSlotBytes && file.size > readiness.otaSlotBytes)
+        throw new Error("Firmware exceeds the inactive OTA partition (" + fmtBytes(readiness.otaSlotBytes) + ").");
+    } catch (error) {
+      firmwareUploadInProgress = false;
+      showToast("Cannot start firmware upload: " + error.message, true);
       return;
     }
     const fd = new FormData();
@@ -1088,6 +1264,7 @@
       }
     };
     xhr.onload = () => {
+      firmwareUploadInProgress = false;
       let data = {};
       try {
         data = JSON.parse(xhr.responseText);
@@ -1103,8 +1280,13 @@
       }
     };
     xhr.onerror = () => {
+      firmwareUploadInProgress = false;
       showToast("Firmware upload failed", true);
       $("otaText").textContent = "Upload failed";
+    };
+    xhr.onabort = () => {
+      firmwareUploadInProgress = false;
+      $("otaText").textContent = "Firmware upload cancelled";
     };
     xhr.open("POST", "/ota/upload");
     xhr.send(fd);
@@ -1223,6 +1405,216 @@
       $("bedroomIconsBrowse").disabled = true;
     }
   }
+  const weatherPackCard = $("weatherIconPacksCard");
+  if (weatherPackCard) {
+    // Install weather icon packs through the existing validated microSD PNG API.
+    // Browser-side conversion keeps SVG parsing and animation off the ESP32.
+    const WEATHER_SVGS = ['clear-day','clear-night','partly-cloudy-day','partly-cloudy-night',
+      'cloudy','fog','hail','rain','thunderstorms','snow','wind'];
+    async function weatherPng(style, slug) {
+      const url='https://cdn.jsdelivr.net/npm/@meteocons/svg-static@0.1.0/'+style+'/'+slug+'.svg';
+      const response=await fetch(url);
+      if (!response.ok) throw new Error('Meteocons '+slug+': HTTP '+response.status);
+      const svg=await response.blob();
+      if (svg.size>250000 || !((svg.type||'').includes('svg') || svg.type==='text/plain'))
+        throw new Error('Unexpected Meteocons SVG '+slug);
+      const objectUrl=URL.createObjectURL(svg);
+      try {
+        const img=new Image();
+        await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(new Error('Could not decode '+slug));img.src=objectUrl;});
+        const canvas=document.createElement('canvas');
+        canvas.width=canvas.height=64;
+        const ctx=canvas.getContext('2d');
+        if (!ctx) throw new Error('Canvas unavailable');
+        ctx.drawImage(img,0,0,64,64);
+        return await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('Could not convert '+slug)),'image/png'));
+      } finally { URL.revokeObjectURL(objectUrl); }
+    }
+    weatherPackCard.querySelectorAll('[data-wclock-install]').forEach(x=>{
+      x.onclick=async()=>{
+        const style=x.dataset.wclockInstall;
+        const status=x.closest('.field').querySelector('[data-wclock-status]');
+        const buttons=[...weatherPackCard.querySelectorAll('button')];
+        buttons.forEach(b=>b.disabled=true);
+        try {
+          const check=await getJson('/api/bedroom/icons');
+          if (!check.mounted) throw new Error('Insert or mount the microSD card first.');
+          for(let i=0;i<WEATHER_SVGS.length;i++){
+            const slug=WEATHER_SVGS[i];
+            status.textContent='Installing '+style+' '+(i+1)+'/'+WEATHER_SVGS.length+': '+slug;
+            const png=await weatherPng(style,slug);
+            const name='wc_'+style+'_'+slug.replace(/-/g,'_')+'_off.png';
+            const fd=new FormData();
+            fd.append('icon',png,name);
+            await getJson('/api/bedroom/icons/upload?n='+encodeURIComponent(name),{method:'POST',body:fd});
+          }
+          status.textContent='Meteocons '+style+' installed ('+WEATHER_SVGS.length+' icons).';
+          await loadBedroomIcons();
+        }catch(e){status.textContent='Install failed: '+e.message;}
+        finally {buttons.forEach(b=>b.disabled=false);}
+      };
+    });
+    const SKYCONS_STATES = ['clear-day','clear-night','partly-cloudy-day','partly-cloudy-night',
+      'cloudy','rain','pouring','lightning','thunderstorms','hail','sleet','snow','wind','windy-variant','fog','exceptional'];
+    // Original Tactula outline artwork. Render only in the browser installer;
+    // the device uses its existing eight-frame PNG playback pipeline.
+    function drawTactulaWeather(ctx,slug,index,size) {
+      const t=2*Math.PI*index/8;
+      ctx.save();ctx.scale(size/64,size/64);
+      ctx.strokeStyle='#fff';ctx.fillStyle='#fff';
+      ctx.lineWidth=2.8;ctx.lineCap='round';ctx.lineJoin='round';
+      function line(x,y,a,b){ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(a,b);ctx.stroke();}
+      function circle(x,y,r){ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.stroke();}
+      function star(x,y,r,phase){
+        ctx.save();ctx.globalAlpha=.72+.28*Math.cos(t+phase);
+        ctx.translate(x,y);ctx.scale(r,r);
+        ctx.beginPath();ctx.moveTo(0,-1);ctx.quadraticCurveTo(.12,-.12,1,0);
+        ctx.quadraticCurveTo(.12,.12,0,1);ctx.quadraticCurveTo(-.12,.12,-1,0);
+        ctx.quadraticCurveTo(-.12,-.12,0,-1);ctx.closePath();ctx.fill();ctx.restore();
+      }
+      function moon(x,y,s){
+        ctx.save();ctx.translate(x,y);ctx.scale(s,s);
+        ctx.beginPath();ctx.moveTo(3,-18);
+        ctx.bezierCurveTo(-23,-21,-28,14,-6,22);
+        ctx.bezierCurveTo(5,26,18,19,21,8);
+        ctx.bezierCurveTo(1,15,-9,-3,3,-18);
+        ctx.closePath();ctx.stroke();ctx.restore();
+      }
+      function sun(x,y,s){
+        ctx.save();ctx.translate(x,y);ctx.scale(s,s);circle(0,0,12);
+        ctx.rotate(t/8);
+        for(let k=0;k<8;k++){let a=k*Math.PI/4;line(Math.cos(a)*18,Math.sin(a)*18,Math.cos(a)*24,Math.sin(a)*24);}
+        ctx.restore();
+      }
+      function cloud(x,y,s){
+        ctx.save();ctx.translate(x,y);ctx.scale(s,s);
+        ctx.beginPath();ctx.moveTo(-17,11);
+        ctx.bezierCurveTo(-31,11,-31,-7,-18,-9);
+        ctx.bezierCurveTo(-14,-25,6,-26,13,-10);
+        ctx.bezierCurveTo(29,-13,34,11,18,11);
+        ctx.closePath();ctx.stroke();ctx.restore();
+      }
+      if(slug==='clear-night'){
+        moon(28,31,.94);star(47,14,4.8,0);star(54,29,3.2,2);star(35,8,2.6,4);
+      }else if(slug==='clear-day'){sun(32,32,1);
+      }else if(slug.startsWith('partly-cloudy')){
+        const shift=2*Math.sin(t);
+        if(slug.endsWith('night')){moon(22,22,.65);star(40,9,3.3,0);star(48,19,2.5,2);}
+        else sun(22,23,.73);
+        // Mask the rear icon with the cloud silhouette, retaining transparency.
+        ctx.save();ctx.translate(36+shift,40);ctx.scale(.82,.82);
+        ctx.globalCompositeOperation='destination-out';
+        ctx.beginPath();ctx.moveTo(-17,11);ctx.bezierCurveTo(-31,11,-31,-7,-18,-9);
+        ctx.bezierCurveTo(-14,-25,6,-26,13,-10);ctx.bezierCurveTo(29,-13,34,11,18,11);ctx.closePath();
+        ctx.fill();ctx.lineWidth=5;ctx.stroke();ctx.restore();
+        cloud(36+shift,40,.82);
+      }else if(slug==='cloudy'){
+        // Readable motion even when the weather clock scales to ~32px.
+        cloud(32+5*Math.sin(t),32+2*Math.cos(t),.85);
+      }else if(slug==='fog'){
+        cloud(32,23,.78);
+        for(let k=0;k<3;k++){let x=3*Math.sin(t+k);line(12+x,42+k*7,51+x,42+k*7);}
+      }else if(slug==='exceptional'){
+        // Rotating storm spiral for the generic exceptional condition.
+        ctx.save();ctx.translate(32,32);ctx.rotate(t);circle(0,0,4);
+        for(let k=0;k<3;k++){
+          ctx.rotate(2*Math.PI/3);ctx.beginPath();ctx.moveTo(7,0);
+          ctx.bezierCurveTo(24,-12,29,8,17,20);ctx.stroke();
+        }
+        ctx.restore();
+      }else if(slug==='wind'||slug==='windy-variant'){
+        if(slug==='windy-variant')cloud(32,17,.52);
+        for(let k=0;k<3;k++){
+          const y=(slug==='windy-variant'?34:17)+k*(slug==='windy-variant'?10:14),x=3*Math.sin(t+k);
+          ctx.beginPath();ctx.moveTo(7+x,y);ctx.lineTo(39+x,y);
+          ctx.bezierCurveTo(54+x,y,56+x,y-12,47+x,y-10);ctx.stroke();
+        }
+      }else{
+        cloud(32,23,.85);
+        const storm=slug==='lightning'||slug==='thunderstorms';
+        if(storm){
+          // Keep the bolt recognisable throughout the loop, with a subtle pulse.
+          ctx.save();ctx.globalAlpha=.52+.48*Math.pow(Math.max(0,Math.cos(t)),2);
+          ctx.beginPath();ctx.moveTo(31,34);ctx.lineTo(23,46);ctx.lineTo(33,46);
+          ctx.lineTo(28,60);ctx.lineTo(43,42);ctx.lineTo(33,42);ctx.lineTo(38,34);
+          ctx.stroke();ctx.restore();
+        }
+        const n=slug==='lightning'?0:slug==='pouring'?6:slug==='thunderstorms'?2:3;
+        for(let k=0;k<n;k++){
+          const phase=(index/8+k/Math.max(1,n))%1;
+          const x=storm?(k===0?12:52):n===6?10+k*8.8:17+k*15;
+          const y=39+phase*15;
+          ctx.save();ctx.globalAlpha=Math.min(1,phase*5,(1-phase)*5);
+          if(slug==='snow'||(slug==='sleet'&&k===1)){
+            for(let a=0;a<3;a++){let q=a*Math.PI/3;line(x-4*Math.cos(q),y-4*Math.sin(q),x+4*Math.cos(q),y+4*Math.sin(q));}
+          }else if(slug==='hail'){
+            circle(x,y,2.7);
+          }else if(slug==='pouring'){
+            line(x+3,y-5,x-3,y+5);
+          }else line(x+2,y-3,x-2,y+4);
+          ctx.restore();
+        }
+      }
+      ctx.restore();
+    }
+    async function skyconsAtlas(slug,size=64) {
+      const frame=document.createElement('canvas');frame.width=frame.height=size;
+      const ctx=frame.getContext('2d');
+      const atlas=document.createElement('canvas');atlas.width=8*size;atlas.height=size;
+      const output=atlas.getContext('2d');
+      if(!ctx||!output) throw new Error('Canvas unavailable');
+      for(let i=0;i<8;i++){
+        ctx.clearRect(0,0,size,size);
+        drawTactulaWeather(ctx,slug,i,size);
+        output.drawImage(frame,i*size,0);
+      }
+      const blob=await new Promise((resolve,reject)=>
+        atlas.toBlob(x=>x?resolve(x):reject(new Error('PNG conversion failed')),'image/png'));
+      if (blob.size>512*1024) throw new Error('Sprite PNG exceeds 512 KB');
+      return blob;
+    }
+    weatherPackCard.querySelectorAll('[data-skycons-install]').forEach(button=>{
+      button.onclick=async()=>{
+        const status=button.closest('.field').querySelector('[data-wclock-status]');
+        const buttons=[...weatherPackCard.querySelectorAll('button')];
+        buttons.forEach(b=>b.disabled=true);
+        try {
+          const check=await getJson('/api/bedroom/icons');
+          if(!check.mounted) throw new Error('Insert or mount the microSD card first.');
+          for(let i=0;i<SKYCONS_STATES.length;i++){
+            const slug=SKYCONS_STATES[i];
+            status.textContent='Installing animated Tactula '+(i+1)+'/'+SKYCONS_STATES.length+': '+slug;
+            const png=await skyconsAtlas(slug);
+            const name='wc_outline_anim_'+slug.replace(/-/g,'_')+'_off.png';
+            const form=new FormData();
+            form.append('icon',png,name);
+            await getJson('/api/bedroom/icons/upload?n='+encodeURIComponent(name),{method:'POST',body:form});
+            if(check.skyconsHdFrameSize===160){
+              status.textContent='Installing HD Tactula '+(i+1)+'/'+SKYCONS_STATES.length+': '+slug;
+              // Install individually decoded HD frames, avoiding the 1280px atlas.
+              const canvas=document.createElement('canvas');
+              canvas.width=canvas.height=160;
+              const ctx=canvas.getContext('2d');
+              if(!ctx) throw new Error('Cannot render HD weather '+slug);
+              for(let f=0;f<8;f++){
+                status.textContent='Installing HD Tactula '+(i+1)+'/'+SKYCONS_STATES.length+': '+slug+' ('+(f+1)+'/8)';
+                ctx.clearRect(0,0,160,160);
+                drawTactulaWeather(ctx,slug,f,160);
+                const hd=await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('HD PNG conversion failed')),'image/png'));
+                const hdName='wc_outline_hd_'+slug.replace(/-/g,'_')+'_f'+f+'_off.png';
+                const hdForm=new FormData();
+                hdForm.append('icon',hd,hdName);
+                await getJson('/api/bedroom/icons/upload?n='+encodeURIComponent(hdName),{method:'POST',body:hdForm});
+              }
+            }
+          }
+          status.textContent='Animated Tactula weather installed ('+SKYCONS_STATES.length+' icons'+(check.skyconsHdFrameSize===160?' + HD pack':'')+').';
+          await loadBedroomIcons();
+        }catch(e){status.textContent='Weather installation failed: '+e.message;}
+        finally {buttons.forEach(b=>b.disabled=false);}
+      };
+    });
+  }
   $("bedroomIconsBrowse").addEventListener("click", () => $("bedroomIconsFiles").click());
   $("bedroomIconsRefresh").addEventListener("click", loadBedroomIcons);
   $("bedroomIconsFiles").addEventListener("change", async () => {
@@ -1244,8 +1636,8 @@
             header.getUint32(8) !== 13 || header.getUint32(12) !== 0x49484452)
           throw new Error(file.name + ": invalid PNG header");
         const width = header.getUint32(16), height = header.getUint32(20);
-        if (!width || !height || width > 160 || height > 160)
-          throw new Error(file.name + ": " + width + "×" + height + " pixels. Maximum is 160×160.");
+        if (!width || !height || width > 256 || height > 256)
+          throw new Error(file.name + ": " + width + "×" + height + " pixels. Maximum is 256×256.");
       }
     } catch (e) {
       showToast(e.message, true);
@@ -1291,7 +1683,11 @@
     try {
       const data = await wallApi("walls?o=l&gallery=m&limit=1");
       const sd = data.sd;
-      $("sdFormat").classList.toggle("hidden", !sd.enabled);
+      $("sdFormat").classList.toggle("hidden", !sd.enabled || sd.supported === false);
+      if (sd.supported === false) {
+        $("sdState").textContent = "microSD unavailable on this firmware. Use internal flash storage.";
+        return;
+      }
       $("sdState").textContent =
         (sd.format ? "Format at the last restart: " + sd.format + "\n" : "") +
         (!sd.enabled
@@ -1918,6 +2314,8 @@
         $("prSource").value = data.source || "lan";
         $("prAddress").value = data.address || "";
         $("prDisplayName").value = data.display_name || "";
+        $("prCamera").value = data.camera || "";
+        $("prCameraRefresh").value = data.camera_refresh || 60;
         $("prHasCode").textContent = data.access_code_set ? "(saved)" : "(not set)";
         // Serial number is write-only in the backend; never invent its contents.
         $("prSerial").placeholder = data.serial_set
@@ -1936,7 +2334,7 @@
     const body = new URLSearchParams();
     body.set("enabled", $("prEnabled").checked ? "1" : "0");
     for (const [key, id] of [["source", "prSource"], ["address", "prAddress"],
-                            ["display_name", "prDisplayName"],
+                            ["display_name", "prDisplayName"], ["camera", "prCamera"], ["camera_refresh", "prCameraRefresh"],
                             ["serial", "prSerial"], ["code", "prCode"]]) {
       body.set(key, $(id).value);
     }
@@ -1991,6 +2389,7 @@
   try {
     initial = localStorage.getItem("sn_page") || "overview";
   } catch (e) {}
+  if (initial === "logs") initial = "debug"; // migrate saved navigation from older firmware
   if (!document.querySelector('[data-nav="' + initial + '"]')) initial = "overview";
   initHelpTips();
   // The deck editor (deck.js) renders late and re-renders on every edit.
@@ -2003,13 +2402,21 @@
       initHelpTips();
     });
   }).observe(document.body, { childList: true, subtree: true });
+  loadDebugStatus();
   (async () => {
-    await Promise.all([loadConfig(), loadDebugStatus()]);
-    if (initial === "logs" && !debugLogsAvailable) initial = "overview";
+    const config = loadConfig();
+    if (initial !== "debug") await config;
+    if (document.querySelector(".page.active")?.dataset.page !== "overview") return;
     if (initial === "printer" && !printerAvailable) initial = "overview";
     await showPage(initial);
   })();
   pollStatus();
-  refreshPreview();
-  setInterval(pollStatus, 2000);
+  if (initial === "overview" && !document.hidden) refreshPreview();
+  setInterval(() => {
+    const interval = p4DiagnosticsAvailable && !awaitingOtaRestart ? 10000 : 2000;
+    if (Date.now() - lastStatusPoll >= interval) pollStatus();
+  }, 2000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) pollStatus();
+  });
 })();

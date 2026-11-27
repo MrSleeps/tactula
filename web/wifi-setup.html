@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en" data-mode="dark" data-accent="purple">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0b1020">
+  <title>Tactula · WiFi setup</title>
+  <link rel="icon" type="image/svg+xml" href="/tactula-mark.svg">
+  <link rel="stylesheet" href="/portal.css">
+  <style>
+    /* Layout only: components and palette come from the shared Tactula CSS. */
+    .setup-shell {max-width:580px;margin:clamp(24px,7vh,90px) auto;padding:0 18px}
+    .setup-brand {display:flex;align-items:center;gap:12px;margin-bottom:32px}
+    .setup-brand .brand-mark {width:42px;height:42px;flex-basis:42px}
+    .setup-brand .tb-name {font-size:30px}
+    .setup-lede {margin:8px 0 24px;color:var(--mute);line-height:1.5}
+    .setup-form .field {margin-bottom:18px}
+    .setup-form input {width:100%}
+    .setup-form button {width:100%;justify-content:center}
+    .setup-status {margin:15px 0;color:var(--ink-soft);line-height:1.6}
+    .setup-foot {margin-top:18px;text-align:center;color:var(--dim);font-size:12px}
+  </style>
+</head>
+<body>
+  <main class="setup-shell">
+    <header class="setup-brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <div class="tb-identity"><span class="tb-name">tactula</span><span class="tb-hostname">WiFi setup</span></div>
+    </header>
+    <section class="page active">
+      <div class="page-header">
+        <h1 class="page-h1">Connect to WiFi</h1>
+        <p class="page-lede">Connect Tactula to your home network to continue setup.</p>
+      </div>
+      <form class="setup-form" id="wifiSetupForm" action="/save/wifi" method="post">
+        <div class="card">
+          <h2 class="card-title">WiFi</h2>
+          <p class="setup-lede">Enter the network name and password for the WiFi you want Tactula to join.</p>
+          {{include:wifi-fields.html}}
+          <label class="check-row standalone" style="margin:18px 0 20px">
+            <input type="checkbox" id="staOnlyTest" name="sta_only" value="1">
+            <span class="check-box"></span>
+            <span class="check-text"><strong>Diagnostic: connect with setup hotspot temporarily off</strong>
+              <span class="ct-hint">Tests WiFi without AP+STA coexistence. Your phone will disconnect from Tactula's setup network; if connecting fails, the hotspot returns after 20 seconds.</span>
+            </span>
+          </label>
+          <button class="btn btn-accent btn-lg" type="submit" id="connectBtn">Connect Tactula</button>
+          <p class="setup-status" id="setupStatus" role="status" aria-live="polite"></p>
+        </div>
+      </form>
+      <p class="setup-foot">Joined Tactula's setup network? This page is available at 192.168.4.1.</p>
+    </section>
+  </main>
+  <script>
+    (function () {
+      const form = document.getElementById('wifiSetupForm');
+      const btn = document.getElementById('connectBtn');
+      const status = document.getElementById('setupStatus');
+      const ssid = document.getElementById('wifiSsid');
+      const pass = document.getElementById('wifiPass');
+      ssid.required = true;
+      pass.placeholder = 'WiFi password';
+      let timer = null;
+      let started = false;
+      let failures = 0;
+
+      function stopPolling() {
+        if (timer) clearTimeout(timer);
+        timer = null;
+      }
+      function retryLater() {
+        stopPolling();
+        timer = setTimeout(poll, 1500);
+      }
+      async function poll() {
+        try {
+          // Don't cache across captive portals or reuse a stale connection result.
+          const response = await fetch('/api/wifi/status?ts=' + Date.now(), {cache:'no-store'});
+          if (!response.ok) throw new Error('Status unavailable');
+          const info = await response.json();
+          failures = 0;
+          if (info.state === 'connected') {
+            status.textContent = 'Connected successfully! IP: ' + info.ip +
+              '. Your phone will leave the setup network shortly.';
+            btn.disabled = true;
+            stopPolling();
+          } else if (info.state === 'connecting') {
+            status.textContent = 'Connecting to your WiFi network…';
+            retryLater();
+          } else if (info.state === 'radio_error') {
+            status.textContent = 'The WiFi radio is unavailable. Check the Tactula screen.';
+            btn.disabled = false;
+            stopPolling();
+          } else {
+            if (started) {
+              status.textContent = (info.message || 'Connection failed.') +
+                (info.reason ? ' (WiFi reason ' + info.reason + ')' : '');
+            }
+            btn.disabled = false;
+            stopPolling();
+          }
+        } catch (err) {
+          failures++;
+          if (failures <= 8) {
+            status.textContent = 'Waiting for Tactula to respond…';
+            retryLater();
+          } else {
+            status.textContent = 'The setup network is no longer responding. Check the Tactula screen; it may have connected.';
+            btn.disabled = false;
+            stopPolling();
+          }
+        }
+      }
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        stopPolling();
+        btn.disabled = true;
+        status.textContent = 'Sending WiFi details to Tactula…';
+        started = false;
+        failures = 0;
+        try {
+          const body = new URLSearchParams(new FormData(form));
+          const response = await fetch('/save/wifi', {method:'POST',body,cache:'no-store'});
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.message || 'Could not start WiFi connection');
+          started = true;
+          if (document.getElementById('staOnlyTest').checked) {
+            status.textContent = 'Station-only diagnostic starting. Your phone will leave the Tactula hotspot. Watch the screen and serial log; the hotspot returns if the connection fails.';
+            // Connection is intentionally interrupted. Don't misreport the loss
+            // of the captive-portal HTTP link as a firmware error.
+            stopPolling();
+          } else {
+            status.textContent = 'Connecting to your WiFi network…';
+            retryLater();
+          }
+        } catch (err) {
+          status.textContent = err.message || 'Unable to send WiFi details. Try again.';
+          btn.disabled = false;
+          stopPolling();
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -33,23 +33,15 @@ sunrise/sunset handling. Only the dedicated Weather Clock uses the new
 pack selection; legacy Weather tiles and normal Clock tiles are unchanged.
 The temperature comes from the weather entity's current temperature attribute,
 not a forecast high/low. `--` appears while weather is unavailable.
-Alternatively, select **Skycons (animated)** and click **Install / update Skycons**.
-The browser loads the original public-domain Skycons JavaScript from a
-commit-pinned CDN URL *only during installation* and draws its ten original
-conditions into ten transparent 512×64 sprite PNGs (eight 64×64 frames each).
-The ESP32 plays them at a conservative 4 fps by changing an LVGL image offset
-rather than reloading PNG files. No new weather variants are added: rain,
-snow and wind share their original day/night artwork. Night-specific variants
-are provided for clear and partly cloudy conditions. Skycons playback is
-limited to visible Weather Clock tiles; missing sprites fall back to MDI.
-
-The weather pack is optional; it only requires network access while the
-browser installs or updates it. Runtime icons load locally from the microSD
-card. Static weather images are deliberately used rather than animated SVG
-or Lottie, to avoid adding that work to the ESP32's display loop.
-
-Original Skycons is public domain (CC0) and was developed by The Dark Sky
-Company. Source: https://github.com/darkskyapp/skycons.
+Alternatively, select **Tactula Outline (animated)** and click **Install / update Tactula Outline**.
+The browser draws original outlined weather artwork locally, including a crescent
+moon with twinkling stars. The sixteen condition/day-night variants use transparent 512×64 sprite PNGs
+(eight 64×64 frames each). P4 additionally receives individual 160px popup frames.
+The existing animated-style configuration is retained, but Outline uses distinct
+asset filenames so old Skycons files cannot be mistaken for the new artwork.
+The existing 4 fps animation and bounded frame loading remain unchanged.
+Missing assets fall back to MDI. No CDN is required for the animated pack.
+Lightning, thunderstorms, pouring rain, hail, sleet, windy-variant and exceptional conditions have distinct animations. Reinstall the pack after upgrading to add the new files. Static Meteocons mappings are unchanged.
 
 Meteocons is by Bas Milius and is licensed under MIT. See
 https://github.com/basmilius/meteocons and the license in
@@ -65,3 +57,5 @@ save/reload, and ordinary Clock/Weather tile regressions.
 
 The JavaScript syntax and regression code were updated for this feature, but
 the full firmware and browser regression suites have not yet been run.
+
+The photo gallery uses the same animated atlas as the weather clock when Outline is selected. One atlas and one 64px frame are cached, with MDI fallback if missing.

@@ -2,7 +2,7 @@
 #include "deck_sd.h"
 #include "deck_wall.h"
 #include "deck_config.h"
-#include "settings.h"
+#include "tactula_settings.h"
 #include "config.h"
 #include <LittleFS.h>
 #include <Preferences.h>
@@ -10,6 +10,11 @@
 #include <esp_vfs_fat.h>
 #include <sdmmc_cmd.h>
 #include <driver/sdmmc_host.h>
+#if defined(BOARD_IS_JC8012P4A1C)
+#include <JC8012P4A1C_Board.h>
+#include <sd_pwr_ctrl.h>
+#include <sd_pwr_ctrl_by_on_chip_ldo.h>
+#endif
 #include <driver/sdspi_host.h>
 #include <driver/gpio.h>
 #include <driver/spi_master.h>
@@ -84,8 +89,49 @@ esp_vfs_fat_mount_config_t mountConfig() {
 
 // 1-bit SD mode, set up as the vendor's SD_MMC.setPins(12, 11, 13) demo:
 // DAT3 and the pull-ups are left to the board.
-void sdmmcConfig(sdmmc_host_t& host, sdmmc_slot_config_t& slot) {
+esp_err_t sdmmcConfig(sdmmc_host_t& host, sdmmc_slot_config_t& slot) {
   host = SDMMC_HOST_DEFAULT();
+#if defined(BOARD_IS_JC8012P4A1C)
+  // Slot 0 uses fixed IO_MUX pins on the P4. Keep slot 1 for the C6.
+  host.slot = SDMMC_HOST_SLOT_0;
+  host.flags = SDMMC_HOST_FLAG_4BIT | SDMMC_HOST_FLAG_DEINIT_ARG;
+  host.deinit_p = sdmmc_host_deinit_slot;
+  host.max_freq_khz = SDMMC_FREQ_DEFAULT;
+  // Explicitly select the Guition slot-0 IO_MUX pins.
+  slot = SDMMC_SLOT_CONFIG_DEFAULT();
+  slot.width = 4;
+  slot.clk = static_cast<gpio_num_t>(JC8012P4A1C_Board::SD_CLK_PIN);
+  slot.cmd = static_cast<gpio_num_t>(JC8012P4A1C_Board::SD_CMD_PIN);
+  slot.d0 = static_cast<gpio_num_t>(JC8012P4A1C_Board::SD_D0_PIN);
+  slot.d1 = static_cast<gpio_num_t>(JC8012P4A1C_Board::SD_D1_PIN);
+  slot.d2 = static_cast<gpio_num_t>(JC8012P4A1C_Board::SD_D2_PIN);
+  slot.d3 = static_cast<gpio_num_t>(JC8012P4A1C_Board::SD_D3_PIN);
+  slot.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
+  slot.cd = SDMMC_SLOT_NO_CD;
+  slot.wp = SDMMC_SLOT_NO_WP;
+  static sd_pwr_ctrl_handle_t power = nullptr;
+  if (!power) {
+    sd_pwr_ctrl_ldo_config_t ldo = {};
+    ldo.ldo_chan_id = JC8012P4A1C_Board::SD_LDO_CHAN;
+    esp_err_t err = sd_pwr_ctrl_new_on_chip_ldo(&ldo, &power);
+    if (err != ESP_OK) {
+      debugSerial.printf("Deck: SD LDO4 acquire failed: %s\n", esp_err_to_name(err));
+      return err;
+    }
+    // The rail supplies both the card and its pull-ups. Give it time
+    // to settle before the host sends identification commands.
+    err = sd_pwr_ctrl_set_io_voltage(power, 3300);
+    if (err != ESP_OK) {
+      debugSerial.printf("Deck: SD LDO4 voltage setup failed: %s\n", esp_err_to_name(err));
+      sd_pwr_ctrl_del_on_chip_ldo(power);
+      power = nullptr;
+      return err;
+    }
+    delay(100);
+    debugSerial.println("Deck: SD slot 0 LDO4 set to 3.3 V");
+  }
+  host.pwr_ctrl_handle = power;
+#else
   host.flags = SDMMC_HOST_FLAG_1BIT;
   host.max_freq_khz = SDMMC_FREQ_DEFAULT;
   slot = SDMMC_SLOT_CONFIG_DEFAULT();
@@ -96,30 +142,48 @@ void sdmmcConfig(sdmmc_host_t& host, sdmmc_slot_config_t& slot) {
   // S3 defaults put D2/D3 on GPIO 12/13, this slot's CLK and D0.
   slot.d1 = slot.d2 = slot.d3 = GPIO_NUM_NC;
   slot.d4 = slot.d5 = slot.d6 = slot.d7 = GPIO_NUM_NC;
+#endif
+  return ESP_OK;
 }
 
 esp_err_t mountSdmmc(sdmmc_card_t** card) {
   sdmmc_host_t host;
   sdmmc_slot_config_t slot;
-  sdmmcConfig(host, slot);
+  const esp_err_t config = sdmmcConfig(host, slot);
+  if (config != ESP_OK) return config;
   const esp_vfs_fat_mount_config_t mc = mountConfig();
   return esp_vfs_fat_sdmmc_mount("/sd", &host, &slot, &mc, card);
 }
 
 esp_err_t mountSpi(sdmmc_card_t** card) {
   spi_bus_config_t bus = {};
+#if defined(BOARD_IS_JC8012P4A1C)
+  sdmmc_host_t nativeHost;
+  sdmmc_slot_config_t nativeSlot;
+  const esp_err_t power = sdmmcConfig(nativeHost, nativeSlot);
+  if (power != ESP_OK) return power;
+  // Guition's demo drives the same slot over SPI using these four signals.
+  bus.mosi_io_num = JC8012P4A1C_Board::SD_CMD_PIN;
+  bus.miso_io_num = JC8012P4A1C_Board::SD_D0_PIN;
+  bus.sclk_io_num = JC8012P4A1C_Board::SD_CLK_PIN;
+  constexpr gpio_num_t cs = static_cast<gpio_num_t>(JC8012P4A1C_Board::SD_D3_PIN);
+  constexpr int clockKHz = 10000;
+#else
   bus.mosi_io_num = 11;
   bus.miso_io_num = 13;
   bus.sclk_io_num = 12;
+  constexpr gpio_num_t cs = GPIO_NUM_10;
+  constexpr int clockKHz = 20000;
+#endif
   bus.quadwp_io_num = bus.quadhd_io_num = -1;
   bus.max_transfer_sz = 4096;
   esp_err_t err = spi_bus_initialize(SPI3_HOST, &bus, SPI_DMA_CH_AUTO);
   if (err != ESP_OK) return err;
   sdmmc_host_t host = SDSPI_HOST_DEFAULT();
   host.slot = SPI3_HOST;
-  host.max_freq_khz = 20000;
+  host.max_freq_khz = clockKHz;
   sdspi_device_config_t dev = SDSPI_DEVICE_CONFIG_DEFAULT();
-  dev.gpio_cs = GPIO_NUM_10;
+  dev.gpio_cs = cs;
   dev.host_id = SPI3_HOST;
   const esp_vfs_fat_mount_config_t mc = mountConfig();
   err = esp_vfs_fat_sdspi_mount("/sd", &host, &dev, &mc, card);
@@ -190,16 +254,23 @@ struct RawCard {
   sdmmc_card_t card = {};
   BYTE pdrv = 0xFF;
   bool host = false;
+#if defined(BOARD_IS_JC8012P4A1C)
+  bool slotReady = false;
+#endif
   char drv[3] = {0};
 
   esp_err_t open() {
     sdmmc_host_t h;
     sdmmc_slot_config_t slot;
-    sdmmcConfig(h, slot);
-    esp_err_t err = h.init();
+    esp_err_t err = sdmmcConfig(h, slot);
+    if (err != ESP_OK) return err;
+    err = h.init();
     if (err != ESP_OK) return err;
     host = true;
     if ((err = sdmmc_host_init_slot(h.slot, &slot)) != ESP_OK) return err;
+#if defined(BOARD_IS_JC8012P4A1C)
+    slotReady = true;
+#endif
     if ((err = sdmmc_card_init(&h, &card)) != ESP_OK) return err;
     if ((err = ff_diskio_get_drive(&pdrv)) != ESP_OK) return err;
     ff_diskio_register_sdmmc(pdrv, &card);
@@ -209,7 +280,13 @@ struct RawCard {
   }
   ~RawCard() {
     if (pdrv != 0xFF) ff_diskio_unregister(pdrv);
+#if defined(BOARD_IS_JC8012P4A1C)
+    // This boot-time path runs before the C6 is started.
+    if (slotReady) sdmmc_host_deinit_slot(SDMMC_HOST_SLOT_0);
+    else if (host) sdmmc_host_deinit();
+#else
     if (host) sdmmc_host_deinit();
+#endif
   }
 };
 
@@ -299,7 +376,8 @@ const char* formatCard() {
 sdmmc_card_t* mountCard() {
   static char error[96];
   sdmmc_card_t* card = nullptr;
-  esp_err_t mmcErr = ESP_OK, spiErr = ESP_OK;
+  esp_err_t mmcErr = ESP_OK;
+  esp_err_t spiErr = ESP_OK;
   if (s_log) logLine("SD mode:", true);
   for (int i = 0; i < SD_MOUNT_TRIES && !card; i++) {
     if (i) delay(250);
@@ -308,7 +386,11 @@ sdmmc_card_t* mountCard() {
   }
   const bool sdMode = card;
   if (sdMode) {
+#if defined(BOARD_IS_JC8012P4A1C)
+    s_mode = "SD 4-bit";
+#else
     s_mode = "SD 1-bit";
+#endif
   } else if (mmcErr == ESP_FAIL) {
     // The card answered but FatFs refused it; SPI cannot help a card
     // already in SD mode.
@@ -397,7 +479,9 @@ void wallStorageBegin() {
     const char* keys[2][3] = {{"wpin_l", "wpin_dl", "wpin_bl"}, {"wpin_p", "wpin_dp", "wpin_bp"}};
     for (int p = 0; p < 2; p++)
       for (int source = 0; source < 3; source++) {
-        String name = prefs.getString(keys[p][source], "");
+        const char* key = keys[p][source];
+        if (!prefs.isKey(key)) continue;
+        String name = prefs.getString(key, "");
         if (source == 1 && wallValidName(name)) name = "d/" + name;
         if (wallValidRef(name)) s_protected[p][4 + source] = wallId(name);
       }

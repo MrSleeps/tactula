@@ -3,7 +3,7 @@
  * the euro sign,
  * plus the LVGL symbol set from Font Awesome 5 Free (Font Awesome Free
  * License). Generated with lv_font_conv 1.5.3; options below. */
-#if defined(BOARD_IS_JC3248W535)
+#if defined(BOARD_IS_JC3248W535) || defined(BOARD_IS_JC8012P4A1C)
 
 /*******************************************************************************
  * Size: 20 px

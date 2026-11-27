@@ -93,6 +93,25 @@ void formatReading(float v, char* out, size_t n) {
   snprintf(out, n, fabsf(v - roundf(v)) < 0.05f ? "%.0f" : "%.1f", v);
 }
 
+// A sensor's numeric precision: fixed 0..3 places, or Auto. Auto keeps
+// at most one decimal for ordinary readings, but preserves up to two below
+// 1 (e.g. 0.13 instead of 0.1). Duration formatting is handled separately.
+void formatValue(float v, int8_t decimals, char* out, size_t n) {
+  if (decimals >= 0) {
+    snprintf(out, n, "%.*f", constrain((int)decimals, 0, 3), v);
+    return;
+  }
+  if (!isfinite(v) || fabsf(v) >= 1.0f) {
+    formatReading(v, out, n);
+    return;
+  }
+  snprintf(out, n, "%.2f", v);
+  char* end = out + strlen(out);
+  while (end > out && end[-1] == '0') *--end = 0;
+  if (end > out && end[-1] == '.') *--end = 0;
+  if (!strcmp(out, "-0")) snprintf(out, n, "0");
+}
+
 // A number in s / min / h / d as "45s", "31m", "1h 49m", "3d 2h"; false for
 // other units.
 bool formatDuration(float v, const String& unit, char* out, size_t n) {
@@ -142,7 +161,7 @@ String climateTarget(const HaEntity& e) {
   return "";
 }
 
-String prettyState(const String& domain, const HaEntity& e) {
+String prettyState(const String& domain, const HaEntity& e, int8_t decimals) {
   if (!e.known) return "Unavailable";
   const String& st = e.state;
   if (st == "unavailable" || st == "unknown") return "Unavailable";
@@ -156,19 +175,18 @@ String prettyState(const String& domain, const HaEntity& e) {
   if (domain == "scene") return "Scene";
   if (domain == "script") return st == "on" ? "Running" : "Script";
   if (domain == "button" || domain == "input_button") return "Press";
-  if (e.unit.length()) {
-    // Numeric reading: at most one decimal, then the unit.
+  if (e.unit.length() || domain == "sensor") {
     char* end = nullptr;
     const float v = strtof(st.c_str(), &end);
     if (end && *end == 0 && st.length()) {
       char buf[24];
-      if (fabsf(v - roundf(v)) < 0.05f) snprintf(buf, sizeof(buf), "%.0f", v);
-      else snprintf(buf, sizeof(buf), "%.1f", v);
+      formatValue(v, decimals, buf, sizeof(buf));
       // "25.9°C" (no space before a degree sign) saves the width that
       // decides whether a reading fits a small tile.
-      return String(buf) + (e.unit.startsWith("\xC2\xB0") ? "" : " ") + e.unit;
+      return String(buf) + (e.unit.length() ?
+          (e.unit.startsWith("\xC2\xB0") ? "" : " ") + e.unit : String());
     }
-    return st + " " + e.unit;
+    if (e.unit.length()) return st + " " + e.unit;
   }
   String s = st;
   s.replace('_', ' ');
@@ -514,6 +532,18 @@ void setSliderFill(TileRt& r, float frac) {
 // Pull the latest HA state into one tile's widgets.
 void applyHaToTile(TileRt& r, bool force) {
   const TileDef& d = *r.def;
+  if (d.type == TILE_TEXT) {
+    if (!d.entity.length()) return;
+    HaEntity e;
+    if (!haGetEntity(d.entity, e) || (!force && e.version == r.haVersion)) return;
+    r.haVersion = e.version;
+    String value = d.text;
+    value.replace("{{state}}", e.known ? e.state : String("--"));
+    value.replace("{{unit}}", e.unit);
+    lv_label_set_text(r.name, value.c_str());
+    markPageStale(r.page);
+    return;
+  }
   if (d.type == TILE_GROUP || d.http.enabled || (!d.entity.length() && !d.statusEntity.length())) return;
   const String& visualEntity = d.statusEntity.length() ? d.statusEntity : d.entity;
   HaEntity e;
@@ -597,10 +627,10 @@ void applyHaToTile(TileRt& r, bool force) {
                          e.known && haNumericState(e.state, value);
     if (climateReading && numeric) value = e.current;
     char text[32];
-    if (numeric) formatReading(value, text, sizeof(text));
+    if (numeric) formatValue(value, d.decimals, text, sizeof(text));
     lv_label_set_text(r.sub, d.sub.length() ? d.sub.c_str() :
-                          climateReading ? climateCurrentText(e, false).c_str() :
-                          numeric ? text : prettyState(domain, e).c_str());
+                          climateReading ? (numeric ? text : "--") :
+                          numeric ? text : prettyState(domain, e, d.decimals).c_str());
     lv_label_set_text(r.unit, numeric && !d.sub.length() ?
                            (climateReading ? climateCurrentUnit(e).c_str() : e.unit.c_str()) : "");
     fitValue(r);
@@ -609,8 +639,8 @@ void applyHaToTile(TileRt& r, bool force) {
     const bool numeric = e.known && haNumericState(e.state, value);
     char text[32];
     const bool dur = numeric && d.duration && formatDuration(value, e.unit, text, sizeof(text));
-    if (numeric && !dur) formatReading(value, text, sizeof(text));
-    lv_label_set_text(r.sub, d.sub.length() ? d.sub.c_str() : numeric ? text : prettyState(domain, e).c_str());
+    if (numeric && !dur) formatValue(value, d.decimals, text, sizeof(text));
+    lv_label_set_text(r.sub, d.sub.length() ? d.sub.c_str() : numeric ? text : prettyState(domain, e, d.decimals).c_str());
     lv_label_set_text(r.unit, numeric && !dur && !d.sub.length() ? e.unit.c_str() : "");
     fitValue(r);
   } else if (d.type == TILE_SLIDER) {
@@ -622,7 +652,7 @@ void applyHaToTile(TileRt& r, bool force) {
     if (d.type == TILE_SENSOR && d.duration && e.known && haNumericState(e.state, value) &&
         formatDuration(value, e.unit, text, sizeof(text)))
       lv_label_set_text(r.sub, text);
-    else lv_label_set_text(r.sub, (control ? wishText(d.entity, e, false) : prettyState(domain, e)).c_str());
+    else lv_label_set_text(r.sub, (control ? wishText(d.entity, e, false) : prettyState(domain, e, d.decimals)).c_str());
     fitValue(r);
   }
   markPageStale(r.page);
@@ -745,7 +775,7 @@ bool whenWanted(const WhenDef& w) {
   return false;
 }
 
-bool whenWanted(const TileDef& t) { return whenWanted(t.when); }
+bool whenWanted(const TileDef& t) { return whenWanted(t.when) && whenWanted(t.layerWhen); }
 bool whenWanted(const PageDef& p) { return whenWanted(p.when); }
 
 void whenWatch(const WhenDef& w, std::vector<std::pair<String, String>>& states) {
@@ -764,7 +794,7 @@ void whenCollect() {
   std::vector<std::pair<String, String>> states;
   for (const PageDef& page : s_cfg.pages) {
     whenWatch(page.when, states);
-    for (const TileDef& tile : page.tiles) whenWatch(tile.when, states);
+    for (const TileDef& tile : page.tiles) { whenWatch(tile.when, states); whenWatch(tile.layerWhen, states); }
   }
   s_whenStates.swap(states);
 }
@@ -798,7 +828,7 @@ String httpTemplate(const TileDef& d, const String& tmpl) {
     else if (!v.numeric) out += v.text ? v.text.get() : "--";
     else {
       if (!part.unit.length() || !formatDuration(v.number, part.unit, buf, sizeof(buf)))
-        formatReading(v.number, buf, sizeof(buf));
+        formatValue(v.number, d.decimals, buf, sizeof(buf));
       out += buf;
     }
   }
@@ -820,7 +850,7 @@ String rowText(const TileDef& d, size_t i, bool useTemplate) {
   if (!v.numeric) return v.text ? v.text.get() : "--";
   char number[48];
   if (d.duration && formatDuration(v.number, d.unit, number, sizeof(number))) return number;
-  formatReading(v.number, number, sizeof(number));
+  formatValue(v.number, d.decimals, number, sizeof(number));
   return String(number) + rowUnit(d);
 }
 
@@ -868,7 +898,7 @@ void applyHttpToTile(TileRt& r) {
   const bool dur = numeric && d.duration && formatDuration(value.number, d.unit, number, sizeof(number));
   if (dur) text = number;
   else if (numeric) {
-    formatReading(value.number, number, sizeof(number));
+    formatValue(value.number, d.decimals, number, sizeof(number));
     text = number;
     if (d.style != METRIC_CHART && d.unit.length())
       text += (d.unit.startsWith("\xC2\xB0") ? "" : " ") + d.unit;
@@ -1060,6 +1090,12 @@ const char* actionVerb(const TileRt& r, const TileAction& a) {
 
 void requestAction(TileRt& r, bool hold) {
   const TileAction& a = hold ? r.def->hold : r.def->tap;
+  // Some saved headline temperature tiles carry an explicit empty tap.
+  if (!hold && a.kind == ACT_NONE && !r.def->http.enabled &&
+      r.def->type == TILE_SENSOR && r.def->style == METRIC_HEADLINE && r.def->entity.length()) {
+    openModal((int)(&r - &s_tiles[0]));
+    return;
+  }
   if (r.def->http.enabled && a.kind == ACT_NONE) return;
   if (needsConfirm(r, a)) openConfirm((int)(&r - &s_tiles[0]), hold);
   else runAction(r, a);

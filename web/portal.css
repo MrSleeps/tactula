@@ -117,6 +117,7 @@ body {
 }
 button,
 input,
+textarea,
 select {
   font: inherit;
 }
@@ -585,10 +586,18 @@ a {
   border: 1px solid var(--line);
 }
 select,
+textarea,
+input:not([type]),
 input[type="text"],
 input[type="url"],
 input[type="password"],
-input[type="number"] {
+input[type="number"],
+input[type="search"],
+input[type="email"],
+input[type="tel"],
+input[type="time"],
+input[type="date"],
+input[type="datetime-local"] {
   appearance: none;
   width: 100%;
   max-width: 520px;
@@ -601,6 +610,7 @@ input[type="number"] {
   box-shadow: var(--shadow);
 }
 select:focus,
+textarea:focus,
 input:focus {
   outline: none;
   border-color: var(--accent-line);
@@ -1391,3 +1401,17 @@ input[type="range"]::-webkit-slider-thumb {
     animation: none;
   }
 }
+
+/* Shared portal control states; compact deck controls retain their local sizing. */
+textarea { resize: vertical; min-height: 58px; }
+input, select, textarea { min-width: 0; }
+[data-mode="dark"] { color-scheme: dark; }
+[data-mode="light"] { color-scheme: light; }
+input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color: var(--accent); }
+input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); border: 3px solid var(--card); }
+input[type="color"] { background: var(--card); border: 1px solid var(--line-2); border-radius: var(--r-md); cursor: pointer; }
+input:disabled, select:disabled, textarea:disabled { opacity: .55; cursor: not-allowed; }
+input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--err); }
+input::placeholder, textarea::placeholder { color: var(--mute); opacity: 1; }
+select:not(.select-wrap select):not(.input-suffix select) { appearance: auto; }
+.check-row input:focus-visible + .check-box { outline: 2px solid var(--accent); outline-offset: 3px; }

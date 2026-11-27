@@ -1,19 +1,39 @@
 // Guition JC3248W535 display pipeline. See deck_panel.h for the contract and
 // the measured panel facts behind it.
 #include "debug_log.h"
+#include "p4_trace.h"
 #include "deck_panel.h"
+#if defined(BOARD_IS_JC8012P4A1C)
+#include "p4_board.h"
+#else
 #include <driver/spi_master.h>
 #include <driver/gpio.h>
+#include <Arduino_GFX_Library.h>
+#endif
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
 #include <atomic>
-// Only for axs15231b_180640_init_operations and its op-code enum; the
-// library's databus and panel classes are not used.
-#include <Arduino_GFX_Library.h>
 
 namespace deck {
+
 namespace {
 
+#if defined(BOARD_IS_JC8012P4A1C)
+std::atomic<ScanoutHold> s_scanoutHold{ScanoutHold::Off};
+std::atomic<uint32_t> s_replayPresented{0};
+std::atomic<uint32_t> s_replayFailed{0};
+std::atomic<uint32_t> s_renderOnlyFrames{0};
+// Default to the PPA handoff used by scanout replay. Alternate paths are
+// available for timed comparisons.
+std::atomic<PanelScanoutPath> s_scanoutPath{PanelScanoutPath::Ppa};
+#endif
+
+constexpr int64_t ANIM_LEAD_US = 8000;
+uint16_t* s_fb[2] = {nullptr, nullptr};
+TaskHandle_t s_task = nullptr;
+volatile uint8_t s_rot = 1;
+
+#if !defined(BOARD_IS_JC8012P4A1C)
 constexpr int PIN_CS = 45;
 constexpr int PIN_SCK = 47;
 constexpr int PIN_D0 = 21;
@@ -34,17 +54,10 @@ constexpr uint32_t SPI_HZ = 40000000;  // 80 MHz corrupts the image on this pane
 // The write (15.4 ms) is slower than the scan, so a frame that starts later
 // than this after the TE rising edge is overtaken near the bottom.
 constexpr int64_t TE_LATE_US = 900;
-// Animation frames are sampled this far ahead of the build so the offset
-// matches the moment the frame is actually on the glass.
-constexpr int64_t ANIM_LEAD_US = 8000;
-
 spi_device_handle_t s_dev = nullptr;
-uint16_t* s_fb[2] = {nullptr, nullptr};
 uint16_t* s_bounce[2] = {nullptr, nullptr};
 DMA_ATTR uint8_t s_cmdbuf[64];
 spi_transaction_ext_t s_tr[NCHUNK];
-TaskHandle_t s_task = nullptr;
-volatile uint8_t s_rot = 1;
 
 // --- TE ----------------------------------------------------------------------
 portMUX_TYPE s_teMux = portMUX_INITIALIZER_UNLOCKED;
@@ -62,6 +75,8 @@ void IRAM_ATTR teIsr(void*) {
   xSemaphoreGiveFromISR(s_teSem, &woken);
   if (woken) portYIELD_FROM_ISR();
 }
+
+#endif
 
 // --- Shared frame / compositor state (s_mux) ----------------------------------
 SemaphoreHandle_t s_lvReady = nullptr;
@@ -87,6 +102,10 @@ struct State {
   bool lvPending = false;
   int lvIdx = 0;
   uint32_t lvGen = 0;
+#if defined(BOARD_IS_JC8012P4A1C)
+  uint32_t lvSequence = 0;
+  PanelDamage lvDamage = {};
+#endif
   int lvLatest = -1;
   CompMode mode = COMP_NONE;
   Kind kind = KIND_HSTRIP;
@@ -132,6 +151,10 @@ struct Frame {
   uint8_t rot;
   int w, h;
   const uint16_t* lv;
+#if defined(BOARD_IS_JC8012P4A1C)
+  uint32_t lvSequence;
+  PanelDamage lvDamage;
+#endif
   Kind kind;
   Src a, b;
   int off;
@@ -158,6 +181,7 @@ int64_t s_frameStart = 0;
 int64_t s_lastStartUs = 0;
 bool s_lastWasComp = false;
 
+#if !defined(BOARD_IS_JC8012P4A1C)
 inline void csLow() { gpio_set_level((gpio_num_t)PIN_CS, 0); }
 inline void csHigh() { gpio_set_level((gpio_num_t)PIN_CS, 1); }
 
@@ -251,6 +275,8 @@ void fillTr(spi_transaction_ext_t& t, bool first, const void* buf, size_t len) {
   t.base.tx_buffer = buf;
   t.base.length = len * 8;
 }
+
+#endif
 
 inline void logicalSize(uint8_t rot, int& w, int& h) {
   if (rot & 1) { w = NATIVE_H; h = NATIVE_W; }
@@ -994,18 +1020,28 @@ void overlayDots(const Frame& f, uint16_t* dst, int ny0) {
   const float hx = v ? 0.0f : half, hy = v ? half : 0.0f;
   const int bx0 = (int)(cx - hx - PILL_R) - 1, bx1 = (int)(cx + hx + PILL_R) + 1;
   const int by0 = (int)(cy - hy - PILL_R) - 1, by1 = (int)(cy + hy + PILL_R) + 1;
+#if !defined(BOARD_IS_JC8012P4A1C)
   // Quick reject: does the box touch the native rows of this chunk?
   int nxa, nya, nxb, nyb;
   toNative(f.rot, bx0, by0, nxa, nya);
   toNative(f.rot, bx1, by1, nxb, nyb);
   const int lo = nya < nyb ? nya : nyb, hi = nya < nyb ? nyb : nya;
   if (hi < ny0 || lo >= ny0 + ROWS) return;
+#endif
   const float fade = f.dotAlpha / 255.0f;
   for (int ly = by0; ly <= by1; ly++) {
     for (int lx = bx0; lx <= bx1; lx++) {
+#if defined(BOARD_IS_JC8012P4A1C)
+      if (ly < 0 || ly >= f.h || lx < 0 || lx >= f.w) continue;
+      uint16_t& out = dst[ly * f.w + lx];
+      uint16_t c = out;
+#else
       int nx, ny;
       toNative(f.rot, lx, ly, nx, ny);
       if (ny < ny0 || ny >= ny0 + ROWS || nx < 0 || nx >= NATIVE_W) continue;
+      uint16_t& out = dst[(ny - ny0) * NATIVE_W + nx];
+      uint16_t c = __builtin_bswap16(out);
+#endif
       const float px = lx + 0.5f, py = ly + 0.5f;
       // Along and across the pill's axis.
       const float along = v ? py : px, mid = v ? cy : cx;
@@ -1014,8 +1050,6 @@ void overlayDots(const Frame& f, uint16_t* dst, int ny0) {
       if (sa < -half) sa += half; else if (sa > half) sa -= half; else sa = 0;
       const float pill = clamp01(PILL_R + 0.5f - sqrtf(sa * sa + across * across));
       if (pill <= 0) continue;
-      uint16_t& out = dst[(ny - ny0) * NATIVE_W + nx];
-      uint16_t c = __builtin_bswap16(out);
       c = blendLE(c, 0x0000, (uint32_t)(150 * pill * fade));
       const int i = (int)lroundf((along - (mid - half)) / SPACING);
       if (i >= 0 && i < n) {
@@ -1026,11 +1060,16 @@ void overlayDots(const Frame& f, uint16_t* dst, int ny0) {
           c = blendLE(c, col, (uint32_t)(255 * dot * fade));
         }
       }
+#if defined(BOARD_IS_JC8012P4A1C)
+      out = c;
+#else
       out = __builtin_bswap16(c);
+#endif
     }
   }
 }
 
+#if !defined(BOARD_IS_JC8012P4A1C)
 // Fill one native chunk (rows ny0 .. ny0+ROWS-1). Mapping per user rotation:
 //   0: lx = nx,        ly = ny
 //   1: lx = ny,        ly = 319 - nx
@@ -1079,6 +1118,8 @@ void buildPart(const Frame& f, uint16_t* dst, int ny0, int lo, int hi) {
   }
 }
 
+#endif
+
 // A helper on core 0 takes batches of the same job (panelShare). The caller
 // never waits for a helper that has not started (WiFi can hold core 0).
 struct SharedJob {
@@ -1105,6 +1146,228 @@ void helperTask(void*) {
   }
 }
 
+#if defined(BOARD_IS_JC8012P4A1C)
+static unsigned nearWhiteSamples(const uint16_t* pixels, int w, int h) {
+  unsigned white = 0;
+  // Sample cell centres so a near-white frame can be detected without a full
+  // scan of PSRAM or counting the screen edge and rounded corners.
+  for (int y = 1; y < 16; y += 2) {
+    const auto* row = pixels + y * h / 16 * w;
+    for (int x = 1; x < 16; x += 2) {
+      const unsigned rgb = row[x * w / 16];
+      if ((rgb >> 11) >= 28 && ((rgb >> 5) & 63) >= 56 && (rgb & 31) >= 28) ++white;
+    }
+  }
+  return white;
+}
+
+static std::atomic<unsigned> s_outputChecked{0};
+static std::atomic<unsigned> s_outputMismatchMax{0};
+static std::atomic<unsigned> s_nativePartial{0};
+static std::atomic<unsigned> s_ppaFull{0};
+static std::atomic<unsigned> s_cpuFull{0};
+
+struct LiveScanout {
+  const uint16_t* pixels;
+  uint32_t sequence;
+  PanelDamage damage;
+};
+static LiveScanout s_latestScanout = {}, s_previousScanout = {};
+
+static bool plainLvFrame(const Frame& f) {
+  return !f.comp && f.releaseLv && (!f.dotAlpha || f.dotCount < 2);
+}
+
+static void toLogical(uint8_t rot, int nx, int ny, int& lx, int& ly) {
+  switch (rot) {
+    case 1:  lx = ny;                ly = NATIVE_W - 1 - nx; break;
+    case 2:  lx = NATIVE_W - 1 - nx; ly = NATIVE_H - 1 - ny; break;
+    case 3:  lx = NATIVE_H - 1 - ny; ly = nx;                break;
+    default: lx = nx;                ly = ny;                break;
+  }
+}
+
+// The PPA rotates RGB565 without scaling, byte swapping or colour conversion.
+// Compare corresponding native and logical pixels, using the touch mapping.
+static unsigned outputMismatches(const uint16_t* staging, const uint16_t* scanout,
+                                 int logicalWidth, uint8_t rotation) {
+  unsigned mismatches = 0;
+  for (int y = 1; y < 16; y += 2) {
+    const int ny = y * NATIVE_H / 16;
+    for (int x = 1; x < 16; x += 2) {
+      const int nx = x * NATIVE_W / 16;
+      int lx, ly;
+      toLogical(rotation, nx, ny, lx, ly);
+      if (scanout[ny * NATIVE_W + nx] != staging[ly * logicalWidth + lx]) ++mismatches;
+    }
+  }
+  return mismatches;
+}
+
+static bool validDamage(const Frame& f, const PanelDamage& d) {
+  if (d.full || !d.count || d.count > PanelDamage::MaxRects) return false;
+  for (unsigned i = 0; i < d.count; ++i) {
+    const auto& r = d.rects[i];
+    if (r.x1 < 0 || r.y1 < 0 || r.x1 > r.x2 || r.y1 > r.y2 ||
+        r.x2 >= f.w || r.y2 >= f.h) return false;
+  }
+  return true;
+}
+
+static void copyLvDamage(uint16_t* dst, const Frame& f, bool stagingMatchesPrevious) {
+  const PanelDamage& d = f.lvDamage;
+  if (!stagingMatchesPrevious || !validDamage(f, d)) {
+    memcpy(dst, f.lv, FRAME_BYTES);
+    return;
+  }
+  for (unsigned i = 0; i < d.count; ++i) {
+    const auto& r = d.rects[i];
+    const size_t width = r.x2 - r.x1 + 1;
+    if (width == static_cast<size_t>(f.w)) {
+      const size_t start = r.y1 * f.w;
+      memcpy(dst + start, f.lv + start, width * (r.y2 - r.y1 + 1) * sizeof(*dst));
+      continue;
+    }
+    for (int y = r.y1; y <= r.y2; ++y) {
+      const size_t start = y * f.w + r.x1;
+      memcpy(dst + start, f.lv + start, width * sizeof(*dst));
+    }
+  }
+}
+
+void buildPanelFrame(const Frame& f) {
+  // Only reuse a staging image built from the immediately preceding LVGL
+  // frame. A dropped frame, transition, or pager overlay needs a full copy.
+  static bool stagingIsLive = false;
+  static uint32_t stagingSequence = 0;
+  uint16_t* dst = p4Board::drawBuffer();
+  if (!f.comp) {
+    copyLvDamage(dst, f, f.releaseLv && stagingIsLive && f.lvSequence == stagingSequence + 1);
+    if (f.releaseLv) stagingSequence = f.lvSequence;
+  } else {
+    if (f.kind == KIND_FRAME) prepFrame(f);
+    if (f.kind == KIND_HSTRIP || f.kind == KIND_VSTRIP) {
+      if (f.pageFx == PAGE_WATER) prepWater(f);
+      if (f.pageFx == PAGE_DEPTH) prepDepth(f);
+      if (f.pageFx == PAGE_CASCADE) prepCascade(f);
+    }
+    // The common compositor produces panel-order RGB565 (S3 QSPI).
+    // The P4 PPA takes little-endian RGB565 in logical orientation.
+    for (int y = 0; y < f.h; ++y) {
+      uint16_t* row = dst + y * f.w;
+      emitRow(f, y, 0, f.w, row, 1);
+      for (int x = 0; x < f.w; ++x) row[x] = __builtin_bswap16(row[x]);
+    }
+  }
+  overlayDots(f, dst, 0);
+  stagingIsLive = plainLvFrame(f);
+}
+
+static PanelDamageRect copyNativeDamage(uint16_t* dst, const uint16_t* staging,
+                                       const Frame& f, const PanelDamageRect& d) {
+  int ax, ay, bx, by;
+  toNative(f.rot, d.x1, d.y1, ax, ay);
+  toNative(f.rot, d.x2, d.y2, bx, by);
+  const PanelDamageRect native{std::min(ax, bx), std::min(ay, by),
+                               std::max(ax, bx), std::max(ay, by)};
+  const int steps[] = {1, -f.w, -1, f.w};
+  const int step = steps[f.rot];
+  for (int y = native.y1; y <= native.y2; ++y) {
+    int lx, ly;
+    toLogical(f.rot, native.x1, y, lx, ly);
+    const uint16_t* src = staging + ly * f.w + lx;
+    uint16_t* row = dst + y * NATIVE_W + native.x1;
+    for (int x = 0; x <= native.x2 - native.x1; ++x) row[x] = src[x * step];
+  }
+  return native;
+}
+
+static bool presentCpuFrame(const Frame& f, const uint16_t* staging) {
+  const auto target = p4Board::idleScanoutTarget();
+  if (!target.pixels) return false;
+  copyNativeDamage(target.pixels, staging, f, {0, 0, f.w - 1, f.h - 1});
+  p4Board::NativeScanoutWrite write{};
+  write.ranges[write.count++] = {0, FRAME_BYTES};
+  return p4Board::presentNativeScanout(target, write);
+}
+
+static unsigned damagePixels(const PanelDamageRect& r) {
+  return (r.x2 - r.x1 + 1) * (r.y2 - r.y1 + 1);
+}
+
+static void mergeNativeRanges(p4Board::NativeScanoutWrite& write) {
+  auto* ranges = write.ranges;
+  std::sort(ranges, ranges + write.count, [](const auto& a, const auto& b) {
+    return a.start < b.start;
+  });
+  size_t count = 0;
+  for (size_t i = 0; i < write.count; ++i) {
+    if (count && ranges[i].start <= ranges[count - 1].end)
+      ranges[count - 1].end = std::max(ranges[count - 1].end, ranges[i].end);
+    else
+      ranges[count++] = ranges[i];
+  }
+  write.count = count;
+}
+
+static bool tryNativeScanout(const Frame& f, const uint16_t* staging) {
+  if (!plainLvFrame(f) || !s_latestScanout.pixels || !s_previousScanout.pixels ||
+      f.lvSequence != s_latestScanout.sequence + 1 ||
+      s_latestScanout.sequence != s_previousScanout.sequence + 1 ||
+      !validDamage(f, f.lvDamage) || !validDamage(f, s_latestScanout.damage)) return false;
+
+  // The idle buffer is two redraws behind. Use separate rectangles when
+  // distant updates would include a large unchanged area between them.
+  const PanelDamage* redraws[] = {&f.lvDamage, &s_latestScanout.damage};
+  PanelDamageRect bounds = f.lvDamage.rects[0];
+  unsigned pixels = 0;
+  for (const auto* redraw : redraws) {
+    for (unsigned i = 0; i < redraw->count; ++i) {
+      const auto& r = redraw->rects[i];
+      pixels += damagePixels(r);
+      bounds = {std::min(bounds.x1, r.x1), std::min(bounds.y1, r.y1),
+                std::max(bounds.x2, r.x2), std::max(bounds.y2, r.y2)};
+    }
+  }
+  const unsigned boundsPixels = damagePixels(bounds);
+  constexpr unsigned MAX_NATIVE_DAMAGE_PIXELS = 16 * 1024;
+  if (std::min(pixels, boundsPixels) > MAX_NATIVE_DAMAGE_PIXELS) return false;
+
+  const auto target = p4Board::idleScanoutTarget();
+  if (target.pixels != s_previousScanout.pixels) return false;
+  constexpr size_t align = 128;
+  constexpr size_t rowBytes = NATIVE_W * sizeof(uint16_t);
+  static_assert(FRAME_BYTES % align == 0, "Native scanout buffer must be cache-aligned");
+  static_assert(p4Board::NativeScanoutWrite::MaxRanges >= 2 * PanelDamage::MaxRects,
+                "Allow one scanout range per dirty rectangle across both redraws");
+  p4Board::NativeScanoutWrite write{};
+  const auto copy = [&](const PanelDamageRect& r) {
+    const auto native = copyNativeDamage(target.pixels, staging, f, r);
+    const size_t start = (native.y1 * rowBytes) & ~(align - 1);
+    const size_t end = ((native.y2 + 1) * rowBytes + align - 1) & ~(align - 1);
+    write.ranges[write.count++] = {start, end};
+  };
+  if (boundsPixels <= pixels) {
+    copy(bounds);
+  } else {
+    for (const auto* redraw : redraws)
+      for (unsigned i = 0; i < redraw->count; ++i) copy(redraw->rects[i]);
+  }
+  // Skip unchanged rows between distant redraws while keeping neighbouring
+  // bands in a single cache operation.
+  if (write.count > 1) mergeNativeRanges(write);
+  return p4Board::presentNativeScanout(target, write);
+}
+
+static void rememberScanout(const Frame& f, const uint16_t* pixels) {
+  if (pixels && plainLvFrame(f)) {
+    s_previousScanout = s_latestScanout;
+    s_latestScanout = {pixels, f.lvSequence, f.lvDamage};
+  } else {
+    s_previousScanout = s_latestScanout = {};
+  }
+}
+#else
 struct ChunkJob {
   const Frame* f;
   uint16_t* dst;
@@ -1129,6 +1392,8 @@ void buildChunk(const Frame& f, uint16_t* dst, int ny0) {
   else buildPart(f, dst, ny0, 0, n);
   overlayDots(f, dst, ny0);
 }
+
+#endif
 
 inline float easeOutCubic(float p) {
   const float q = 1.0f - p;
@@ -1169,6 +1434,10 @@ bool decide(Frame& f) {
       f.comp = false;
       f.lv = s_fb[s.lvIdx];
       f.releaseLv = true;
+#if defined(BOARD_IS_JC8012P4A1C)
+      f.lvSequence = s.lvSequence;
+      f.lvDamage = s.lvDamage;
+#endif
       have = true;
     } else {
       // Superseded by the compositor. The buffer still holds a complete frame
@@ -1313,6 +1582,7 @@ bool decide(Frame& f) {
   return have;
 }
 
+#if !defined(BOARD_IS_JC8012P4A1C)
 // Wait for a TE rising edge that is fresh enough to start a frame on.
 // `backToBack` = this frame follows the previous one without a pause, so a
 // missed edge is a real dropped frame rather than an idle panel.
@@ -1336,6 +1606,8 @@ void waitTe(bool backToBack) {
   st_teTimeout = st_teTimeout + 1;
 }
 
+#endif
+
 void publishFrameStats() {
   const uint32_t n = s_frameStats.frames;
   s_frameStats.frameUsAvg = n ? s_frameSum / n : 0;
@@ -1352,6 +1624,64 @@ void publishFrameStats() {
 // the wire, decide the following frame and pre-build its chunk 0; returns
 // true when `next` is ready that way.
 bool sendFrame(const Frame& f, Frame& next, bool backToBack) {
+#if defined(BOARD_IS_JC8012P4A1C)
+  const int64_t f0 = esp_timer_get_time();
+  if (backToBack && f.comp && s_lastWasComp) {
+    const uint32_t gap = (uint32_t)(f0 - s_lastStartUs);
+    if (gap > st_gapMax) st_gapMax = gap;
+  }
+  s_lastStartUs = f0;
+  s_lastWasComp = f.comp;
+  if (f.releaseLv) xSemaphoreGive(s_lvReady);
+  const ScanoutHold hold = s_scanoutHold.load(std::memory_order_acquire);
+  if (hold != ScanoutHold::Off) {
+    if (hold == ScanoutHold::RenderOnly)
+      s_renderOnlyFrames.fetch_add(1, std::memory_order_relaxed);
+    return false;
+  }
+  const uint32_t build = f.build0Us;
+  const auto* staging = p4Board::drawBuffer();
+  const unsigned white = nearWhiteSamples(staging, f.w, f.h);
+  const auto path = s_scanoutPath.load(std::memory_order_acquire);
+  const bool cpu = path == PanelScanoutPath::Cpu;
+  const bool native = path == PanelScanoutPath::Partial && tryNativeScanout(f, staging);
+  const bool presented = cpu ? presentCpuFrame(f, staging) : native || p4Board::presentFrame();
+  if (presented) {
+    if (cpu) s_cpuFull.fetch_add(1, std::memory_order_relaxed);
+    else if (native) s_nativePartial.fetch_add(1, std::memory_order_relaxed);
+    else s_ppaFull.fetch_add(1, std::memory_order_relaxed);
+  }
+  const auto* output = presented ? p4Board::lastPresentedFramebuffer() : nullptr;
+  rememberScanout(f, output);
+  if (!presented) {
+    debugSerial.println("Deck: P4 frame dropped: scanout handoff not confirmed");
+    st_teTimeout = st_teTimeout + 1;
+  }
+  static bool previousNearWhite = false;
+  if (presented) {
+    const bool nearWhite = white >= 60;
+    if (nearWhite != previousNearWhite)
+      debugSerial.printf("Deck: P4 staging t=%ums %s white=%u/64 source=%s\n",
+                         (unsigned)(f0 / 1000), nearWhite ? "near-white frame" : "normal frame",
+                         white, f.comp ? "compositor" : "LVGL");
+    previousNearWhite = nearWhite;
+    if (output) {
+      const unsigned mismatches = outputMismatches(staging, output, f.w, f.rot);
+      s_outputChecked.fetch_add(1, std::memory_order_relaxed);
+      unsigned peak = s_outputMismatchMax.load(std::memory_order_relaxed);
+      while (mismatches > peak &&
+             !s_outputMismatchMax.compare_exchange_weak(peak, mismatches, std::memory_order_relaxed)) {}
+      static bool previousMismatch = false;
+      const bool mismatch = mismatches != 0;
+      if (mismatch != previousMismatch)
+        debugSerial.printf("Deck: P4 output t=%ums mismatch=%u/64 staging_white=%u/64 output_white=%u/64\n",
+                           (unsigned)(f0 / 1000), mismatches, white, nearWhiteSamples(output, NATIVE_W, NATIVE_H));
+      previousMismatch = mismatch;
+    }
+  }
+  // Wait for the current PPA flip before touching its source again.
+  const bool have = false;
+#else
   setWindow();  // before the TE wait: the pixel stream must start at once
   waitTe(backToBack);
   const int64_t f0 = esp_timer_get_time();
@@ -1397,6 +1727,7 @@ bool sendFrame(const Frame& f, Frame& next, bool backToBack) {
   while (inflight--) spi_device_get_trans_result(s_dev, &r, portMAX_DELAY);
   csHigh();
 
+#endif
   const int64_t end = esp_timer_get_time();
   const uint32_t fl = (uint32_t)(end - f0);
   st_frames = st_frames + 1;
@@ -1423,7 +1754,9 @@ bool sendFrame(const Frame& f, Frame& next, bool backToBack) {
   return have;
 }
 
+#if !defined(BOARD_IS_JC8012P4A1C)
 static_assert(NCHUNK % 2 == 0, "the last chunk must use s_bounce[1]");
+#endif
 
 void flushTask(void*) {
   Frame cur = {}, next = {};
@@ -1435,12 +1768,35 @@ void flushTask(void*) {
     s_quiescing = false;
     portEXIT_CRITICAL(&s_mux);
     if (quiet) {
+#if defined(BOARD_IS_JC8012P4A1C)
+      s_previousScanout = s_latestScanout = {};
+#endif
       if (partial) publishFrameStats();
       if (ready && cur.releaseLv) xSemaphoreGive(s_lvReady);
       ready = false;
       xSemaphoreGive(s_quiet);
     }
+#if defined(BOARD_IS_JC8012P4A1C)
+    const ScanoutHold hold = s_scanoutHold.load(std::memory_order_acquire);
+    if (hold == ScanoutHold::Static || hold == ScanoutHold::Replay) {
+      // Each replay uses the same staging pixels and the usual PPA/DSI handoff.
+      // The normal dashboard presents around 35–40 frames per 10 seconds.
+      const TickType_t wait = hold == ScanoutHold::Replay ? pdMS_TO_TICKS(240) : portMAX_DELAY;
+      if (ulTaskNotifyTake(pdTRUE, wait) == 0 && hold == ScanoutHold::Replay &&
+          s_scanoutHold.load(std::memory_order_acquire) == ScanoutHold::Replay) {
+        if (p4Board::readyToDrawFrame() && p4Board::presentFrame()) {
+          s_replayPresented.fetch_add(1, std::memory_order_relaxed);
+        } else {
+          s_replayFailed.fetch_add(1, std::memory_order_relaxed);
+        }
+      }
+      continue;
+    }
+#endif
     if (!ready) {
+#if defined(BOARD_IS_JC8012P4A1C)
+      if (!p4Board::readyToDrawFrame()) continue;
+#endif
       if (!decide(cur)) {
         const CompMode mode = compMode();
         const bool animating = mode == COMP_ANIM || mode == COMP_FRAME;
@@ -1448,10 +1804,20 @@ void flushTask(void*) {
         continue;
       }
       const int64_t b0 = esp_timer_get_time();
+#if defined(BOARD_IS_JC8012P4A1C)
+      {
+        p4Trace::WorkerScope trace(p4Trace::Worker::PanelBuild);
+        buildPanelFrame(cur);
+      }
+#else
       buildChunk(cur, s_bounce[0], 0);
+#endif
       cur.build0Us = esp_timer_get_time() - b0;
     }
-    ready = sendFrame(cur, next, ready);
+    {
+      p4Trace::WorkerScope trace(p4Trace::Worker::PanelSend);
+      ready = sendFrame(cur, next, ready);
+    }
     if (ready) cur = next;
   }
 }
@@ -1481,6 +1847,34 @@ void panelShare(void (*fn)(void* ctx, int lo, int hi), void* ctx, int n, int bat
 
 bool panelBegin(uint8_t rotation) {
   s_rot = rotation & 3;
+#if defined(BOARD_IS_JC8012P4A1C)
+  if (!p4Board::beginPanel(s_rot, true)) return false;
+  if (!p4Board::drawBuffer()) return false;
+  p4Board::setBacklight(0);
+  for (auto& fb : s_fb) {
+    fb = (uint16_t*)heap_caps_aligned_calloc(64, 1, FRAME_BYTES, MALLOC_CAP_SPIRAM);
+    if (!fb) {
+      for (auto& allocated : s_fb) {
+        heap_caps_free(allocated);
+        allocated = nullptr;
+      }
+      return false;
+    }
+  }
+  s_lvReady = xSemaphoreCreateCounting(2, 0);
+  s_quiet = xSemaphoreCreateBinary();
+  if (!s_lvReady || !s_quiet ||
+      xTaskCreatePinnedToCore(flushTask, "deck_flush", 6144, nullptr, 20, &s_task, 1) != pdPASS) {
+    if (s_lvReady) vSemaphoreDelete(s_lvReady);
+    if (s_quiet) vSemaphoreDelete(s_quiet);
+    for (auto& fb : s_fb) {
+      heap_caps_free(fb);
+      fb = nullptr;
+    }
+    return false;
+  }
+  return true;
+#else
   gpio_reset_pin((gpio_num_t)PIN_CS);
   gpio_set_direction((gpio_num_t)PIN_CS, GPIO_MODE_OUTPUT);
   csHigh();
@@ -1554,11 +1948,15 @@ bool panelBegin(uint8_t rotation) {
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
   return true;
+
+#endif
 }
 
 void panelSetRotation(uint8_t rotation) {
   compCancel();
+#if !defined(BOARD_IS_JC8012P4A1C)
   s_rot = rotation & 3;
+#endif
 }
 
 uint8_t panelRotation() { return s_rot; }
@@ -1575,12 +1973,20 @@ const uint16_t* panelLatestLvFrame() {
   return idx >= 0 ? s_fb[idx] : nullptr;
 }
 
+#if defined(BOARD_IS_JC8012P4A1C)
+void panelPostLv(int idx, uint32_t gen, const PanelDamage& damage) {
+#else
 void panelPostLv(int idx, uint32_t gen) {
+#endif
   portENTER_CRITICAL(&s_mux);
   const bool superseded = s.lvPending;  // never read: its buffer is free again
   s.lvPending = true;
   s.lvIdx = idx & 1;
   s.lvGen = gen;
+#if defined(BOARD_IS_JC8012P4A1C)
+  ++s.lvSequence;
+  s.lvDamage = damage;
+#endif
   portEXIT_CRITICAL(&s_mux);
   if (superseded) xSemaphoreGive(s_lvReady);
   if (s_task) xTaskNotifyGive(s_task);
@@ -1737,6 +2143,36 @@ void panelQuiesce() {
   xSemaphoreTake(s_quiet, portMAX_DELAY);
 }
 
+#if defined(BOARD_IS_JC8012P4A1C)
+void panelBeginScanoutHold(ScanoutHold mode) {
+  s_replayPresented.store(0, std::memory_order_relaxed);
+  s_replayFailed.store(0, std::memory_order_relaxed);
+  s_renderOnlyFrames.store(0, std::memory_order_relaxed);
+  s_scanoutHold.store(ScanoutHold::Static, std::memory_order_release);
+  panelQuiesce();
+  if (mode != ScanoutHold::Static) {
+    s_scanoutHold.store(mode, std::memory_order_release);
+    if (s_task) xTaskNotifyGive(s_task);
+  }
+}
+
+ScanoutTestStats panelEndScanoutHold() {
+  if (s_scanoutHold.exchange(ScanoutHold::Static, std::memory_order_acq_rel) != ScanoutHold::Static) {
+    panelQuiesce();
+  }
+  const ScanoutTestStats stats = {s_replayPresented.load(std::memory_order_relaxed),
+                                  s_replayFailed.load(std::memory_order_relaxed),
+                                  s_renderOnlyFrames.load(std::memory_order_relaxed)};
+  s_scanoutHold.store(ScanoutHold::Off, std::memory_order_release);
+  if (s_task) xTaskNotifyGive(s_task);
+  return stats;
+}
+
+void panelSetScanoutPath(PanelScanoutPath path) {
+  s_scanoutPath.store(path, std::memory_order_release);
+}
+#endif
+
 bool compBeginFrame(const FrameScene& scene, uint32_t durationMs) {
   if (!scene.base.px || !scene.picture.px || (scene.count && (!scene.page.px || !scene.rects))) return false;
   panelQuiesce();
@@ -1768,6 +2204,13 @@ bool compFrameResult(PanelStats& out) {
 
 PanelStats panelTakeStats() {
   PanelStats p;
+#if defined(BOARD_IS_JC8012P4A1C)
+  p.outputChecked = s_outputChecked.exchange(0, std::memory_order_relaxed);
+  p.outputMismatchMax = s_outputMismatchMax.exchange(0, std::memory_order_relaxed);
+  p.nativePartial = s_nativePartial.exchange(0, std::memory_order_relaxed);
+  p.ppaFull = s_ppaFull.exchange(0, std::memory_order_relaxed);
+  p.cpuFull = s_cpuFull.exchange(0, std::memory_order_relaxed);
+#endif
   const uint32_t n = st_frames;
   p.frames = n;
   p.compFrames = st_comp;

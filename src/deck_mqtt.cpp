@@ -1,7 +1,7 @@
 // Home Assistant discovery: network I/O on one worker, UI and NVS on the loop.
 #include "deck_mqtt.h"
 #include "config.h"
-#include "settings.h"
+#include "tactula_settings.h"
 #include "psram_json.h"
 #include <Preferences.h>
 #include <WiFi.h>
@@ -114,7 +114,11 @@ bool discovery(PubSubClient& mqtt, const MqttSettings& cfg, const MqttSnapshot& 
     device["name"] = cfg.deviceName.length() ? cfg.deviceName : String(PRODUCT_NAME);
     device["manufacturer"] = "Guition";
     // Preserve discovery identifiers and topics to avoid duplicate HA entities.
+#if defined(BOARD_IS_JC8012P4A1C)
+    device["model"] = "tactula JC8012P4A1C";
+#else
     device["model"] = "tactula JC3248W535";
+#endif
     device["sw_version"] = FW_VERSION;
     device["configuration_url"] = "http://" + snap.ip + "/";
     if (i != MQ_MESSAGE && i != MQ_RESTART) doc["state_topic"] = base + "/" + OBJECTS[i] + "/state";
@@ -363,7 +367,13 @@ void mqttBegin() {
   String error;
   if (!mqttNormalize(s_settings, error)) s_settings = MqttSettings();
   uint8_t mac[6] = {};
+#if defined(BOARD_IS_JC8012P4A1C)
+  // The P4 has no native Wi-Fi MAC. Use its stable factory identity,
+  // even if the hosted C6 is offline when MQTT starts.
+  esp_efuse_mac_get_default(mac);
+#else
   esp_read_mac(mac, ESP_MAC_WIFI_STA);
+#endif
   char id[7];
   snprintf(id, sizeof(id), "%02x%02x%02x", mac[3], mac[4], mac[5]);
   s_id = id;

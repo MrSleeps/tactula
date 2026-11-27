@@ -76,7 +76,7 @@ These animation examples also originate from Keralots' TouchDeck documentation. 
 2. Set up WiFi over USB in the same tab, or join the device's **`tactula-XXXX`** network (password `touchdeck1234`, setup page at `http://192.168.4.1`).
 3. Open the device IP, connect [Home Assistant](GUIDE.md#home-assistant) and build your pages.
 
-Updating an existing Tactula device: upload the matching `tactula-v<version>-jc3248w535-<edition>-ota.bin` asset via **Maintenance > Firmware update**. The `without_bambu` and `with_bambu` variants share the same functionality except the optional Bambu P1S/AMS integration. See [GUIDE.md](GUIDE.md#building-from-source).
+Updating an existing Tactula device: upload the matching `tactula-v<version>-<family>-<board>-<edition>-ota.bin` asset via **Maintenance > Firmware update**. The `without_bambu` and `with_bambu` variants share the same functionality except the optional Bambu P1S/AMS integration. See [GUIDE.md](GUIDE.md#building-from-source).
 
 ## Credits and upstream attribution
 

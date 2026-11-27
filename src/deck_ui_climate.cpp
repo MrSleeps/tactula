@@ -13,7 +13,11 @@ lv_obj_t* makeControl(lv_obj_t* parent, const char* title, uint32_t accent, bool
   lv_obj_remove_style_all(button);
   lv_obj_remove_flag(button, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_radius(button, round ? LV_RADIUS_CIRCLE : 10, 0);
-  lv_obj_set_style_bg_color(button, lv_color_hex(C_TILE_PRESSED), 0);
+  lv_obj_set_style_bg_color(button, lv_color_hex(themeUsesModernLayout(s_theme) ? modernColour(0x29496A) : C_TILE_PRESSED), 0);
+  if (themeUsesModernLayout(s_theme)) {
+    lv_obj_set_style_border_width(button, 1, 0);
+    lv_obj_set_style_border_color(button, lv_color_hex(modernColour(0x45678D)), 0);
+  }
   lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
   lv_obj_set_style_bg_color(button, lv_color_hex(accent), LV_STATE_CHECKED);
   lv_obj_set_style_bg_color(button, lv_color_hex(accent), LV_STATE_PRESSED);
@@ -49,6 +53,33 @@ float snapTemp(const HaEntity& e, float v) {
   return v;
 }
 
+float inlineTarget(const TileRt& r, const HaEntity& e) {
+  const bool range = climateRange(e);
+  if (r.climPending && isfinite(r.climWantHigh) == range) return r.climWant;
+  return range ? e.targetLow : e.target;
+}
+
+bool queueInlineTarget(TileRt& r, const HaEntity& e, float desired) {
+  float high = NAN;
+  if (climateRange(e)) {
+    const float low = inlineTarget(r, e);
+    const float currentHigh = r.climPending && isfinite(r.climWantHigh) ? r.climWantHigh : e.targetHigh;
+    high = currentHigh + (desired - low);
+    if ((isfinite(e.tempMin) && desired < e.tempMin) ||
+        (isfinite(e.tempMax) && high > e.tempMax)) return false;
+    high = snapTemp(e, high);
+  }
+  r.climWant = snapTemp(e, desired);
+  r.climWantHigh = high;
+  r.climPending = true;
+  r.climSent = false;
+  r.climAt = millis();
+  return true;
+}
+
+float dialMin(const HaEntity& e) { return isfinite(e.tempMin) ? e.tempMin : 5.0f; }
+float dialMax(const HaEntity& e) { return isfinite(e.tempMax) ? e.tempMax : 35.0f; }
+
 bool sendSetpoint(TileRt& r) {
   if (!r.climPending || !isfinite(r.climWant)) return true;
   char a[18], b[18], body[95];
@@ -77,21 +108,7 @@ void onInlineClimate(lv_event_t* ev) {
   if (part < 2) {
     if (!hasSetpoint(&e)) return;
     const float change = part == 0 ? -stepSize(e) : stepSize(e);
-    if (climateRange(e)) {
-      const float low = r.climPending && isfinite(r.climWantHigh) ? r.climWant : e.targetLow;
-      const float high = r.climPending && isfinite(r.climWantHigh) ? r.climWantHigh : e.targetHigh;
-      if ((isfinite(e.tempMin) && low + change < e.tempMin) ||
-          (isfinite(e.tempMax) && high + change > e.tempMax)) return;
-      r.climWant = snapTemp(e, low + change);
-      r.climWantHigh = snapTemp(e, high + change);
-    } else {
-      const float current = r.climPending && !isfinite(r.climWantHigh) ? r.climWant : e.target;
-      r.climWant = snapTemp(e, current + change);
-      r.climWantHigh = NAN;
-    }
-    r.climPending = true;
-    r.climSent = false;
-    r.climAt = millis();
+    if (!queueInlineTarget(r, e, inlineTarget(r, e) + change)) return;
   } else {
     const size_t mode = part - 2;
     if (mode >= r.climModeCount) return;
@@ -108,6 +125,32 @@ void onInlineClimate(lv_event_t* ev) {
     r.climPending = false;
     r.climModePending = target;
     r.climModeAt = millis();
+  }
+  applyInlineClimate(r, &e);
+  markPageStale(r.page);
+}
+
+void onInlineDial(lv_event_t* event) {
+  const size_t index = (size_t)(uintptr_t)lv_event_get_user_data(event);
+  if (index >= s_tiles.size()) return;
+  TileRt& r = s_tiles[index];
+  if (!r.climDial || r.climDialSync) return;
+  const auto code = lv_event_get_code(event);
+  if (code == LV_EVENT_PRESSED) {
+    r.climDialDragging = true;
+    return;
+  }
+  if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+    if (r.climDialDragging && r.climPending && !r.climSent) r.climAt = millis();
+    r.climDialDragging = false;
+  } else if (code != LV_EVENT_VALUE_CHANGED) return;
+  HaEntity e;
+  if (!haGetEntity(r.def->entity, e) || !hasSetpoint(&e) || haLink() != HA_CONNECTED) return;
+  if (code == LV_EVENT_VALUE_CHANGED) {
+    const float lo = dialMin(e), hi = dialMax(e);
+    if (hi <= lo) return;
+    const float target = snapTemp(e, lo + (hi - lo) * lv_arc_get_value(r.climDial) / 100.0f);
+    if (target != inlineTarget(r, e)) queueInlineTarget(r, e, target);
   }
   applyInlineClimate(r, &e);
   markPageStale(r.page);
@@ -155,6 +198,23 @@ void updateModes(TileRt& r, const HaEntity* e) {
 
 void makeInlineClimate(TileRt& r, lv_obj_t* tile, size_t index) {
   const uint32_t accent = r.def->hasColor ? r.def->color : domainColor("climate");
+  if (r.def->climateDial) {
+    auto* dial = r.climDial = lv_arc_create(tile);
+    lv_arc_set_range(dial, 0, 100);
+    lv_arc_set_bg_angles(dial, 135, 45);
+    lv_obj_set_style_arc_color(dial, lv_color_mix(lv_color_hex(C_TEXT), lv_color_hex(C_TILE), LV_OPA_20), LV_PART_MAIN);
+    lv_obj_set_style_arc_color(dial, lv_color_hex(accent), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(dial, lv_color_hex(0xFFFFFF), LV_PART_KNOB);
+    lv_obj_set_style_bg_opa(dial, LV_OPA_COVER, LV_PART_KNOB);
+    lv_obj_set_style_radius(dial, LV_RADIUS_CIRCLE, LV_PART_KNOB);
+    lv_obj_set_style_border_color(dial, lv_color_hex(accent), LV_PART_KNOB);
+    lv_obj_set_style_opa(dial, LV_OPA_40, LV_STATE_DISABLED);
+    lv_obj_remove_flag(dial, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(dial, LV_OBJ_FLAG_ADV_HITTEST);
+    showObj(dial, false);
+    for (auto event : {LV_EVENT_PRESSED, LV_EVENT_VALUE_CHANGED, LV_EVENT_RELEASED, LV_EVENT_PRESS_LOST})
+      lv_obj_add_event_cb(dial, onInlineDial, event, (void*)(uintptr_t)index);
+  }
   r.name = lv_label_create(tile);
   lv_label_set_text(r.name, tileLabel(*r.def).c_str());
   lv_label_set_long_mode(r.name, LV_LABEL_LONG_MODE_DOTS);
@@ -170,6 +230,13 @@ void makeInlineClimate(TileRt& r, lv_obj_t* tile, size_t index) {
   lv_obj_set_style_text_font(r.climInfo, &deck_font_14, 0);
   lv_obj_set_style_text_align(r.climInfo, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_color(r.climInfo, lv_color_hex(C_DIM), 0);
+  for (lv_obj_t* label : {r.name, r.climValue}) {
+    lv_obj_add_flag(label, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(label, [](lv_event_t* event) {
+      const size_t idx = (size_t)(uintptr_t)lv_event_get_user_data(event);
+      if (idx < s_tiles.size()) openModal((int)idx);
+    }, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)index);
+  }
   r.climMinus = makeControl(tile, LV_SYMBOL_MINUS, accent, true);
   r.climPlus = makeControl(tile, LV_SYMBOL_PLUS, accent, true);
   lv_obj_add_event_cb(r.climMinus, onInlineClimate, LV_EVENT_SHORT_CLICKED,
@@ -183,8 +250,91 @@ void makeInlineClimate(TileRt& r, lv_obj_t* tile, size_t index) {
   r.climModeCount = 0;
 }
 
+static bool fitInlineDial(TileRt& r, int cw, int ch) {
+  const auto* nameFont = roomyWidget(cw, ch) ? &deck_font_28 : &deck_font_14;
+  const int titleH = lineH(nameFont);
+  const int gap = 8;
+  const int modeH = r.climModeCount ? std::clamp(ch / 8, 30, 36) : 0;
+  const int room = ch - titleH - gap - (modeH ? modeH + gap : 0);
+  const int d = std::min({cw - 6, room, 440});
+  if (d < 110) return false;
+
+  const int x = (cw - d) / 2;
+  const int y = titleH + gap + (room - d) / 2;
+  const int stroke = themeUsesModernLayout(s_theme) ? std::max(6, d / 18) : std::max(5, d / 27);
+  lv_obj_set_style_text_font(r.name, nameFont, 0);
+  lv_obj_set_pos(r.name, 0, 0);
+  lv_obj_set_size(r.name, cw, titleH);
+  lv_obj_set_pos(r.climDial, x, y);
+  lv_obj_set_size(r.climDial, d, d);
+  lv_obj_set_style_arc_width(r.climDial, stroke, LV_PART_MAIN);
+  lv_obj_set_style_arc_width(r.climDial, stroke, LV_PART_INDICATOR);
+  if (themeUsesModernLayout(s_theme)) {
+    lv_obj_set_style_arc_rounded(r.climDial, true, LV_PART_MAIN);
+    lv_obj_set_style_arc_rounded(r.climDial, true, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(r.climDial, lv_color_hex(modernColour(0x304B65)), LV_PART_MAIN);
+  }
+  lv_obj_set_style_pad_all(r.climDial, std::max(3, stroke / 2), LV_PART_KNOB);
+  lv_obj_set_style_border_width(r.climDial, std::max(2, stroke / 4), LV_PART_KNOB);
+  showObj(r.climDial, true);
+
+  const auto* valueFont = d >= 220 ? &lv_font_montserrat_40 : d >= 150 ? &deck_font_28 : &deck_font_20;
+  const auto* infoFont = d >= 220 ? &deck_font_20 : d >= 150 ? &deck_font_14 : &deck_font_12;
+  const int labelW = d * 3 / 4;
+  const int labelX = (cw - labelW) / 2;
+  lv_obj_set_style_text_font(r.climValue, valueFont, 0);
+  lv_obj_set_pos(r.climValue, labelX, y + d * 27 / 100);
+  lv_obj_set_size(r.climValue, labelW, lineH(valueFont));
+  lv_obj_set_style_text_font(r.climInfo, infoFont, 0);
+  lv_obj_set_pos(r.climInfo, labelX, y + d / 2);
+  lv_obj_set_size(r.climInfo, labelW, lineH(infoFont));
+  showObj(r.climValue, true);
+  showObj(r.climInfo, true);
+
+  const int button = std::clamp(d / 7, 26, 36);
+  const int buttonY = y + d * 70 / 100;
+  for (auto* b : {r.climMinus, r.climPlus}) {
+    showObj(b, true);
+    lv_obj_set_size(b, button, button);
+    lv_obj_set_style_text_font(lv_obj_get_child(b, 0), &deck_font_14, 0);
+  }
+  lv_obj_set_pos(r.climMinus, cw / 2 - button - gap / 2, buttonY);
+  lv_obj_set_pos(r.climPlus, cw / 2 + gap / 2, buttonY);
+
+  if (modeH) {
+    const int spacing = 8;
+    const int count = r.climModeCount;
+    const int bw = std::min(d >= 220 ? 80 : 64, (cw - spacing * (count - 1)) / count);
+    const int rowW = bw * count + spacing * (count - 1);
+    lv_obj_set_pos(r.climModeRow, (cw - rowW) / 2, ch - modeH);
+    lv_obj_set_size(r.climModeRow, rowW, modeH);
+    for (int i = 0; i < count; ++i) {
+      auto* b = r.climModeBtns[i];
+      lv_obj_set_pos(b, i * (bw + spacing), 0);
+      lv_obj_set_size(b, bw, modeH);
+      auto* label = lv_obj_get_child(b, 0);
+      lv_obj_set_style_text_font(label, bw < 58 ? &deck_font_12 : &deck_font_14, 0);
+      lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+      lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
+      lv_obj_set_width(label, std::max(1, bw - 4));
+    }
+  }
+  showObj(r.climModeRow, modeH != 0);
+  return true;
+}
+
 void fitInlineClimate(TileRt& r, int cw, int ch) {
   if (cw <= 0 || ch <= 0) return;
+  if (r.climDial) {
+    invalidateSwipeZones();
+    if (fitInlineDial(r, cw, ch)) return;
+    showObj(r.climDial, false);
+    showObj(r.climModeRow, true);
+    for (auto* b : {r.climMinus, r.climPlus})
+      lv_obj_set_style_text_font(lv_obj_get_child(b, 0), &deck_font_20, 0);
+    for (int i = 0; i < r.climModeCount; ++i)
+      lv_obj_set_width(lv_obj_get_child(r.climModeBtns[i], 0), LV_SIZE_CONTENT);
+  }
   // Grouped climate tiles need a condensed layout when their allocated
   // row is too short for the standalone thermostat's three content bands.
   // Keep the HVAC mode buttons usable; standalone tiles are unaffected.
@@ -230,12 +380,15 @@ void fitInlineClimate(TileRt& r, int cw, int ch) {
   showObj(r.climPlus, true);
   showObj(r.climInfo, true);
   showObj(r.climValue, true);
-  const int button = std::min(52, std::max(30, cw / 5));
-  const int modeHeight = std::min(40, std::max(28, ch / 5));
+  const bool large = roomyWidget(cw, ch) && ch >= 195;
+  const lv_font_t* infoFont = large ? &deck_font_20 : &deck_font_14;
+  const int infoHeight = lv_font_get_line_height(infoFont);
+  const int button = std::min(large ? 76 : 52, std::max(30, cw / 5));
+  const int modeHeight = std::min(large ? 56 : 40, std::max(28, ch / 5));
   const int modeY = std::max(0, ch - modeHeight);
   const int controlY = std::max(25, (modeY - button - 20) / 2);
-  const int infoY = std::min(modeY - 21, controlY + button + 10);
-  const lv_font_t* nameFont = cw < 200 ? &deck_font_14 : &deck_font_20;
+  const int infoY = std::min(modeY - infoHeight - 3, controlY + button + 10);
+  const lv_font_t* nameFont = large ? &deck_font_28 : cw < 200 ? &deck_font_14 : &deck_font_20;
   lv_obj_set_style_text_font(r.name, nameFont, 0);
   lv_obj_set_pos(r.name, 0, 0);
   lv_obj_set_size(r.name, cw, lv_font_get_line_height(nameFont));
@@ -243,12 +396,14 @@ void fitInlineClimate(TileRt& r, int cw, int ch) {
   lv_obj_set_pos(r.climMinus, 0, controlY);
   lv_obj_set_pos(r.climPlus, cw - button, controlY);
   const int valX = button + 3, valW = std::max(1, cw - 2 * (button + 3));
-  lv_obj_set_style_text_font(r.climValue, cw < 210 ? &deck_font_20 : &deck_font_28, 0);
-  lv_obj_set_pos(r.climValue, valX, controlY + (button - lv_font_get_line_height(
-      cw < 210 ? &deck_font_20 : &deck_font_28)) / 2);
-  lv_obj_set_size(r.climValue, valW, 39);
+  const lv_font_t* valueFont = large ? &lv_font_montserrat_40 : cw < 210 ? &deck_font_20 : &deck_font_28;
+  const int valueHeight = lv_font_get_line_height(valueFont);
+  lv_obj_set_style_text_font(r.climValue, valueFont, 0);
+  lv_obj_set_pos(r.climValue, valX, controlY + (button - valueHeight) / 2);
+  lv_obj_set_size(r.climValue, valW, large ? valueHeight : 39);
   lv_obj_set_pos(r.climInfo, 0, infoY);
-  lv_obj_set_size(r.climInfo, cw, 18);
+  lv_obj_set_style_text_font(r.climInfo, infoFont, 0);
+  lv_obj_set_size(r.climInfo, cw, large ? infoHeight : 18);
   lv_obj_set_pos(r.climModeRow, 0, modeY);
   lv_obj_set_size(r.climModeRow, cw, modeHeight);
   if (r.climModeCount) {
@@ -260,7 +415,7 @@ void fitInlineClimate(TileRt& r, int cw, int ch) {
       lv_obj_set_pos(b, i * (bw + spacing), 0);
       lv_obj_set_size(b, bw, modeHeight);
       lv_obj_t* label = lv_obj_get_child(b, 0);
-      if (label) lv_obj_set_style_text_font(label, bw < 66 ? &deck_font_12 : &deck_font_14, 0);
+      if (label) lv_obj_set_style_text_font(label, large && bw >= 90 ? &deck_font_20 : bw < 66 ? &deck_font_12 : &deck_font_14, 0);
     }
   }
 }
@@ -307,6 +462,27 @@ void applyInlineClimate(TileRt& r, const HaEntity* e) {
     if (hasSetpoint(e) && haLink() == HA_CONNECTED) lv_obj_remove_state(b, LV_STATE_DISABLED);
     else lv_obj_add_state(b, LV_STATE_DISABLED);
   }
+  if (themeUsesModernLayout(s_theme)) {
+    const uint32_t tint = available && e->hvacAction == "heating" ? 0xFFB56B :
+                          available && e->hvacAction == "cooling" ? 0x75BFFF : modernColour(0xA5BCD5);
+    lv_obj_set_style_text_color(r.climInfo, lv_color_hex(tint), 0);
+    if (r.climDial) {
+      lv_obj_set_style_arc_color(r.climDial, lv_color_hex(tint), LV_PART_INDICATOR);
+      lv_obj_set_style_border_color(r.climDial, lv_color_hex(tint), LV_PART_KNOB);
+    }
+  }
+  if (r.climDial) {
+    const bool canAdjust = hasSetpoint(e) && haLink() == HA_CONNECTED && dialMax(*e) > dialMin(*e);
+    if (canAdjust) lv_obj_remove_state(r.climDial, LV_STATE_DISABLED);
+    else lv_obj_add_state(r.climDial, LV_STATE_DISABLED);
+    if (!r.climDialDragging) {
+      const int pos = canAdjust ? constrain((int)lroundf((inlineTarget(r, *e) - dialMin(*e)) * 100 /
+                                                        (dialMax(*e) - dialMin(*e))), 0, 100) : 0;
+      r.climDialSync = true;
+      lv_arc_set_value(r.climDial, pos);
+      r.climDialSync = false;
+    }
+  }
   const String mode = r.climModePending.length() ? r.climModePending : available ? e->state : String();
   for (size_t i = 0; i < r.climModeCount; ++i) {
     lv_obj_t* b = r.climModeBtns[i];
@@ -325,7 +501,7 @@ void inlineClimateTick() {
     if (!r.def || r.def->type != TILE_CLIMATE) continue;
     bool refresh = false;
     if (r.climPending) {
-      if (!r.climSent && now - r.climAt >= INLINE_CLIMATE_SEND_MS) {
+      if (!r.climSent && !r.climDialDragging && now - r.climAt >= INLINE_CLIMATE_SEND_MS) {
         if (sendSetpoint(r)) {
           r.climSent = true;
           r.climAt = now;

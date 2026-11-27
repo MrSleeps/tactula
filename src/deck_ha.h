@@ -15,6 +15,9 @@
 #define DECK_HA_H
 
 #include <Arduino.h>
+#if defined(BOARD_IS_JC8012P4A1C)
+#include <FS.h>
+#endif
 #include <ArduinoJson.h>
 #include <vector>
 
@@ -40,9 +43,21 @@ struct HaEntity {
   String deviceClass;       // device_class (picks a default icon)
   int brightness = -1;      // 0..255 for lights that report it
   int32_t rgb = -1;         // 0xRRGGBB from rgb_color, lights that report it
+  bool lightSupportsColor = false; // supported_color_modes includes chromatic colours
+  bool lightSupportsWarmth = false; // supports the color_temp mode
   int colorTempKelvin = -1; // colour-temperature lights without rgb_color
+  int minColorTempKelvin = -1;
+  int maxColorTempKelvin = -1;
   int level = -1;           // 0..100: cover position, fan percentage, media volume
   String mediaTitle, mediaArtist; // media_player metadata, empty when unavailable
+  String mediaPicture;
+  int8_t mediaMute = -1, mediaShuffle = -1;
+  String mediaRepeat;
+  String mediaAlbum, mediaSources; // bounded newline-separated source list
+  uint32_t mediaPositionAt = 0;
+  int8_t mediaWebOsPlatform = -1; // unknown, non-webOS, webOS (registry)
+  String mediaApp, mediaSource;   // active app and input when reported
+  int32_t mediaFeatures = -1;     // HA MediaPlayerEntityFeature mask, -1 when unreported
   float mediaPosition = NAN, mediaDuration = NAN;
   float numMin = NAN;       // input_number range and step
   float numMax = NAN;
@@ -103,6 +118,8 @@ using HaRegDone = void (*)(uint32_t tag, bool ok, const HaRegEntry* list, size_t
 bool haRegistryLookup(const String& tmpl, uint32_t tag, HaRegDone done);
 
 // Renders a template through /api/template. Blocking, loop task only.
+bool haMediaArtwork(const String& url, uint8_t*& bytes, size_t& length);
+bool haCameraSnapshot(const String& entity, uint8_t*& bytes, size_t& length);
 bool haRenderTemplate(const String& tmpl, String& out, String& err);
 // Copy of one entity. False when the id is not in the subscribed set.
 bool haGetEntity(const String& id, HaEntity& out);
@@ -146,6 +163,11 @@ bool haTakeFailure(String& entity, String& message);
 bool haFetchEntityList(String& outJson, bool refresh, String& err);
 // Where that copy lives, for streaming it straight from flash.
 const char* haEntityListPath();
+#if defined(BOARD_IS_JC8012P4A1C)
+// Loop task only: bounded per-record SD catalogue refresh and cached file.
+bool haRefreshSdEntityList(String& err);
+File haOpenSdEntityList();
+#endif
 
 }  // namespace deck
 

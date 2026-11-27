@@ -9,6 +9,7 @@
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <esp_partition.h>
+#include <algorithm>
 
 namespace deck {
 namespace {
@@ -171,8 +172,14 @@ bool parseWhen(JsonVariantConst v, WhenDef& w, String* err, const String& where)
 
 void parseGrid(JsonVariantConst v, uint8_t& cols, uint8_t& rows) {
   if (v.isNull()) return;
-  cols = (uint8_t)constrain((int)(v["cols"] | cols), 1, 6);
-  rows = (uint8_t)constrain((int)(v["rows"] | rows), 1, 6);
+#if defined(BOARD_IS_JC8012P4A1C)
+  // 1280x800 P4 supports a denser deck than the original 320x480 S3.
+  constexpr int maxCols = 8, maxRows = 6;
+#else
+  constexpr int maxCols = 6, maxRows = 6;
+#endif
+  cols = (uint8_t)constrain((int)(v["cols"] | cols), 1, maxCols);
+  rows = (uint8_t)constrain((int)(v["rows"] | rows), 1, maxRows);
 }
 
 bool s_fsTried = false;
@@ -279,6 +286,20 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
     p.autoShow = p.when.kind != WHEN_ALWAYS && (pv["auto"] | false);
     parseGrid(pv["layouts"]["landscape"], p.cols[ORIENT_LANDSCAPE], p.rows[ORIENT_LANDSCAPE]);
     parseGrid(pv["layouts"]["portrait"], p.cols[ORIENT_PORTRAIT], p.rows[ORIENT_PORTRAIT]);
+    for (JsonVariantConst lv : pv["layers"].as<JsonArrayConst>()) {
+      VisibilityLayer layer;
+      layer.id = (const char*)(lv["id"] | "");
+      if (!layer.id.length() || layer.id.length() > 48 || p.layers.size() >= 12) {
+        if (err) *err = "Invalid visibility layer"; return false;
+      }
+      for (const auto& other : p.layers) if (other.id == layer.id) {
+        if (err) *err = "Duplicate visibility layer"; return false;
+      }
+      if (!parseWhen(lv["when"], layer.when, err, layer.id) || layer.when.kind == WHEN_ALWAYS) {
+        if (err && !err->length()) *err = "Layer needs a condition"; return false;
+      }
+      p.layers.push_back(layer);
+    }
     JsonArrayConst tiles = pv["tiles"].as<JsonArrayConst>();
     if (tiles.size() > MAX_PAGE_TILES) {
       if (err) *err = "page '" + p.id + "': too many tiles";
@@ -316,6 +337,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       else if (!strcmp(tt, "ha-media")) t.type = TILE_HA_MEDIA;
       else if (!strcmp(tt, "nav")) t.type = TILE_NAV;
       else if (!strcmp(tt, "group")) t.type = TILE_GROUP;
+      else if (!strcmp(tt, "text")) t.type = TILE_TEXT;
 #if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
       else if (!strcmp(tt, "bambu")) t.type = TILE_BAMBU;
 #endif
@@ -340,6 +362,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
                  (tv["label"].is<const char*>() && !t.label.length());
       t.sub = (const char*)(tv["sub"] | "");
       t.icon = (const char*)(tv["icon"] | "");
+      t.lightPopupPresets = !strcmp(tv["lightPopup"] | "", "presets");
       if (t.type == TILE_ACTION || t.type == TILE_TOGGLE || t.type == TILE_SLIDER ||
           t.type == TILE_SENSOR || t.type == TILE_NAV) {
         t.iconPlain = t.type == TILE_NAV || !strcmp(tv["iconStyle"] | "", "plain");
@@ -368,6 +391,10 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         if (t.weatherPopupTitle.length() > 64)
           t.weatherPopupTitle = t.weatherPopupTitle.substring(0, 64);
         t.hideWeatherPopupTitle = tv["hideWeatherPopupTitle"] | false;
+        if (t.type == TILE_SENSOR) {
+          const char* pack = tv["weatherIcons"] | "skycons";
+          t.weatherIcons = !strcmp(pack, "skycons") ? 3 : !strcmp(pack, "meteocons-fill") ? 1 : !strcmp(pack, "meteocons-flat") ? 2 : 0;
+        }
       }
       t.hasColor = parseColor(tv["color"] | (const char*)nullptr, t.color);
       t.hasTextColor = parseColor(tv["textColor"] | (const char*)nullptr, t.textColor);
@@ -382,6 +409,24 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       parsePos(tv["pos"]["landscape"], t.pos[ORIENT_LANDSCAPE]);
       parsePos(tv["pos"]["portrait"], t.pos[ORIENT_PORTRAIT]);
       if (!parseWhen(tv["when"], t.when, err, where)) return false;
+      t.layer = (const char*)(tv["layer"] | "");
+      if (t.layer.length()) {
+        bool found = false;
+        for (const auto& layer : p.layers) if (layer.id == t.layer) {
+          t.layerWhen = layer.when; found = true; break;
+        }
+        if (!found) { if (err) *err = where + ": unknown visibility layer"; return false; }
+      }
+      if (t.type == TILE_TEXT) {
+        t.text = (const char*)(tv["text"] | "");
+        if (t.text.length() > 1024) { if (err) *err = where + ": text exceeds 1024 bytes"; return false; }
+        t.textSize = constrain((int)(tv["textSize"] | 1), 0, 3);
+        t.textAlign = constrain((int)(tv["textAlign"] | 1), 0, 2);
+        t.textVAlign = constrain((int)(tv["textVAlign"] | 1), 0, 2);
+        t.clockBox = tv["box"] | true;
+        p.tiles.push_back(t);
+        continue;
+      }
       if (t.type == TILE_GROUP) {
         const char* flow = tv["flow"] | "column";
         const char* surface = tv["surface"] | "theme";
@@ -443,6 +488,8 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
                   !strcmp(style, "weather") && t.rows.empty() && t.entity.startsWith("weather.")
                     ? METRIC_WEATHER : METRIC_NUMBER;
         t.duration = !strcmp(tv["format"] | "", "duration");
+        if (tv["decimals"].is<int>())
+          t.decimals = (int8_t)constrain(tv["decimals"].as<int>(), 0, 3);
         t.hours = (uint8_t)constrain((int)(tv["hours"] | 24), 1, 168);
         t.warn = tv["warn"] | 0.0f;
         t.crit = tv["crit"] | 0.0f;
@@ -450,6 +497,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         t.hasCrit = tv["crit"].is<float>() && isfinite(t.crit);
       }
       if (t.type == TILE_HA_MEDIA) {
+        t.mediaWebOs = !strcmp(tv["mediaRemote"] | "", "webos");
         if (!t.entity.startsWith("media_player.")) {
           if (err) *err = where + ": media controls require a media_player entity";
           return false;
@@ -462,6 +510,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
           if (err) *err = where + ": climate control requires a climate entity";
           return false;
         }
+        t.climateDial = !strcmp(tv["climateLayout"] | "", "circular");
         p.tiles.push_back(t);
         continue;  // inline thermostat has its own controls, not tile tap actions
       }
@@ -477,6 +526,7 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
         }
       }
       if (t.type == TILE_WEATHER_CLOCK) {
+        t.weatherApparent = !strcmp(tv["weatherTemperature"] | "", "apparent");
         const char* iconPack = tv["weatherIcons"] | "mdi";
         if (!strcmp(iconPack, "meteocons-fill")) t.weatherIcons = 1;
         else if (!strcmp(iconPack, "meteocons-flat")) t.weatherIcons = 2;
@@ -502,6 +552,11 @@ bool deckConfigParse(const char* json, size_t len, DeckConfig& out, String* err)
       if (!parseAction(tv["tap"], t.tap, err, where + " tap")) return false;
       if (!parseAction(tv["hold"], t.hold, err, where + " hold")) return false;
       // Navigation tiles only change pages; no entity or thermostat action.
+      if (t.tap.kind == ACT_PAGE && (t.type == TILE_NAV || t.type == TILE_ACTION)) {
+        const char* style = tv["navStyle"] | "";
+        if (!strcmp(style, "glass")) t.navLinkStyle = NavLinkStyle::Glass;
+        else if (!strcmp(style, "classic")) t.navLinkStyle = NavLinkStyle::Classic;
+      }
       if (t.type == TILE_NAV && (t.tap.kind != ACT_PAGE || t.hold.kind != ACT_NONE)) {
         if (err) *err = where + ": navigation requires tap: {action: page, page: id} and no hold action";
         return false;
@@ -883,7 +938,7 @@ bool deckConfigStore(const String& text, DeckConfig& out, String& err) {
   DeckConfig cfg;
   if (!deckConfigParse(text.c_str(), text.length(), cfg, &err)) return false;
   if (!mountFs()) {
-    err = "Internal flash not mounted. Go to Maintenance > Internal flash storage to check it.";
+    err = "Internal flash not mounted. Check Storage > Internal flash storage.";
     return false;
   }
   const char* tmp = "/deck.json.tmp";
@@ -899,9 +954,27 @@ bool deckConfigStore(const String& text, DeckConfig& out, String& err) {
     err = "storage full";
     return false;
   }
-  LittleFS.remove(CONFIG_PATH);
+  // File::close() does not report flush errors. Read back the staged
+  // bytes before replacing any existing layout.
+  File staged = LittleFS.open(tmp, "r");
+  bool verified = staged && staged.size() == text.length();
+  uint8_t block[512];
+  for (size_t offset = 0; verified && offset < text.length();) {
+    const size_t chunk = std::min<size_t>(sizeof(block), text.length() - offset);
+    verified = staged.read(block, chunk) == chunk &&
+               memcmp(block, text.c_str() + offset, chunk) == 0;
+    offset += chunk;
+  }
+  staged.close();
+  if (!verified) {
+    LittleFS.remove(tmp);
+    err = "could not verify the saved layout on internal flash";
+    return false;
+  }
+  // LittleFS rename replaces the destination atomically. Removing it
+  // first leaves a window where a reset can lose the only saved layout.
   if (!LittleFS.rename(tmp, CONFIG_PATH)) {
-    err = "cannot replace the file";
+    err = "cannot replace the saved layout";
     return false;
   }
   out = cfg;

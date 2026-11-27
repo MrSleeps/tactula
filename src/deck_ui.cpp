@@ -1,6 +1,12 @@
+#include "optional_preferences.h"
 // Guition JC3248W535 deck UI. See deck_ui.h for the threading contract.
 #include "debug_log.h"
+#include "p4_trace.h"
 #include "deck_ui_int.h"
+#if defined(BOARD_IS_JC8012P4A1C)
+#include "p4_board.h"
+#endif
+#include <utility>
 #include "deck_mqtt.h"
 #if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
 #include "deck_office_bambu.h"
@@ -12,6 +18,14 @@ namespace deckui {
 // Page images are refreshed one per pass, at most this often (each costs
 // ~40 ms of loop time at 480x320).
 constexpr uint32_t SNAP_SPACING_MS = 40;
+#if defined(BOARD_IS_JC8012P4A1C)
+constexpr uint32_t CINEMATIC_PAGE_SNAP_MS = 1500;
+constexpr uint32_t CINEMATIC_SNAP_SPACING_MS = 450;
+uint32_t s_snapshotUnderruns = 0;
+// All fields below are protected by s_mux (the gesture ownership lock).
+static uint32_t s_directEpoch = 0;
+static int s_directOrigin = -1, s_directTarget = -1;
+#endif
 constexpr uint32_t PANEL_SNAP_MS = 5000;  // a stale panel image waits at most this long behind busy pages
 constexpr uint32_t STATS_MS = 10000;
 constexpr uint32_t SLIDE_MS = 280;
@@ -38,7 +52,7 @@ uint32_t C_BG, C_TILE, C_TILE_PRESSED, C_TILE_LINE, C_CHIP, C_TEXT, C_TEXT_ON, C
 
 void setPalette(uint8_t theme) {
   clearGlassCache();
-  s_theme = theme <= THEME_MAX ? theme : THEME_MIDNIGHT;
+  s_theme = normalizeDisplayTheme(theme);
   const bool day = s_theme == THEME_DAYLIGHT, glass = themeUsesWallpaper(s_theme);
   C_BG = day ? 0xF5F6FB : 0x0C1019;
   C_TILE = day ? 0xFFFFFF : glass ? 0x101622 : 0x171E2C;  // glass: the tint
@@ -63,37 +77,89 @@ void setPalette(uint8_t theme) {
     C_PANEL = 0x171E2C;
     C_TRACK = 0x393460;
     C_BUTTON = 0x312A59;
-  } else if (s_theme == THEME_MIDNIGHT_STUDIO) {
-    // Domestic Bot / Figma palette, adapted for the LVGL renderer.
-    C_BG = 0x0B1020;
-    C_TILE = 0x151D32;
-    C_TILE_PRESSED = 0x1C2948;
-    C_TILE_LINE = 0x222D48;
-    C_CHIP = 0x1C2A48;
-    C_TEXT = 0xF8FAFC;
-    C_TEXT_ON = 0xF8FAFC;
-    C_TITLE = 0xF8FAFC;
-    C_CLOCK = 0xF8FAFC;  // Match the large clock to the white temperature and title.
-    C_OK = 0x4F8CFF;
-    C_DIM = 0xAAB4C5;
-    C_PANEL = 0x151D32;
-    C_TRACK = 0x222D48;
-    C_BUTTON = 0x1C2948;
-  } else if (s_theme == THEME_MINIMAL_CONSOLE) {
-    C_BG = 0x141616;
-    C_TILE = 0x212424;
-    C_TILE_PRESSED = 0x303535;
-    C_TILE_LINE = 0x3C4443;
-    C_CHIP = 0x262C2B;
-    C_TEXT = 0xF2F5F3;
+  } else if (themeUsesModernLayout(s_theme)) {
+    C_BG = 0x060E20;
+    C_TILE = 0x111D36;
+    C_TILE_PRESSED = 0x203457;
+    C_TILE_LINE = 0x2B456C;
+    C_CHIP = 0x192E50;
+    C_TEXT = 0xF1F5FF;
     C_TITLE = C_TEXT;
-    C_CLOCK = 0xCBD4D0;
-    C_OK = 0x8FD7C4;
-    C_DIM = 0xA5B2AC;
-    C_PANEL = 0x1D2120;
-    C_TRACK = 0x3C4642;
-    C_BUTTON = 0x303936;
+    C_CLOCK = C_TEXT;
+    C_OK = 0x5197FF;
+    C_DIM = 0xB3C3DF;
+    C_PANEL = 0x0F1B32;
+    C_TRACK = 0x243959;
+    C_BUTTON = 0x1B3054;
+    if (themeUsesEmber(s_theme)) {
+      C_BG = 0x151617; C_TILE = 0x292B2E; C_TILE_PRESSED = 0x403B36;
+      C_TILE_LINE = 0x645249; C_CHIP = 0x373330; C_TEXT = 0xF6F2ED;
+      C_TITLE = C_CLOCK = C_TEXT; C_OK = 0xE99449; C_DIM = 0xC8BBB0;
+      C_PANEL = 0x202123; C_TRACK = 0x48413C; C_BUTTON = 0x393532;
+    } else if (themeUsesAmethyst(s_theme)) {
+      C_BG = 0x1B142B; C_TILE = 0x30213F; C_TILE_PRESSED = 0x49335F;
+      C_TILE_LINE = 0x654A80; C_CHIP = 0x362647; C_TEXT = 0xF5EEFF;
+      C_TITLE = C_CLOCK = C_TEXT; C_OK = 0xAC91F4; C_DIM = 0xD8C5F5;
+      C_PANEL = 0x241A35; C_TRACK = 0x48365D; C_BUTTON = 0x3D2B52;
+    } else if (themeUsesForest(s_theme)) {
+      C_BG = 0x101F1C; C_TILE = 0x1C342D; C_TILE_PRESSED = 0x2C4D40;
+      C_TILE_LINE = 0x416B58; C_CHIP = 0x203B32; C_TEXT = 0xEDF9F3;
+      C_TITLE = C_CLOCK = C_TEXT; C_OK = 0x65C5A0; C_DIM = 0xB5DFCE;
+      C_PANEL = 0x172C25; C_TRACK = 0x345445; C_BUTTON = 0x284638;
+    } else if (themeUsesGraphite(s_theme)) {
+      C_BG = 0x15171A; C_TILE = 0x292D32; C_TILE_PRESSED = 0x3D434B;
+      C_TILE_LINE = 0x555D68; C_CHIP = 0x30343A; C_TEXT = 0xF2F4F7;
+      C_TITLE = C_CLOCK = C_TEXT; C_OK = 0xB4C0CE; C_DIM = 0xD3D9E1;
+      C_PANEL = 0x202329; C_TRACK = 0x424851; C_BUTTON = 0x363C44;
+    }
   }
+}
+ 
+// Central mapping for decorative modern blue colours. Keep semantic
+// heating/cooling, connection status, and user/device colours unchanged.
+uint32_t modernColour(uint32_t ocean) {
+  if (!themeUsesModernLayout(s_theme)) return ocean;
+  const int palette = themeUsesEmber(s_theme) ? 0 : themeUsesAmethyst(s_theme) ? 1 :
+      themeUsesForest(s_theme) ? 2 : themeUsesGraphite(s_theme) ? 3 : -1;
+  if (palette < 0) return ocean;
+  // Each decorative token has one colour per non-Ocean palette.
+  struct ColourRow { uint32_t ocean; uint32_t colours[4]; };
+  static constexpr ColourRow rows[] = {
+    {0x25435F, {0x49413B, 0x503B65, 0x395648, 0x444A53}},
+    {0x203C60, {0x413A35, 0x463459, 0x304B3F, 0x3A4048}},
+    {0x15283E, {0x292725, 0x2B203B, 0x23372F, 0x2B3036}},
+    {0x0A1527, {0x171819, 0x20162F, 0x14251E, 0x1A1D22}},
+    {0x45678D, {0x76604D, 0x775D94, 0x547B68, 0x666F7C}},
+    {0x29496A, {0x61462F, 0x584071, 0x355847, 0x4A525D}},
+    {0xA5BCD5, {0xC8BBB0, 0xD8C5F5, 0xB5DFCE, 0xD3D9E1}},
+    {0x85BCFF, {0xF6C28C, 0xD8C5F5, 0xA8E5CC, 0xE1E5EB}},
+    {0x89BFFF, {0xF6C28C, 0xD8C5F5, 0xA8E5CC, 0xE1E5EB}},
+    {0x8DC5FF, {0xF6C28C, 0xD8C5F5, 0xA8E5CC, 0xE1E5EB}},
+    {0x85C4FF, {0xF6C28C, 0xD8C5F5, 0xA8E5CC, 0xE1E5EB}},
+    {0x5197FF, {0xE99449, 0xAC91F4, 0x65C5A0, 0xB4C0CE}},
+    {0x5286C3, {0xE99449, 0xAC91F4, 0x65C5A0, 0xB4C0CE}},
+    {0x438ACB, {0xE99449, 0xAC91F4, 0x65C5A0, 0xB4C0CE}},
+    {0x4F8CFF, {0xE99449, 0xAC91F4, 0x65C5A0, 0xB4C0CE}},
+    {0x28588D, {0x92582F, 0x7055A0, 0x377F65, 0x677381}},
+    {0x192E50, {0x373330, 0x362647, 0x203B32, 0x30343A}},
+    {0x364B64, {0x52483F, 0x59456F, 0x3A594A, 0x49515C}},
+    {0x304B6B, {0x52483F, 0x59456F, 0x3A594A, 0x49515C}},
+    {0x304B65, {0x52483F, 0x59456F, 0x3A594A, 0x49515C}},
+    {0x0D192A, {0x252324, 0x251B35, 0x1B2E25, 0x25292F}},
+    {0x14273C, {0x252324, 0x251B35, 0x1B2E25, 0x25292F}},
+    {0x0B1727, {0x252324, 0x251B35, 0x1B2E25, 0x25292F}},
+    {0x496681, {0x685748, 0x6B5385, 0x4B6E5B, 0x5E6773}},
+    {0x365471, {0x685748, 0x6B5385, 0x4B6E5B, 0x5E6773}},
+    {0x37536C, {0x685748, 0x6B5385, 0x4B6E5B, 0x5E6773}},
+    {0x82BCF9, {0xF3BC83, 0xCDB6FA, 0x99DEC2, 0xD5DDE6}},
+    {0x76B9FF, {0xF3BC83, 0xCDB6FA, 0x99DEC2, 0xD5DDE6}},
+    {0x294C6D, {0x5B4635, 0x53406A, 0x365846, 0x48515C}},
+    {0x29445F, {0x5B4635, 0x53406A, 0x365846, 0x48515C}},
+    {0x88ABC9, {0xC6AC95, 0xBEA9DF, 0x9DCDB8, 0xB9C2CE}},
+    {0x59D8F4, {0xF5B36F, 0xC8ACFF, 0x80DDB8, 0xD1D9E3}},
+  };
+  for (const auto& row : rows) if (row.ocean == ocean) return row.colours[palette];
+  return ocean;
 }
 
 // An icon in its round chip: on Daylight a light tint of the accent behind a
@@ -129,6 +195,7 @@ lv_style_transition_dsc_t s_pressTrans;
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
 Shared sh;
+static int8_t s_livePanelRequest = 0; // protected by s_mux
 int s_zonesPage = -1;     // page the zones were taken from
 bool s_zonesDirty = true;  // tiles rebuilt or moved: take them again
 
@@ -137,15 +204,47 @@ uint32_t tickCb() { return millis(); }
 
 // Posted LVGL frames whose framebuffer the flush task has not released yet.
 int s_lvOut = 0;
+#if defined(BOARD_IS_JC8012P4A1C)
+constexpr uint32_t SCANOUT_HOLD_MS = 60000;
+constexpr uint32_t SNAPSHOT_TEST_MS = 120000;
+constexpr uint32_t CPU_SCANOUT_TEST_MS = 120000;
+DeckDisplayTest s_displayTest = DeckDisplayTest::None;
+uint32_t s_displayTestStarted = 0;
+uint32_t s_displayTestFrames = 0;
+uint32_t s_displayTestUnderruns = 0;
+uint32_t s_displayTestSubmitted = 0;
+PanelDamage s_lvDamage = {};
+#endif
 
-void flushCb(lv_display_t* d, const lv_area_t*, uint8_t* px) {
+void flushCb(lv_display_t* d, const lv_area_t* area, uint8_t* px) {
+#if defined(BOARD_IS_JC8012P4A1C)
+  if (deckScanoutHoldActive()) {
+    s_lvDamage.full = true;
+    lv_display_flush_ready(d);
+    return;
+  }
+  if (!s_lvDamage.full) {
+    if (s_lvDamage.count == PanelDamage::MaxRects) s_lvDamage.full = true;
+    else s_lvDamage.rects[s_lvDamage.count++] = {area->x1, area->y1, area->x2, area->y2};
+  }
+#else
+  (void)area;
+#endif
   if (!lv_display_flush_is_last(d)) {
     lv_display_flush_ready(d);
     return;
   }
   const uint8_t* fb1 = (const uint8_t*)panelLvBuffer(1);
   const int idx = (px >= fb1 && px < fb1 + FRAME_BYTES) ? 1 : 0;
+#if defined(BOARD_IS_JC8012P4A1C)
+  panelPostLv(idx, s_gen, s_lvDamage);
+  s_lvDamage = {};
+  if (s_displayTest == DeckDisplayTest::WithoutSnapshots ||
+      s_displayTest == DeckDisplayTest::PartialScanout ||
+      s_displayTest == DeckDisplayTest::CpuScanout) ++s_displayTestSubmitted;
+#else
   panelPostLv(idx, s_gen);
+#endif
   s_lvOut++;
 }
 
@@ -165,8 +264,72 @@ void flushWaitCb(lv_display_t*) {
   }
 }
 
+// Double-tap the non-interactive dashboard background or page title.
+// Never count touches on controls: both taps must be harmless.
+static bool s_homeTapPending = false;
+static int s_homeTapPage = -1;
+static bool homeTapArea(int x, int y) {
+  if (getScreenState() != SCREEN_DECK || frameActive() || s_qp.open ||
+      s_modalCard || s_ed.root || compMode() != COMP_NONE ||
+      sh.active < 0 || sh.active >= s_count) return false;
+  const Page& page = s_pages[sh.active];
+  auto contains = [x,y](lv_obj_t* obj) {
+    if (!obj || lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) return false;
+    lv_area_t a;
+    lv_obj_get_coords(obj, &a);
+    return x >= a.x1 && x <= a.x2 && y >= a.y1 && y <= a.y2;
+  };
+  if (contains(page.updateBadge)) return false;
+  if (contains(page.title)) return true;
+  if (!contains(page.grid)) return false;
+  for (const auto& tile : s_tiles)
+    if (tile.page == sh.active && !tile.off && contains(tile.obj)) return false;
+  return true;
+}
+
+static void trackHomeTap(const TouchPoint& p) {
+  static bool down = false, eligible = false;
+  static uint32_t started = 0, last = 0;
+  static int x = 0, y = 0, firstX = 0, firstY = 0, page = -1, count = 0;
+  const uint32_t now = millis();
+  const int radius = logicalW() >= 800 ? 40 : 24;
+  if (p.cancel || frameActive() || getScreenState() != SCREEN_DECK) {
+    down = eligible = false;
+    count = 0;
+    return;
+  }
+  if (p.pressed && !down) {
+    down = true;
+    started = now;
+    x = p.x; y = p.y;
+    eligible = homeTapArea(x, y);
+    if (!eligible || page != sh.active || now - last > 450 ||
+        abs(x - firstX) > radius || abs(y - firstY) > radius) count = 0;
+    if (!count) { firstX = x; firstY = y; page = sh.active; }
+  } else if (p.pressed && down) {
+    if (abs(p.x - x) > 12 || abs(p.y - y) > 12) eligible = false;
+  } else if (!p.pressed && down) {
+    down = false;
+    if (!eligible || now - started > 300 || page != sh.active ||
+        !homeTapArea(p.x, p.y)) { count = 0; return; }
+    last = now;
+    if (++count == 2) {
+      s_homeTapPending = true;
+      s_homeTapPage = page;
+      count = 0;
+    }
+  }
+}
+
 void indevRead(lv_indev_t* indev, lv_indev_data_t* data) {
+#if defined(BOARD_IS_JC8012P4A1C)
+  if (s_displayTest == DeckDisplayTest::RenderOnly) {
+    data->state = LV_INDEV_STATE_RELEASED;
+    return;
+  }
+#endif
   const TouchPoint p = touchForLvgl();
+  trackHomeTap(p);
   // Drop the press before LVGL handles the release from a swipe.
   if (p.cancel) lv_indev_reset(indev, nullptr);
   data->point.x = p.x;
@@ -327,7 +490,8 @@ void layoutHeader(Page& p) {
 
 void placeTiles(const PageDef& def, int orient, std::vector<Cell>& out) {
   const int cols = def.cols[orient] * 2, rows = def.rows[orient] * 2;
-  bool used[12][12] = {};
+  // P4 permits 8x6 whole cells (16x12 half cells); S3 uses a subset.
+  bool used[12][16] = {};
   auto fits = [&](int x, int y, int tw, int th) {
     if (x + tw > cols || y + th > rows) return false;
     for (int yy = y; yy < y + th; yy++)
@@ -418,20 +582,16 @@ void addTilesPage(const PageDef& def) {
   p = {};
   p.def = &def;
   p.root = makeRoot(w, h);
-  if (s_theme == THEME_TACTULA || s_theme == THEME_MIDNIGHT_STUDIO) {
+  if (s_theme == THEME_TACTULA) {
     p.headerBand = lv_obj_create(p.root);
     lv_obj_remove_style_all(p.headerBand);
     lv_obj_remove_flag(p.headerBand, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(p.headerBand, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(p.headerBand, w, HEADER_H);
     lv_obj_set_style_bg_color(p.headerBand, lv_color_hex(C_PANEL), 0);
-    // A quiet tinted overlay leaves the wallpaper visible across the header.
-    // Keep Tactula's original solid header and accent rule unchanged.
-    lv_obj_set_style_bg_opa(p.headerBand,
-                           s_theme == THEME_MIDNIGHT_STUDIO ? LV_OPA_50 : LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(p.headerBand, LV_OPA_COVER, 0);
     lv_obj_set_style_border_side(p.headerBand, LV_BORDER_SIDE_BOTTOM, 0);
-    lv_obj_set_style_border_width(p.headerBand,
-                                  s_theme == THEME_MIDNIGHT_STUDIO ? 0 : 2, 0);
+    lv_obj_set_style_border_width(p.headerBand, 2, 0);
     lv_obj_set_style_border_color(p.headerBand, lv_color_hex(C_OK), 0);
   }
 
@@ -475,7 +635,8 @@ void addTilesPage(const PageDef& def) {
   // Two tracks per cell: tiles sit and span in half cells. Static descriptor
   // arrays per page (LVGL keeps the pointers).
   const int cols = def.cols[orient] * 2, rows = def.rows[orient] * 2;
-  static int32_t colDsc[MAX_PAGES][13];
+  // 8 columns / 6 rows at half-cell resolution, plus terminator.
+  static int32_t colDsc[MAX_PAGES][17];
   static int32_t rowDsc[MAX_PAGES][13];
   for (int i = 0; i < cols; i++) colDsc[page][i] = LV_GRID_FR(1);
   colDsc[page][cols] = LV_GRID_TEMPLATE_LAST;
@@ -533,7 +694,12 @@ void addTilesPage(const PageDef& def) {
   for (const TileRt& child : s_tiles)
     if (child.page == page && !child.off && (child.def->type == TILE_CLOCK || child.def->type == TILE_WEATHER_CLOCK)) p.hasClockTile = true;
   layoutHeader(p);
-  p.snap = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
+#if defined(BOARD_IS_JC8012P4A1C)
+  // Cinematic uses a live active page and only needs snapshots for nearby
+  // gesture targets. Allocate those on demand after the dashboard is built.
+  if (!themeUsesModernLayout(s_theme))
+#endif
+    p.snap = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, 0);
   p.stale = true;
   s_count++;
 }
@@ -611,11 +777,9 @@ void buildPages() {
   fxQuiet();  // tiles get their first state: no animations
   const int w = logicalW();
   if (themeUsesWallpaper(s_theme)) {
-    // Retain the chosen wallpaper behind Midnight's darker Figma-inspired cards.
-    // Keep Glass/Tactula unchanged; avoid heavy blur when Midnight is selected.
-    const bool studio = s_theme == THEME_MIDNIGHT_STUDIO;
-    wallLoad(w, logicalH(), studio ? 0 : dispSettings.glassBlur,
-             studio ? max<int>(dispSettings.glassDim, 35) : dispSettings.glassDim);
+    const bool cinematic = themeUsesModernLayout(s_theme);
+    wallLoad(w, logicalH(), cinematic ? 0 : dispSettings.glassBlur,
+             cinematic && !themeUsesGlassMode(s_theme) ? max<int>(dispSettings.glassDim, 35) : dispSettings.glassDim);
   }
   else wallFree();
   s_count = 0;
@@ -661,7 +825,7 @@ void buildPages() {
   for (int i = 0; i < s_count; i++) lv_obj_set_pos(s_pages[i].root, i == active ? 0 : w, 0);
   unsigned baked = 0, reused = 0;
   uint32_t bakeMs = 0;
-  if (themeUsesWallpaper(s_theme)) {
+  if (themeUsesWallpaper(s_theme) && !themeUsesModernLayout(s_theme)) {
     for (int i = 0; i < s_count; i++) {
       Page& p = s_pages[i];
       std::vector<uint32_t> key = glassKey(p);
@@ -682,9 +846,18 @@ void buildPages() {
   }
   // Drop removed or changed pages before allocating any replacement bakes.
   clearGlassCache();
-  if (themeUsesWallpaper(s_theme)) {
+  if (themeUsesWallpaper(s_theme) && !themeUsesModernLayout(s_theme)) {
     for (int i = 0; i < s_count; i++) {
       if (s_pages[i].glass) continue;
+#if defined(BOARD_IS_JC8012P4A1C)
+      if (i != active && wallSharp()) {
+        // Keep the active page fast to update. The normal wallpaper tick
+        // bakes one inactive page per pass when interaction is clear.
+        lv_obj_set_style_bg_image_src(s_pages[i].root, wallSharp(), 0);
+        s_pages[i].wallBake = true;
+        continue;
+      }
+#endif
       const uint32_t start = millis();
       if (bakeGlass(s_pages[i])) baked++;
       bakeMs += millis() - start;
@@ -733,6 +906,8 @@ void destroyPages(bool keepGlass = false) {
   portEXIT_CRITICAL(&s_mux);
 }
 
+void invalidateSwipeZones() { s_zonesDirty = true; }
+
 void syncSwipeZones() {
   const int a = sh.active;
   if (!s_zonesDirty && a == s_zonesPage) return;
@@ -745,9 +920,21 @@ void syncSwipeZones() {
     lv_area_t root;
     lv_obj_get_coords(s_pages[a].root, &root);
     for (const TileRt& r : s_tiles) {
-      if (r.page != a || !r.fill || n == MAX_PAGE_TILES) continue;
+      if (r.page != a || n == MAX_PAGE_TILES) continue;
+      lv_obj_t* control = r.fill ? r.obj :
+          r.climDial && !r.off && !lv_obj_has_flag(r.climDial, LV_OBJ_FLAG_HIDDEN) ? r.climDial : nullptr;
+      const bool volume = !r.off && r.haMediaVolume &&
+                          !lv_obj_has_flag(r.haMediaVolume, LV_OBJ_FLAG_HIDDEN);
+      if (volume) control = r.haMediaVolume;
+      if (!control) continue;
       lv_area_t t;
-      lv_obj_get_coords(r.obj, &t);
+      lv_obj_get_coords(control, &t);
+      if (volume) {
+        t.x1 -= 9;
+        t.x2 += 9;
+        t.y1 -= 9;
+        t.y2 += 9;
+      }
       z[n++] = {(int16_t)(t.x1 - root.x1), (int16_t)(t.y1 - root.y1), (int16_t)(t.x2 - root.x1),
                 (int16_t)(t.y2 - root.y1)};
     }
@@ -791,6 +978,10 @@ void stopGestures() {
   }
   portENTER_CRITICAL(&s_mux);
   for (int i = 0; i < MAX_PAGES; i++) sh.valid[i] = false;
+#if defined(BOARD_IS_JC8012P4A1C)
+  ++s_directEpoch;
+  s_directOrigin = s_directTarget = -1;
+#endif
   sh.panelValid = false;
   portEXIT_CRITICAL(&s_mux);
   vTaskDelay(2);
@@ -799,9 +990,27 @@ void stopGestures() {
 }
 
 void refreshOneSnapshot() {
+#if defined(BOARD_IS_JC8012P4A1C)
+  if (s_displayTest == DeckDisplayTest::WithoutSnapshots) return;
+#endif
   if (touchIsDown() || compMode() != COMP_NONE) return;
+  if (themeUsesModernLayout(s_theme) && modalShown()) return;
   const uint32_t now = millis();
-  if (now - s_lastSnapMs < SNAP_SPACING_MS) return;
+#if defined(BOARD_IS_JC8012P4A1C)
+  // Background snapshot rendering must not overlap a just-posted LVGL
+  // frame or immediately follow a gesture. The touch fallback can navigate
+  // without a cached destination while this work is deferred.
+  if (themeUsesModernLayout(s_theme) && !s_qp.open) {
+    if (now - touchLastActivity() < 500) return;
+    while (s_lvOut > 0 && panelWaitLvReady(0)) --s_lvOut;
+    if (s_lvOut > 0) return;
+  }
+  const uint32_t spacing = themeUsesModernLayout(s_theme) && !s_qp.open
+      ? CINEMATIC_SNAP_SPACING_MS : SNAP_SPACING_MS;
+#else
+  const uint32_t spacing = SNAP_SPACING_MS;
+#endif
+  if (now - s_lastSnapMs < spacing) return;
   // An open panel is what the next gesture slides; it goes first. So does a
   // panel with no image or an old one: busy pages (a print, gliding charts)
   // are always due and would keep it from ever opening.
@@ -821,9 +1030,51 @@ void refreshOneSnapshot() {
   const int order[4] = {c + 1 < sh.nCols ? sh.colCur[c + 1] : -1, c > 0 ? sh.colCur[c - 1] : -1,
                         a + 1 < s_count && sh.col[a + 1] == c ? a + 1 : -1,
                         a > 0 && sh.col[a - 1] == c ? a - 1 : -1};
+#if defined(BOARD_IS_JC8012P4A1C)
+  const bool bounded = themeUsesModernLayout(s_theme);
+  if (bounded) {
+    // The compositor may hold raw pointers to snapshots. Invalidate an
+    // evicted entry under the same lock used by gesture acquisition, and
+    // never evict while a gesture or compositor animation owns a source.
+    for (int p = 0; p < s_count; ++p) {
+      if (p == a || !s_pages[p].snap) continue;
+      bool nearby = false;
+      for (int k = 0; k < 4; ++k) nearby |= order[k] == p;
+      if (nearby) continue;
+      lv_draw_buf_t* retired = nullptr;
+      portENTER_CRITICAL(&s_mux);
+      if (!sh.owned && !sh.busy[p]) {
+        sh.valid[p] = false;
+        sh.src[p] = {};
+        retired = s_pages[p].snap;
+        s_pages[p].snap = nullptr;
+      }
+      portEXIT_CRITICAL(&s_mux);
+      if (retired) {
+        lv_draw_buf_destroy(retired);
+        s_pages[p].stale = true;
+      }
+    }
+  }
+#endif
   // The shown page swipes from the live frame; only closing the panel slides
   // off its image (showPanel marks it), so then it goes first.
-  auto due = [&](int p) { return p >= 0 && s_pages[p].stale && !s_pages[p].wallBake && (p != a || s_qp.open); };
+  auto due = [&](int p) {
+    if (p < 0 || !s_pages[p].stale || s_pages[p].wallBake || (p == a && !s_qp.open)) return false;
+#if defined(BOARD_IS_JC8012P4A1C)
+    if (bounded && p != a) {
+      bool nearby = false;
+      for (int k = 0; k < 4; ++k) nearby |= order[k] == p;
+      if (!nearby) return false;
+    }
+#endif
+#if defined(BOARD_IS_JC8012P4A1C)
+    // Background pages with an existing image can wait before spending PSRAM bandwidth again.
+    if (themeUsesModernLayout(s_theme) && p != a && sh.valid[p])
+      return now - s_pages[p].snapMs >= CINEMATIC_PAGE_SNAP_MS;
+#endif
+    return true;
+  };
   if (s_qp.open && due(a)) pick = a;
   // A page without an image cannot be swiped to at all.
   for (int k = 0; k < 4 && pick < 0; k++)
@@ -844,6 +1095,29 @@ void refreshOneSnapshot() {
 
 bool snapPage(int pick) {
   Page& pg = s_pages[pick];
+#if defined(BOARD_IS_JC8012P4A1C)
+  if (!pg.snap && themeUsesModernLayout(s_theme)) {
+    // Keep a failed allocation from being retried on every loop iteration.
+    const uint32_t now = millis();
+    static uint32_t retryAfter = 0;
+    if (retryAfter && static_cast<int32_t>(now - retryAfter) < 0) return false;
+    const size_t bytes = size_t(logicalW()) * logicalH() * 2;
+    constexpr uint32_t caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+    if (heap_caps_get_largest_free_block(caps) < bytes + 4096 ||
+        heap_caps_get_free_size(caps) < bytes + 1024 * 1024) {
+      retryAfter = now + 2000;
+      s_lastSnapMs = now;
+      return false;
+    }
+    pg.snap = lv_draw_buf_create(logicalW(), logicalH(), LV_COLOR_FORMAT_RGB565, 0);
+    if (!pg.snap) {
+      retryAfter = now + 2000;
+      s_lastSnapMs = now;
+      return false;
+    }
+    retryAfter = 0;
+  }
+#endif
   if (!pg.snap) return false;
 
   portENTER_CRITICAL(&s_mux);
@@ -853,8 +1127,14 @@ bool snapPage(int pick) {
   if (owned) return false;
 
   const uint32_t t0 = micros();
+#if defined(BOARD_IS_JC8012P4A1C)
+  const uint32_t underrunsBefore = p4Board::scanoutUnderruns();
+#endif
   lv_snapshot_reshape_draw_buf(pg.root, pg.snap);
   const bool ok = lv_snapshot_take_to_draw_buf(pg.root, LV_COLOR_FORMAT_RGB565, pg.snap) == LV_RESULT_OK;
+#if defined(BOARD_IS_JC8012P4A1C)
+  s_snapshotUnderruns += p4Board::scanoutUnderruns() - underrunsBefore;
+#endif
   const uint32_t dt = micros() - t0;
   if (dt > s_snapUsMax) s_snapUsMax = dt;
 
@@ -894,8 +1174,20 @@ void tickWallpaper() {
     // A touch may have started while the compositor was being quiesced.
     if (!wallPoll(logicalW(), logicalH(), millis() - touchLastActivity() >= WALL_IDLE_MS, !touchIsDown())) return;
     wallCommit();
-    for (int i = 0; i < s_count; i++) s_pages[i].wallBake = true;
-    bakeWallpaperPage(sh.active);
+    if (themeUsesModernLayout(s_theme)) {
+      // Cinematic draws tiles over the shared wallpaper. Give the live frame
+      // time to present before making any off-screen navigation snapshots.
+      for (int i = 0; i < s_count; ++i) {
+        Page& p = s_pages[i];
+        p.wallBake = false;
+        lv_obj_set_style_bg_image_src(p.root, wallSharp(), 0);
+        lv_obj_invalidate(p.root);
+      }
+      s_lastSnapMs = millis();
+    } else {
+      for (int i = 0; i < s_count; i++) s_pages[i].wallBake = true;
+      bakeWallpaperPage(sh.active);
+    }
     qpMarkStale();
     ++s_gen;
     return;
@@ -1051,7 +1343,7 @@ void whenSync() {
     for (PageDef& pd : s_cfg.pages) {
       bool moved = false;
       for (TileDef& t : pd.tiles) {
-        if (t.when.kind == WHEN_ALWAYS || whenWanted(t) == t.shown) continue;
+        if (whenWanted(t) == t.shown) continue;
         debugSerial.printf("Deck: tile '%s' %s\n", t.id.c_str(), t.shown ? "hides" : "shows");
         t.shown = !t.shown;
         moved = true;
@@ -1089,14 +1381,65 @@ void logStats() {
   if (now - s_lastStats < STATS_MS) return;
   s_lastStats = now;
   const PanelStats p = panelTakeStats();
+#if defined(BOARD_IS_JC8012P4A1C)
+  p4Trace::MainScope diagnostics(p4Trace::Stage::Diagnostics);
+  static uint32_t previousUnderruns = 0;
+  if (!p4Trace::verbose()) {
+    previousUnderruns = p4Board::scanoutUnderruns();
+    s_snapshotUnderruns = 0;
+    s_waitTimeouts = 0;
+    s_snapUsMax = 0;
+    p4Trace::clearStats();
+    p4Trace::takeInterval();
+    return;
+  }
+  const uint32_t underruns = p4Board::scanoutUnderruns();
+  if (underruns != previousUnderruns)
+    debugSerial.printf("Deck: P4 scanout underruns=%u snapshot_underruns=%u\n",
+                       (unsigned)(underruns - previousUnderruns), (unsigned)s_snapshotUnderruns);
+  previousUnderruns = underruns;
+  s_snapshotUnderruns = 0;
+  p4Trace::report(now);
+  const auto cadence = p4Trace::takeInterval();
+  {
+  p4Trace::MainScope output(p4Trace::Stage::DiagnosticOutput);
+  const uint32_t dmaNow = micros();
+  const uint32_t lastLate = cadence.lateFrames ? (dmaNow - cadence.lastLateUs) / 1000U : 0;
+  debugSerial.printf("Deck: P4 DMA t=%ums max_gap_us=%u late_frames=%u last_late_ago_ms=%u last_late_us32=%u\n",
+                     (unsigned)millis(), (unsigned)cadence.worstGapUs,
+                     (unsigned)cadence.lateFrames, (unsigned)lastLate,
+                     (unsigned)(cadence.lateFrames ? cadence.lastLateUs : 0));
+  debugSerial.printf("Deck: P4 output t=%ums checked=%u mismatch_max=%u/64 native_partial=%u ppa_full=%u cpu_full=%u\n",
+                     (unsigned)now, (unsigned)p.outputChecked, (unsigned)p.outputMismatchMax,
+                     (unsigned)p.nativePartial, (unsigned)p.ppaFull, (unsigned)p.cpuFull);
+  if (p4Board::hasPresentedFrame()) {
+    static uint32_t previousBacklightWrites = 0;
+    const auto bl = p4Board::backlightStats();
+    debugSerial.printf("Deck: P4 backlight t=%ums level=%u duty=%u hz=%u writes=%u\n",
+                       (unsigned)now, (unsigned)currentBacklightLevel(), (unsigned)bl.duty,
+                       (unsigned)bl.frequencyHz, (unsigned)(bl.writes - previousBacklightWrites));
+    previousBacklightWrites = bl.writes;
+  }
+  }
+#endif
   if (!p.frames && !s_waitTimeouts) return;
+#if defined(BOARD_IS_JC8012P4A1C)
+  unsigned internalFree;
+  {
+    p4Trace::MainScope heap(p4Trace::Stage::HeapInspect);
+    internalFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+  }
+  p4Trace::MainScope output(p4Trace::Stage::DiagnosticOutput);
+#else
+  const unsigned internalFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+#endif
   debugSerial.printf("Deck: frames=%u comp=%u flush=%u/%uus build=%uus te_late=%u te_to=%u "
                 "lv_drop=%u gap_max=%uus wait_to=%u snap_max=%uus int_free=%u\n",
                 (unsigned)p.frames, (unsigned)p.compFrames, (unsigned)p.flushUsAvg,
                 (unsigned)p.flushUsMax, (unsigned)p.buildUsAvg, (unsigned)p.teLate,
                 (unsigned)p.teTimeouts, (unsigned)p.lvDropped, (unsigned)p.gapMaxUs,
                 (unsigned)s_waitTimeouts, (unsigned)s_snapUsMax,
-                (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+                internalFree);
   s_waitTimeouts = 0;
   s_snapUsMax = 0;
 }
@@ -1110,10 +1453,7 @@ static String s_deckBootError;
 String deckBootConfigSource() { return s_deckBootSource; }
 String deckBootConfigError() { return s_deckBootError; }
 
-// --- Public API ----------------------------------------------------------------------
-bool deckBegin(uint8_t rotation) {
-  if (!panelBegin(rotation)) return false;
-
+static void loadBootConfig() {
   String source, err;
   deckConfigLoad(s_cfg, &source, &err);
   s_deckBootSource = source;
@@ -1121,7 +1461,14 @@ bool deckBegin(uint8_t rotation) {
   debugSerial.printf("Deck: config from %s, %u pages%s%s\n", source.c_str(),
                 (unsigned)s_cfg.pages.size(), err.length() ? ", error: " : "",
                 err.c_str());
+}
 
+// --- Public API ----------------------------------------------------------------------
+bool deckBegin(uint8_t rotation) {
+  if (!panelBegin(rotation)) return false;
+#if !defined(BOARD_IS_JC8012P4A1C)
+  loadBootConfig();
+#endif
   lv_init();
   lv_tick_set_cb(tickCb);
   s_disp = lv_display_create(logicalW(), logicalH());
@@ -1130,11 +1477,6 @@ bool deckBegin(uint8_t rotation) {
                          LV_DISPLAY_RENDER_MODE_DIRECT);
   lv_display_set_flush_cb(s_disp, flushCb);
   lv_display_set_flush_wait_cb(s_disp, flushWaitCb);
-
-  s_indev = lv_indev_create();
-  lv_indev_set_type(s_indev, LV_INDEV_TYPE_POINTER);
-  lv_indev_set_read_cb(s_indev, indevRead);
-  lv_indev_set_long_press_time(s_indev, 450);
 
   static const lv_style_prop_t kPressProps[] = {
     LV_STYLE_TRANSFORM_WIDTH, LV_STYLE_TRANSFORM_HEIGHT, LV_STYLE_BG_COLOR, LV_STYLE_PROP_INV};
@@ -1146,26 +1488,201 @@ bool deckBegin(uint8_t rotation) {
   lv_obj_set_style_text_font(scr, &deck_font_14, 0);
   lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(scr, LV_SCROLLBAR_MODE_OFF);
+  return true;
+}
 
+#if defined(BOARD_IS_JC8012P4A1C)
+void deckShowBootSplash(const char* status) {
+  sysScreenSync(SCREEN_SPLASH);
+  sysSplashStatus(status);
+  lv_timer_handler();
+  lv_refr_now(s_disp);
+  updateBacklightControl();
+}
+#endif
+
+void deckLoadDashboard() {
+#if defined(BOARD_IS_JC8012P4A1C)
+  deckShowBootSplash("Reading dashboard layout...");
+  loadBootConfig();
+  deckShowBootSplash("Loading icons...");
+#endif
+  String err;
   if (!iconsLoad(iconsPath(), err)) debugSerial.printf("Deck: icons: %s\n", err.c_str());
   if (wallOnSd() && !brandLoad(err)) debugSerial.printf("Deck: brand icons: %s\n", err.c_str());
   {
     Preferences prefs;
-    if (prefs.begin("deckui", true)) {
+    if (openOptionalPreferences(prefs, "deckui")) {
       s_header = prefs.getBool("hdr", true);
       prefs.end();
     }
   }
   haBegin();
+#if defined(BOARD_IS_JC8012P4A1C)
+  deckShowBootSplash("Building dashboard...");
+#endif
   buildPages();
+  s_indev = lv_indev_create();
+  lv_indev_set_type(s_indev, LV_INDEV_TYPE_POINTER);
+  lv_indev_set_read_cb(s_indev, indevRead);
+  lv_indev_set_long_press_time(s_indev, 450);
   touchBegin();
   debugSerial.printf("Deck: LVGL %d.%d.%d up, %d pages, %dx%d\n", LVGL_VERSION_MAJOR,
                 LVGL_VERSION_MINOR, LVGL_VERSION_PATCH, s_count, logicalW(), logicalH());
+}
+
+#if defined(BOARD_IS_JC8012P4A1C)
+bool deckScanoutHoldActive() {
+  return s_displayTest == DeckDisplayTest::Hold || s_displayTest == DeckDisplayTest::Replay ||
+         s_displayTest == DeckDisplayTest::DmaReload;
+}
+
+bool deckBeginDisplayTest(DeckDisplayTest test) {
+  // The boot-selected live driver cannot be reinitialised or temporarily
+  // switched back to an interrupt-driven diagnostic without rebooting.
+  if (p4Board::liveReloadActive()) return test == DeckDisplayTest::DmaLiveReload;
+  if (test == DeckDisplayTest::None || !s_disp || s_displayTest != DeckDisplayTest::None ||
+      getScreenState() != SCREEN_DECK ||
+      !currentBacklightLevel() || !p4Board::hasPresentedFrame() || frameActive() ||
+      !canRebuild() || compMode() != COMP_NONE) return false;
+
+  const bool pauseSnapshots = test == DeckDisplayTest::WithoutSnapshots;
+  const bool partialScanout = test == DeckDisplayTest::PartialScanout;
+  const bool cpuScanout = test == DeckDisplayTest::CpuScanout;
+  const bool liveScanoutTest = partialScanout || cpuScanout;
+  portENTER_CRITICAL(&s_mux);
+  const bool owned = sh.owned;
+  if (!owned && !pauseSnapshots && !liveScanoutTest) sh.swipeEnabled = false;
+  portEXIT_CRITICAL(&s_mux);
+  if (owned) return false;
+  s_displayTest = test;
+  const bool replay = test == DeckDisplayTest::Replay;
+  const bool renderOnly = test == DeckDisplayTest::RenderOnly;
+  if (liveScanoutTest) {
+    panelSetScanoutPath(cpuScanout ? PanelScanoutPath::Cpu : PanelScanoutPath::Partial);
+    if (cpuScanout) lv_obj_invalidate(lv_screen_active());
+  } else if (!pauseSnapshots) {
+    panelBeginScanoutHold(renderOnly ? ScanoutHold::RenderOnly :
+                          replay ? ScanoutHold::Replay : ScanoutHold::Static);
+  }
+  if (test == DeckDisplayTest::DmaLiveReload) {
+    if (!p4Board::testLiveReload()) {
+      panelEndScanoutHold();
+      s_displayTest = DeckDisplayTest::None;
+      lv_obj_invalidate(lv_screen_active());
+      debugSerial.println("Deck: P4 live DMA reload refused (normal driver retained)");
+      return false;
+    }
+    panelSetScanoutPath(PanelScanoutPath::Ppa);
+    panelEndScanoutHold();
+    lv_obj_invalidate(lv_screen_active());
+    debugSerial.println("Deck: P4 live DMA reload active; staged band copies; reboot to exit");
+  }
+  if (test == DeckDisplayTest::DmaReload) {
+    if (!p4Board::testStaticReload()) {
+      panelEndScanoutHold();
+      s_displayTest = DeckDisplayTest::None;
+      lv_obj_invalidate(lv_screen_active());
+      debugSerial.println("Deck: P4 DMA reload test refused (normal driver retained)");
+      return false;
+    }
+    debugSerial.println("Deck: P4 DMA reload test active; fixed frame; stop or reboot to exit");
+  }
+  s_displayTestStarted = millis();
+  s_displayTestFrames = p4Board::scanoutFrames();
+  s_displayTestUnderruns = p4Board::scanoutUnderruns();
+  s_displayTestSubmitted = 0;
+  if (test == DeckDisplayTest::DmaReload || test == DeckDisplayTest::DmaLiveReload) {
+    return true;  // No 60-second timer or interrupt-based frame count.
+  }
+  if (pauseSnapshots) {
+    debugSerial.printf("Deck: P4 snapshot pause start t=%ums duration=%us\n",
+                       (unsigned)s_displayTestStarted, (unsigned)(SNAPSHOT_TEST_MS / 1000));
+  } else {
+    debugSerial.printf("Deck: P4 scanout %s start t=%ums duration=%us\n",
+                       cpuScanout ? "CPU full-frame test" : partialScanout ? "partial test" :
+                       renderOnly ? "render-only" : replay ? "replay" : "hold",
+                       (unsigned)s_displayTestStarted,
+                       (unsigned)((cpuScanout ? CPU_SCANOUT_TEST_MS : SCANOUT_HOLD_MS) / 1000));
+  }
   return true;
 }
+#endif
+
+#if defined(BOARD_IS_JC8012P4A1C)
+static bool s_displayTestStopRequested = false;
+void deckStopDisplayTest() {
+  if (s_displayTest != DeckDisplayTest::None || p4Board::liveReloadActive())
+    s_displayTestStopRequested = true;
+}
+#endif
 
 void deckTick() {
   if (!s_disp) return;
+#if defined(BOARD_IS_JC8012P4A1C)
+  const bool stopTest = s_displayTestStopRequested;
+  s_displayTestStopRequested = false;
+  if (p4Board::liveReloadActive() && stopTest) {
+    p4Board::setDmaBootEnabled(false);
+    p4Board::blankBacklightForRestart();
+    ESP.restart();
+    return;
+  }
+  if (s_displayTest == DeckDisplayTest::DmaReload) {
+    // DMA frame interrupts are intentionally disabled in this mode. Never
+    // release the panel hold into the old driver; a reboot restores it.
+    if (stopTest) {
+      p4Board::blankBacklightForRestart();
+      ESP.restart();
+    }
+    return;
+  }
+  if (deckScanoutHoldActive()) {
+    const uint32_t now = millis();
+    if (!stopTest && now - s_displayTestStarted < SCANOUT_HOLD_MS) return;
+    const auto stats = panelEndScanoutHold();
+    debugSerial.printf("Deck: P4 scanout %s end t=%ums scanout_frames=%u underruns=%u replayed=%u failed=%u\n",
+                       s_displayTest == DeckDisplayTest::Replay ? "replay" : "hold", (unsigned)millis(),
+                       (unsigned)(p4Board::scanoutFrames() - s_displayTestFrames),
+                       (unsigned)(p4Board::scanoutUnderruns() - s_displayTestUnderruns),
+                       (unsigned)stats.presented, (unsigned)stats.failed);
+    s_displayTest = DeckDisplayTest::None;
+    touchSuppressUntilRelease();
+    lv_obj_invalidate(lv_screen_active());
+  }
+  if (s_displayTest == DeckDisplayTest::RenderOnly &&
+      (stopTest || millis() - s_displayTestStarted >= SCANOUT_HOLD_MS || getScreenState() != SCREEN_DECK)) {
+    const auto stats = panelEndScanoutHold();
+    debugSerial.printf("Deck: P4 scanout render-only end t=%ums scanout_frames=%u underruns=%u rendered=%u\n",
+                       (unsigned)millis(), (unsigned)(p4Board::scanoutFrames() - s_displayTestFrames),
+                       (unsigned)(p4Board::scanoutUnderruns() - s_displayTestUnderruns),
+                       (unsigned)stats.rendered);
+    s_displayTest = DeckDisplayTest::None;
+    touchSuppressUntilRelease();
+    lv_obj_invalidate(lv_screen_active());
+  }
+  const bool cpuScanout = s_displayTest == DeckDisplayTest::CpuScanout;
+  if ((s_displayTest == DeckDisplayTest::PartialScanout || cpuScanout) &&
+      (stopTest || millis() - s_displayTestStarted >= (cpuScanout ? CPU_SCANOUT_TEST_MS : SCANOUT_HOLD_MS) ||
+       getScreenState() != SCREEN_DECK)) {
+    panelSetScanoutPath(PanelScanoutPath::Ppa);
+    debugSerial.printf("Deck: P4 scanout %s test end t=%ums submitted=%u scanout_frames=%u underruns=%u\n",
+                       cpuScanout ? "CPU full-frame" : "partial", (unsigned)millis(), (unsigned)s_displayTestSubmitted,
+                       (unsigned)(p4Board::scanoutFrames() - s_displayTestFrames),
+                       (unsigned)(p4Board::scanoutUnderruns() - s_displayTestUnderruns));
+    s_displayTest = DeckDisplayTest::None;
+  }
+  if (s_displayTest == DeckDisplayTest::WithoutSnapshots) {
+    const uint32_t now = millis();
+    if (stopTest || now - s_displayTestStarted >= SNAPSHOT_TEST_MS) {
+      debugSerial.printf("Deck: P4 snapshot pause end t=%ums submitted=%u scanout_frames=%u underruns=%u\n",
+                         (unsigned)now, (unsigned)s_displayTestSubmitted,
+                         (unsigned)(p4Board::scanoutFrames() - s_displayTestFrames),
+                         (unsigned)(p4Board::scanoutUnderruns() - s_displayTestUnderruns));
+      s_displayTest = DeckDisplayTest::None;
+    }
+  }
+#endif
 
   int8_t landing;
   if (compTakeLanding(&landing)) {
@@ -1179,8 +1696,40 @@ void deckTick() {
     }
     releaseSwipe();
   }
+  qpServiceShortcut();
+  portENTER_CRITICAL(&s_mux);
+  const int8_t livePanel = s_livePanelRequest;
+  s_livePanelRequest = 0;
+  portEXIT_CRITICAL(&s_mux);
+  if (livePanel && getScreenState() == SCREEN_DECK && !frameActive() &&
+      !s_modalCard && !s_ed.root && !s_firmwareConfirm && compMode() == COMP_NONE)
+    showPanel(livePanel > 0);
+#if defined(BOARD_IS_JC8012P4A1C)
+  // A swipe without a cached image still navigates on release. Never call
+  // LVGL from the touch task; recheck ownership and the original page here.
+  if (!touchIsDown() && compMode() == COMP_NONE) {
+    int direct = -1;
+    portENTER_CRITICAL(&s_mux);
+    if (s_directTarget >= 0 && s_directOrigin == sh.active &&
+        s_directTarget < sh.count && sh.swipeEnabled && !sh.owned &&
+        !sh.panelOpen && !sh.modalOpen) direct = s_directTarget;
+    s_directOrigin = s_directTarget = -1;
+    portEXIT_CRITICAL(&s_mux);
+    if (direct >= 0 && getScreenState() == SCREEN_DECK && !frameActive() &&
+        !s_ed.root && !modalShown()) switchTo(direct);
+  }
+#endif
   // The input callback cancels the press. Clear its visual feedback here.
   if (touchTakeSwipeStarted()) fxCancelRipples();
+  if (s_homeTapPending) {
+    s_homeTapPending = false;
+    if (s_homeTapPage == sh.active && s_count > 0 && !touchIsDown() &&
+        !frameActive() && !s_qp.open && !s_modalCard && !s_ed.root &&
+        getScreenState() == SCREEN_DECK && compMode() == COMP_NONE &&
+        !s_firmwareConfirm && s_pages[0].def) {
+      goToPage(s_pages[0].def->id);
+    }
+  }
   panelSetPageFx(fxPage());
   // Cascade moves each page's grid columns; the header above moves as one.
   {
@@ -1219,8 +1768,14 @@ void deckTick() {
     wakeDisplayFromTouch();
     touchSuppressUntilRelease();
   }
-  presenceTick();
-  frameTick();
+  bool renderOnly = false;
+#if defined(BOARD_IS_JC8012P4A1C)
+  renderOnly = s_displayTest == DeckDisplayTest::RenderOnly;
+#endif
+  if (!renderOnly) {
+    presenceTick();
+    frameTick();
+  }
 
   // System screens (splash, WiFi setup, OTA) cover the pages: no gestures,
   // no panel or card under them.
@@ -1234,9 +1789,9 @@ void deckTick() {
     edClose();
   }
   portENTER_CRITICAL(&s_mux);
-  sh.swipeEnabled = !systemScreen && !frameActive();
+  sh.swipeEnabled = !systemScreen && !frameActive() && !renderOnly;
   portEXIT_CRITICAL(&s_mux);
-  sysScreenSync(sc);
+  p4Trace::run(p4Trace::Stage::SystemScreen, [&] { sysScreenSync(sc); });
   // Once per boot, when the deck is first visible.
   static bool sdWarned = false;
   if (!sdWarned && !systemScreen && currentBacklightLevel() && !compOwnsScreen() && wallSdError()[0]) {
@@ -1246,45 +1801,54 @@ void deckTick() {
 
   if (compOwnsScreen()) return;  // LVGL stays frozen during a drag or slide
 
-  mqttTick();
+  p4Trace::run(p4Trace::Stage::Mqtt, [&] { mqttTick(); });
   if (compOwnsScreen()) return;
 
   if (frameActive()) {
     frameTick();
     if (!compOwnsScreen()) {
       dailyBarSync();
-      lv_timer_handler();
+      p4Trace::run(p4Trace::Stage::Render, [&] { lv_timer_handler(); });
     }
     return;
   }
 
-  // Update the artwork in place, on the same loop task as the web server.
-  if (canRebuild() && compMode() == COMP_NONE) {
-    if (!s_changedTilePngs.empty()) {
-      refreshTilePngs(s_changedTilePngs);
-      s_changedTilePngs.clear();
+  p4Trace::run(p4Trace::Stage::TileImages, [systemScreen] {
+    // Update the artwork in place, on the same loop task as the web server.
+    if (canRebuild() && compMode() == COMP_NONE) {
+      if (!s_changedTilePngs.empty()) {
+        refreshTilePngs(s_changedTilePngs);
+        s_changedTilePngs.clear();
+      }
+      if (!systemScreen && wallOnSd()) retryTilePngs();
     }
-    if (!systemScreen && wallOnSd()) retryTilePngs();
-  }
+  });
   if (s_ed.pending != EditState::P_NONE) edFinish();
-  tickWallpaper();
-  dailyBarSync();
-  updateHeaders();
-  blinkClocks();
-  animateWeatherClocks();
-  qpUpdateStatus(false);
-  haSync();
+  p4Trace::run(p4Trace::Stage::Wallpaper, [&] { tickWallpaper(); });
+  p4Trace::run(p4Trace::Stage::UiHousekeeping, [&] {
+    dailyBarSync();
+    updateHeaders();
+    blinkClocks();
+    animateWeatherClocks();
+    tickHaMediaSheet();
+    qpUpdateStatus(false);
+  });
+  p4Trace::run(p4Trace::Stage::HomeAssistant, [&] { haSync(); });
 #if defined(TOUCHDECK_FEATURE_BAMBU) && TOUCHDECK_FEATURE_BAMBU
   // Printer state is updated by a worker on the other core. Normal deck
   // frames must sync it too; frameCatchUp() only runs after a photo frame wake.
-  bambuSync();
+  p4Trace::run(p4Trace::Stage::PrinterUi, [&] { bambuSync(); });
 #endif
-  inlineClimateTick();
-  httpSync();
-  whenSync();
-  syncSwipeZones();
-  lv_timer_handler();
-  if (!systemScreen) refreshOneSnapshot();
+  p4Trace::run(p4Trace::Stage::ClimateHttp, [] {
+    inlineClimateTick();
+    httpSync();
+  });
+  p4Trace::run(p4Trace::Stage::Layout, [] {
+    whenSync();
+    syncSwipeZones();
+  });
+  p4Trace::run(p4Trace::Stage::Render, [&] { lv_timer_handler(); });
+  if (!systemScreen) p4Trace::run(p4Trace::Stage::Snapshots, [&] { refreshOneSnapshot(); });
   logStats();
 }
 
@@ -1303,6 +1867,12 @@ void deckRefreshNow() {
 }
 
 void deckApplyRotation(uint8_t rotation) {
+#if defined(BOARD_IS_JC8012P4A1C)
+  // The BSP configures PPA and touch rotation at panel startup.
+  if (s_disp && (rotation & 3) != panelRotation())
+    debugSerial.println("Display: P4 rotation will apply on restart");
+  return;
+#endif
   wallInvalidateJobs();
   if (!s_disp) return;
   rotation &= 3;
@@ -1384,18 +1954,34 @@ bool deckApplyConfig(const String& text, String& err) {
     err = "display not running";
     return false;
   }
+  const uint32_t saveStart = millis();
+#if defined(BOARD_IS_JC8012P4A1C)
+  const uint32_t underrunsBeforeSave = p4Board::scanoutUnderruns();
+#endif
   DeckConfig next;
   if (!deckConfigStore(text, next, err)) return false;
+  const uint32_t renderStart = millis();
+#if defined(BOARD_IS_JC8012P4A1C)
+  const uint32_t underrunsAfterSave = p4Board::scanoutUnderruns();
+#endif
   // Tiles point into s_cfg: tear the pages down before replacing it.
   stopGestures();
+  s_keepPage = activePageId();
   destroyPages(true);
-  s_cfg = next;
+  s_cfg = std::move(next);
   buildPages();
   s_deckBootSource = "/deck.json";
   s_deckBootError = "";
   s_gen++;
   lv_obj_invalidate(lv_screen_active());
-  debugSerial.printf("Deck: new config applied, %u pages\n", (unsigned)s_cfg.pages.size());
+  debugSerial.printf("Deck: new config applied, %u pages (save %lu ms, rebuild %lu ms)\n",
+                     (unsigned)s_cfg.pages.size(), (unsigned long)(renderStart - saveStart),
+                     (unsigned long)(millis() - renderStart));
+#if defined(BOARD_IS_JC8012P4A1C)
+  debugSerial.printf("Deck: P4 page save scanout underruns (storage %lu, rebuild %lu)\n",
+                     (unsigned long)(underrunsAfterSave - underrunsBeforeSave),
+                     (unsigned long)(p4Board::scanoutUnderruns() - underrunsAfterSave));
+#endif
   return true;
 }
 
@@ -1614,6 +2200,10 @@ bool deckTestSwipe(int dir, bool vertical) {
 
 bool deckTestPanel(bool open) {
   if (!s_disp || open == s_qp.open) return false;
+  if (open && !s_qp.snap && getScreenState() == SCREEN_DECK && !frameActive() && !s_modalCard && !s_ed.root) {
+    showPanel(true);
+    return true;
+  }
   if (!open) {
     closePanelAnimated();
     return true;
@@ -1677,6 +2267,41 @@ bool uiTryBeginSwipe(int dir, bool vertical, Src& a, Src& b, int& startOff, int&
   return ok;
 }
 
+#if defined(BOARD_IS_JC8012P4A1C)
+bool uiUncachedSwipeTarget(int dir, bool vertical, int& origin, int& target, uint32_t& epoch) {
+  bool ok = false;
+  portENTER_CRITICAL(&s_mux);
+  const int cur = sh.active;
+  if (sh.swipeEnabled && !sh.owned && !sh.panelOpen && !sh.modalOpen &&
+      cur >= 0 && cur < sh.count && (dir == -1 || dir == 1)) {
+    const int c = sh.col[cur];
+    int next = -1;
+    if (vertical) {
+      const int p = cur + dir;
+      if (p >= 0 && p < sh.count && sh.col[p] == c) next = p;
+    } else if (c + dir >= 0 && c + dir < sh.nCols) next = sh.colCur[c + dir];
+    if (next >= 0 && next < sh.count && (!sh.valid[next] || sh.busy[next])) {
+      origin = cur;
+      target = next;
+      epoch = s_directEpoch;
+      ok = true;
+    }
+  }
+  portEXIT_CRITICAL(&s_mux);
+  return ok;
+}
+
+void uiQueueUncachedSwipe(int origin, int target, uint32_t epoch) {
+  portENTER_CRITICAL(&s_mux);
+  if (epoch == s_directEpoch && origin == sh.active && target >= 0 &&
+      target < sh.count && sh.swipeEnabled && !sh.owned && !sh.panelOpen && !sh.modalOpen) {
+    s_directOrigin = origin;
+    s_directTarget = target;
+  }
+  portEXIT_CRITICAL(&s_mux);
+}
+#endif
+
 void uiSwipeAborted() { releaseSwipe(); }
 
 bool uiSwipeOwnsTouch() {
@@ -1718,6 +2343,19 @@ bool uiTryBeginPanel(bool opening, Src& panel, Src& page, int& startOff, int& pa
       panelH = panel.h;
       startOff = opening ? 0 : panel.h;
     }
+  }
+  portEXIT_CRITICAL(&s_mux);
+  return ok;
+}
+
+bool uiRequestLivePanel(bool opening) {
+  bool ok = false;
+  portENTER_CRITICAL(&s_mux);
+  if (sh.swipeEnabled && !sh.owned && !sh.modalOpen && !sh.panelBusy &&
+      sh.panelOpen != opening &&
+      (!sh.panelValid || (!opening && !sh.valid[sh.active]))) {
+    s_livePanelRequest = opening ? 1 : -1;
+    ok = true;
   }
   portEXIT_CRITICAL(&s_mux);
   return ok;

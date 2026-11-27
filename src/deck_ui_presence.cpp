@@ -33,10 +33,10 @@ void presenceTick() {
   const PresenceSettings& p = presenceSettings;
   const bool present = presenceNow();
   // Arrival also undoes a manual off; staying present only holds the timer.
-  if (present && !s_present) presenceWake();
+  if (present && !s_present && !p.frame) presenceWake();
   s_present = present;
   if (present) {
-    s_activeMs = now;
+    if (!p.frame) s_activeMs = now;
     s_presentMs = now | 1;
   }
   // Night wake holds for the sleep timer after presence ends.
